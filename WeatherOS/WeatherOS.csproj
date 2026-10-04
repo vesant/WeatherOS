@@ -8,8 +8,8 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
     
-    <!-- Configuração do Compilador IL2CPU do Cosmos -->
-    <CosmosBuildType>Kernel</CosmosBuildType>
+    <!-- Cosmos Build Mode: ISO generates a bootable image for VirtualBox, VMware, and QEMU -->
+    <CosmosBuildType>ISO</CosmosBuildType>
     <Description>WeatherOS - Dedicated Meteorological Operating System</Description>
   </PropertyGroup>
 
