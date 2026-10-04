@@ -25,7 +25,7 @@ namespace WeatherOS.Graphics
         private readonly Color _colorTextDim = Color.FromArgb(164, 176, 190);      // Grayish caption text
 
         // Pre-allocated Font reference
-        private readonly Font _font;
+        private readonly Cosmos.Kernel.System.Graphics.Fonts.Font _font;
 
         private bool _isActive;
         public bool IsActive => _isActive;
