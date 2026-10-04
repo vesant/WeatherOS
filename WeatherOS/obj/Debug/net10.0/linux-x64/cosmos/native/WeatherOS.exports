@@ -1,0 +1,5 @@
+V1.0 {
+    global:
+        g_compilerEmbeddedKnobsBlob;
+    local: *;
+};

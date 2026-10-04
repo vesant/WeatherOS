@@ -14,6 +14,10 @@ podman run --rm -it \
   -w /app \
   mcr.microsoft.com/dotnet/nightly/sdk:10.0 \
   bash -c "
+    echo 'Preparando ambiente de build...' &&
+    export PATH=\"\$PATH:/root/.dotnet/tools\" &&
+    dotnet tool install -g Cosmos.Patcher &&
+    apt-get update && apt-get install -y xorriso mtools clang lld make &&
     echo 'Restaurando pacotes NuGet...' &&
     dotnet restore &&
     echo 'Compilando OS...' &&
