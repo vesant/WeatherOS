@@ -1,0 +1,5 @@
+/app/obj/Debug/net10.0/linux-x64/WeatherOS.csproj.AssemblyReference.cache
+/app/obj/Debug/net10.0/linux-x64/WeatherOS.GeneratedMSBuildEditorConfig.editorconfig
+/app/obj/Debug/net10.0/linux-x64/WeatherOS.AssemblyInfoInputs.cache
+/app/obj/Debug/net10.0/linux-x64/WeatherOS.AssemblyInfo.cs
+/app/obj/Debug/net10.0/linux-x64/WeatherOS.csproj.CoreCompileInputs.cache

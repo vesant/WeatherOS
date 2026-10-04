@@ -1,15 +1,37 @@
 ﻿<?xml version="1.0" encoding="utf-8" standalone="no"?>
 <Project ToolsVersion="14.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <PropertyGroup Condition=" '$(ExcludeRestorePackageImports)' != 'true' ">
-    <RestoreSuccess Condition=" '$(RestoreSuccess)' == '' ">False</RestoreSuccess>
+    <RestoreSuccess Condition=" '$(RestoreSuccess)' == '' ">True</RestoreSuccess>
     <RestoreTool Condition=" '$(RestoreTool)' == '' ">NuGet</RestoreTool>
     <ProjectAssetsFile Condition=" '$(ProjectAssetsFile)' == '' ">$(MSBuildThisFileDirectory)project.assets.json</ProjectAssetsFile>
-    <NuGetPackageRoot Condition=" '$(NuGetPackageRoot)' == '' ">/home/user/.nuget/packages/</NuGetPackageRoot>
-    <NuGetPackageFolders Condition=" '$(NuGetPackageFolders)' == '' ">/home/user/.nuget/packages/</NuGetPackageFolders>
+    <NuGetPackageRoot Condition=" '$(NuGetPackageRoot)' == '' ">/root/.nuget/packages/</NuGetPackageRoot>
+    <NuGetPackageFolders Condition=" '$(NuGetPackageFolders)' == '' ">/root/.nuget/packages/</NuGetPackageFolders>
     <NuGetProjectStyle Condition=" '$(NuGetProjectStyle)' == '' ">PackageReference</NuGetProjectStyle>
-    <NuGetToolVersion Condition=" '$(NuGetToolVersion)' == '' ">6.11.2</NuGetToolVersion>
+    <NuGetToolVersion Condition=" '$(NuGetToolVersion)' == '' ">7.0.0</NuGetToolVersion>
   </PropertyGroup>
   <ItemGroup Condition=" '$(ExcludeRestorePackageImports)' != 'true' ">
-    <SourceRoot Include="/home/user/.nuget/packages/" />
+    <SourceRoot Include="/root/.nuget/packages/" />
   </ItemGroup>
+  <ImportGroup Condition=" '$(ExcludeRestorePackageImports)' != 'true' ">
+    <Import Project="$(NuGetPackageRoot)microsoft.codeanalysis.analyzers/3.11.0/buildTransitive/Microsoft.CodeAnalysis.Analyzers.props" Condition="Exists('$(NuGetPackageRoot)microsoft.codeanalysis.analyzers/3.11.0/buildTransitive/Microsoft.CodeAnalysis.Analyzers.props')" />
+    <Import Project="$(NuGetPackageRoot)microsoft.net.illink.tasks/10.0.12/build/Microsoft.NET.ILLink.Tasks.props" Condition="Exists('$(NuGetPackageRoot)microsoft.net.illink.tasks/10.0.12/build/Microsoft.NET.ILLink.Tasks.props')" />
+    <Import Project="$(NuGetPackageRoot)cosmos.kernel.core/3.0.89/build/Cosmos.Kernel.Core.props" Condition="Exists('$(NuGetPackageRoot)cosmos.kernel.core/3.0.89/build/Cosmos.Kernel.Core.props')" />
+    <Import Project="$(NuGetPackageRoot)cosmos.build.common/3.0.89/build/Cosmos.Build.Common.props" Condition="Exists('$(NuGetPackageRoot)cosmos.build.common/3.0.89/build/Cosmos.Build.Common.props')" />
+    <Import Project="$(NuGetPackageRoot)cosmos.kernel.hal/3.0.89/build/Cosmos.Kernel.HAL.props" Condition="Exists('$(NuGetPackageRoot)cosmos.kernel.hal/3.0.89/build/Cosmos.Kernel.HAL.props')" />
+    <Import Project="$(NuGetPackageRoot)cosmos.kernel.system/3.0.89/build/Cosmos.Kernel.System.props" Condition="Exists('$(NuGetPackageRoot)cosmos.kernel.system/3.0.89/build/Cosmos.Kernel.System.props')" />
+    <Import Project="$(NuGetPackageRoot)cosmos.kernel.sourcegenerators/3.0.89/build/Cosmos.Kernel.SourceGenerators.props" Condition="Exists('$(NuGetPackageRoot)cosmos.kernel.sourcegenerators/3.0.89/build/Cosmos.Kernel.SourceGenerators.props')" />
+    <Import Project="$(NuGetPackageRoot)cosmos.kernel.plugs/3.0.89/build/Cosmos.Kernel.Plugs.props" Condition="Exists('$(NuGetPackageRoot)cosmos.kernel.plugs/3.0.89/build/Cosmos.Kernel.Plugs.props')" />
+    <Import Project="$(NuGetPackageRoot)cosmos.kernel.native.x64/3.0.89/build/Cosmos.Kernel.Native.X64.props" Condition="Exists('$(NuGetPackageRoot)cosmos.kernel.native.x64/3.0.89/build/Cosmos.Kernel.Native.X64.props')" />
+    <Import Project="$(NuGetPackageRoot)cosmos.kernel.native.multiarch/3.0.89/build/Cosmos.Kernel.Native.MultiArch.props" Condition="Exists('$(NuGetPackageRoot)cosmos.kernel.native.multiarch/3.0.89/build/Cosmos.Kernel.Native.MultiArch.props')" />
+    <Import Project="$(NuGetPackageRoot)cosmos.kernel/3.0.89/build/Cosmos.Kernel.props" Condition="Exists('$(NuGetPackageRoot)cosmos.kernel/3.0.89/build/Cosmos.Kernel.props')" />
+    <Import Project="$(NuGetPackageRoot)cosmos.build.patcher/3.0.89/build/Cosmos.Build.Patcher.props" Condition="Exists('$(NuGetPackageRoot)cosmos.build.patcher/3.0.89/build/Cosmos.Build.Patcher.props')" />
+    <Import Project="$(NuGetPackageRoot)cosmos.build.ilc/3.0.89/build/Cosmos.Build.Ilc.props" Condition="Exists('$(NuGetPackageRoot)cosmos.build.ilc/3.0.89/build/Cosmos.Build.Ilc.props')" />
+    <Import Project="$(NuGetPackageRoot)cosmos.build.cc/3.0.89/build/Cosmos.Build.CC.props" Condition="Exists('$(NuGetPackageRoot)cosmos.build.cc/3.0.89/build/Cosmos.Build.CC.props')" />
+    <Import Project="$(NuGetPackageRoot)cosmos.build.asm/3.0.89/build/Cosmos.Build.Asm.props" Condition="Exists('$(NuGetPackageRoot)cosmos.build.asm/3.0.89/build/Cosmos.Build.Asm.props')" />
+  </ImportGroup>
+  <PropertyGroup Condition=" '$(ExcludeRestorePackageImports)' != 'true' ">
+    <PkgMicrosoft_CodeAnalysis_Analyzers Condition=" '$(PkgMicrosoft_CodeAnalysis_Analyzers)' == '' ">/root/.nuget/packages/microsoft.codeanalysis.analyzers/3.11.0</PkgMicrosoft_CodeAnalysis_Analyzers>
+    <PkgMicrosoft_NET_ILLink_Tasks Condition=" '$(PkgMicrosoft_NET_ILLink_Tasks)' == '' ">/root/.nuget/packages/microsoft.net.illink.tasks/10.0.12</PkgMicrosoft_NET_ILLink_Tasks>
+    <PkgCosmos_Build_Common Condition=" '$(PkgCosmos_Build_Common)' == '' ">/root/.nuget/packages/cosmos.build.common/3.0.89</PkgCosmos_Build_Common>
+  </PropertyGroup>
 </Project>

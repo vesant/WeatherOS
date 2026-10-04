@@ -10,6 +10,7 @@
   <ItemGroup>
     <PackageReference Include="Cosmos.Kernel" Version="3.0.89" />
     <PackageReference Include="Cosmos.Kernel.System" Version="3.0.89" />
+      <PackageReference Include="System.Drawing.Common" Version="8.0.0" />
   </ItemGroup>
 
 </Project>
