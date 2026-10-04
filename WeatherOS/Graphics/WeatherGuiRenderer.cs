@@ -123,7 +123,7 @@ namespace WeatherOS.Graphics
             // Footer
             _canvas.DrawFilledRectangle(_penCardBg, 20, 530, 760, 50);
             _canvas.DrawRectangle(_penBorder, 20, 530, 760, 50);
-            _canvas.DrawString("Controlos: Pressiona [ESC] ou [Q] para regressar ao Terminal Base", _font, _penText, 40, 547);
+            _canvas.DrawString("Controlos: Pressiona [ESC] ou [Q] para reiniciar o sistema (Voltar ao Terminal)", _font, _penText, 40, 547);
 
             _canvas.Display();
         }

@@ -190,13 +190,9 @@ namespace WeatherOS
 
         private void ExitGuiMode()
         {
-            _guiRenderer.Stop();
-            _isGuiActive = false;
-
-            PrintBootBanner();
-            System.Console.ForegroundColor = ConsoleColor.Yellow;
-            System.Console.WriteLine("[GUI Exited] Switched back to Terminal Base Mode.\n");
-            System.Console.ResetColor();
+            // Devido a um bug conhecido no Cosmos Gen2 (falha ao restaurar os registos VGA a partir de VBE),
+            // a forma mais limpa de sair do modo gráfico é fazer um reboot instantâneo.
+            Cosmos.System.Power.Reboot();
         }
 
         private void PrintBootBanner()
