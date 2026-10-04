@@ -1,0 +1,37 @@
+{
+  "version": 2,
+  "dgSpecHash": "acpjsKuVTAs=",
+  "success": false,
+  "projectFilePath": "/var/home/user/Documents/Projects/WeatherOS/WeatherOS/WeatherOS.csproj",
+  "expectedPackageFiles": [
+    "/home/user/.nuget/packages/microsoft.netcore.app.ref/6.0.36/microsoft.netcore.app.ref.6.0.36.nupkg.sha512",
+    "/home/user/.nuget/packages/microsoft.aspnetcore.app.ref/6.0.36/microsoft.aspnetcore.app.ref.6.0.36.nupkg.sha512",
+    "/home/user/.nuget/packages/microsoft.netcore.app.host.linux-x64/6.0.36/microsoft.netcore.app.host.linux-x64.6.0.36.nupkg.sha512"
+  ],
+  "logs": [
+    {
+      "code": "NU1301",
+      "level": "Error",
+      "message": "Unable to load the service index for source https://pkgs.dev.azure.com/CosmosOS/Cosmos/_packaging/cosmos/nuget/v3/index.json.",
+      "libraryId": "Cosmos.Debug.Kernel"
+    },
+    {
+      "code": "NU1301",
+      "level": "Error",
+      "message": "Unable to load the service index for source https://pkgs.dev.azure.com/CosmosOS/Cosmos/_packaging/cosmos/nuget/v3/index.json.",
+      "libraryId": "Cosmos.HAL2"
+    },
+    {
+      "code": "NU1301",
+      "level": "Error",
+      "message": "Unable to load the service index for source https://pkgs.dev.azure.com/CosmosOS/Cosmos/_packaging/cosmos/nuget/v3/index.json.",
+      "libraryId": "Cosmos.Core"
+    },
+    {
+      "code": "NU1301",
+      "level": "Error",
+      "message": "Unable to load the service index for source https://pkgs.dev.azure.com/CosmosOS/Cosmos/_packaging/cosmos/nuget/v3/index.json.",
+      "libraryId": "Cosmos.System2"
+    }
+  ]
+}

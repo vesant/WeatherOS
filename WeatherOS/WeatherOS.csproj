@@ -14,12 +14,12 @@
     <Description>WeatherOS - Dedicated Meteorological Operating System</Description>
   </PropertyGroup>
 
-  <!-- Dependências Oficiais do Cosmos OS -->
+  <!-- Dependências Oficiais do Cosmos OS (MyGet Feed) -->
   <ItemGroup>
-    <PackageReference Include="Cosmos.System2" Version="0.1.0-localbuild" />
-    <PackageReference Include="Cosmos.Core" Version="0.1.0-localbuild" />
-    <PackageReference Include="Cosmos.HAL2" Version="0.1.0-localbuild" />
-    <PackageReference Include="Cosmos.Debug.Kernel" Version="0.1.0-localbuild" />
+    <PackageReference Include="Cosmos.System2" Version="0.1.0-*" />
+    <PackageReference Include="Cosmos.Core" Version="0.1.0-*" />
+    <PackageReference Include="Cosmos.HAL2" Version="0.1.0-*" />
+    <PackageReference Include="Cosmos.Debug.Kernel" Version="0.1.0-*" />
   </ItemGroup>
 
 </Project>

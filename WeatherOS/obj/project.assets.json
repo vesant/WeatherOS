@@ -1,0 +1,138 @@
+{
+  "version": 3,
+  "targets": {
+    "net6.0": {}
+  },
+  "libraries": {},
+  "projectFileDependencyGroups": {
+    "net6.0": [
+      "Cosmos.Core >= 0.1.0-localbuild",
+      "Cosmos.Debug.Kernel >= 0.1.0-localbuild",
+      "Cosmos.HAL2 >= 0.1.0-localbuild",
+      "Cosmos.System2 >= 0.1.0-localbuild"
+    ]
+  },
+  "packageFolders": {
+    "/home/user/.nuget/packages/": {}
+  },
+  "project": {
+    "version": "1.0.0",
+    "restore": {
+      "projectUniqueName": "/var/home/user/Documents/Projects/WeatherOS/WeatherOS/WeatherOS.csproj",
+      "projectName": "WeatherOS",
+      "projectPath": "/var/home/user/Documents/Projects/WeatherOS/WeatherOS/WeatherOS.csproj",
+      "packagesPath": "/home/user/.nuget/packages/",
+      "outputPath": "/var/home/user/Documents/Projects/WeatherOS/WeatherOS/obj/",
+      "projectStyle": "PackageReference",
+      "configFilePaths": [
+        "/var/home/user/Documents/Projects/WeatherOS/WeatherOS/nuget.config",
+        "/var/home/user/Documents/Projects/WeatherOS/nuget.config",
+        "/home/user/.nuget/NuGet/NuGet.Config"
+      ],
+      "originalTargetFrameworks": [
+        "net6.0"
+      ],
+      "sources": {
+        "https://api.nuget.org/v3/index.json": {},
+        "https://pkgs.dev.azure.com/CosmosOS/Cosmos/_packaging/cosmos/nuget/v3/index.json": {},
+        "https://www.myget.org/F/cosmos/api/v3/index.json": {}
+      },
+      "frameworks": {
+        "net6.0": {
+          "targetAlias": "net6.0",
+          "projectReferences": {}
+        }
+      },
+      "warningProperties": {
+        "warnAsError": [
+          "NU1605"
+        ]
+      },
+      "restoreAuditProperties": {
+        "enableAudit": "true",
+        "auditLevel": "low",
+        "auditMode": "direct"
+      }
+    },
+    "frameworks": {
+      "net6.0": {
+        "targetAlias": "net6.0",
+        "dependencies": {
+          "Cosmos.Core": {
+            "target": "Package",
+            "version": "[0.1.0-localbuild, )"
+          },
+          "Cosmos.Debug.Kernel": {
+            "target": "Package",
+            "version": "[0.1.0-localbuild, )"
+          },
+          "Cosmos.HAL2": {
+            "target": "Package",
+            "version": "[0.1.0-localbuild, )"
+          },
+          "Cosmos.System2": {
+            "target": "Package",
+            "version": "[0.1.0-localbuild, )"
+          }
+        },
+        "imports": [
+          "net461",
+          "net462",
+          "net47",
+          "net471",
+          "net472",
+          "net48",
+          "net481"
+        ],
+        "assetTargetFallback": true,
+        "warn": true,
+        "downloadDependencies": [
+          {
+            "name": "Microsoft.AspNetCore.App.Ref",
+            "version": "[6.0.36, 6.0.36]"
+          },
+          {
+            "name": "Microsoft.NETCore.App.Host.linux-x64",
+            "version": "[6.0.36, 6.0.36]"
+          },
+          {
+            "name": "Microsoft.NETCore.App.Ref",
+            "version": "[6.0.36, 6.0.36]"
+          }
+        ],
+        "frameworkReferences": {
+          "Microsoft.NETCore.App": {
+            "privateAssets": "all"
+          }
+        },
+        "runtimeIdentifierGraphPath": "/var/home/user/.dotnet/sdk/8.0.425/RuntimeIdentifierGraph.json"
+      }
+    }
+  },
+  "logs": [
+    {
+      "code": "NU1301",
+      "level": "Error",
+      "message": "Unable to load the service index for source https://pkgs.dev.azure.com/CosmosOS/Cosmos/_packaging/cosmos/nuget/v3/index.json.",
+      "libraryId": "Cosmos.Debug.Kernel"
+    },
+    {
+      "code": "NU1301",
+      "level": "Error",
+      "message": "Unable to load the service index for source https://pkgs.dev.azure.com/CosmosOS/Cosmos/_packaging/cosmos/nuget/v3/index.json.",
+      "libraryId": "Cosmos.HAL2"
+    },
+    {
+      "code": "NU1301",
+      "level": "Error",
+      "message": "Unable to load the service index for source https://pkgs.dev.azure.com/CosmosOS/Cosmos/_packaging/cosmos/nuget/v3/index.json.",
+      "libraryId": "Cosmos.Core"
+    },
+    {
+      "code": "NU1301",
+      "level": "Error",
+      "message": "Unable to load the service index for source https://pkgs.dev.azure.com/CosmosOS/Cosmos/_packaging/cosmos/nuget/v3/index.json.",
+      "libraryId": "Cosmos.System2"
+    }
+  ]
+}
