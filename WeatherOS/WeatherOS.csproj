@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- Target framework compatible with current Cosmos OS releases (net6.0 / net8.0) -->
+    <TargetFramework>net6.0</TargetFramework>
+    <Platform>x86</Platform>
+    <OutputType>Exe</OutputType>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    
+    <!-- Cosmos OS Kernel Configuration -->
+    <CosmosBuildType>Kernel</CosmosBuildType>
+    <Description>WeatherOS - Dedicated Meteorological Operating System</Description>
+  </PropertyGroup>
+
+  <!-- 
+    Required Cosmos OS Package References:
+    Ensure the version matches your Cosmos UserKit / DevKit build.
+    Standard packages: Cosmos.System2, Cosmos.Core, Cosmos.HAL2, Cosmos.Debug.Kernel
+  -->
+  <ItemGroup>
+    <PackageReference Include="Cosmos.System2" Version="0.1.0-localbuild" />
+    <PackageReference Include="Cosmos.Core" Version="0.1.0-localbuild" />
+    <PackageReference Include="Cosmos.HAL2" Version="0.1.0-localbuild" />
+    <PackageReference Include="Cosmos.Debug.Kernel" Version="0.1.0-localbuild" />
+  </ItemGroup>
+
+</Project>
