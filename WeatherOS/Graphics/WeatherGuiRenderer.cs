@@ -40,7 +40,7 @@ namespace WeatherOS.Graphics
         {
             try
             {
-                _canvas = new FullScreenCanvas(_screenMode);
+                _canvas = FullScreenCanvas.GetFullScreenCanvas(_screenMode);
                 _canvas.Clear(_colorBackground);
                 _isActive = true;
                 return true;
