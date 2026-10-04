@@ -1,12 +1,12 @@
 using System;
-using Cosmos.Kernel.System;
-using Cosmos.Kernel.System.Keyboard;
+using Cosmos.System;
+using Cosmos.System.Graphics;
 using WeatherOS.Graphics;
 using WeatherOS.Services;
 
 namespace WeatherOS
 {
-    public class Kernel : Cosmos.Kernel.System.Kernel
+    public class Kernel : Cosmos.System.Kernel
     {
         private WeatherGuiRenderer _guiRenderer = null!;
         private WeatherService _weatherService = null!;
@@ -56,11 +56,11 @@ namespace WeatherOS
             }
 
             Console.Write("WeatherOS> ");
-            string? input = Console.ReadLine();
+            string input = Console.ReadLine();
             ProcessCommand(input);
         }
 
-        private void ProcessCommand(string? input)
+        private void ProcessCommand(string input)
         {
             if (string.IsNullOrWhiteSpace(input)) return;
 

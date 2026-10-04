@@ -1,14 +1,14 @@
 using System;
 using System.Drawing;
-using Cosmos.Kernel.System.Graphics;
-using Cosmos.Kernel.System.Graphics.Fonts;
+using Cosmos.System.Graphics;
+using Cosmos.System.Graphics.Fonts;
 using WeatherOS.Services;
 
 namespace WeatherOS.Graphics
 {
     public class WeatherGuiRenderer
     {
-        private Canvas? _canvas;
+        private Canvas _canvas;
         private Mode _screenMode;
 
         // Custom palette
@@ -25,7 +25,7 @@ namespace WeatherOS.Graphics
         private readonly Color _colorTextDim = Color.FromArgb(164, 176, 190);      // Grayish caption text
 
         // Pre-allocated Font reference
-        private readonly Cosmos.Kernel.System.Graphics.Fonts.Font _font;
+        private readonly Cosmos.System.Graphics.Fonts.Font _font;
 
         private bool _isActive;
         public bool IsActive => _isActive;
@@ -33,14 +33,14 @@ namespace WeatherOS.Graphics
         public WeatherGuiRenderer()
         {
             _screenMode = new Mode(800, 600, ColorDepth.ColorDepth32);
-            _font = PCScreenFont.DefaultFont;
+            _font = PCScreenFont.Default;
         }
 
         public bool Start()
         {
             try
             {
-                _canvas = Canvas.GetFullScreen(_screenMode);
+                _canvas = FullScreenCanvas.GetFullScreen(_screenMode);
                 _canvas.Clear(_colorBackground);
                 _isActive = true;
                 return true;
@@ -134,7 +134,7 @@ namespace WeatherOS.Graphics
 
             try
             {
-                Canvas.DisableFullScreen();
+                _canvas.Disable();
                 _canvas = null;
             }
             catch (Exception)
