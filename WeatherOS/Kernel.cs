@@ -55,8 +55,8 @@ namespace WeatherOS
                 return;
             }
 
-            Console.Write("WeatherOS> ");
-            string input = Console.ReadLine();
+            System.Console.Write("WeatherOS> ");
+            string input = System.Console.ReadLine();
             ProcessCommand(input);
         }
 
@@ -70,14 +70,14 @@ namespace WeatherOS
             switch (command)
             {
                 case "help":
-                    Console.WriteLine("Available commands:");
-                    Console.WriteLine("  help         - Show this menu.");
-                    Console.WriteLine("  clear        - Clear the screen.");
-                    Console.WriteLine("  ipconfig     - Show current network IP address.");
-                    Console.WriteLine("  weather      - Fetch and display the latest meteorological reading.");
-                    Console.WriteLine("  serial-test  - Probe COM1 and listen for Arduino sensor telemetry.");
-                    Console.WriteLine("  gui          - Switch to graphical meteorological dashboard.");
-                    Console.WriteLine("  halt         - Shutdown OS.");
+                    System.Console.WriteLine("Available commands:");
+                    System.Console.WriteLine("  help         - Show this menu.");
+                    System.Console.WriteLine("  clear        - Clear the screen.");
+                    System.Console.WriteLine("  ipconfig     - Show current network IP address.");
+                    System.Console.WriteLine("  weather      - Fetch and display the latest meteorological reading.");
+                    System.Console.WriteLine("  serial-test  - Probe COM1 and listen for Arduino sensor telemetry.");
+                    System.Console.WriteLine("  gui          - Switch to graphical meteorological dashboard.");
+                    System.Console.WriteLine("  halt         - Shutdown OS.");
                     break;
 
                 case "clear":
@@ -85,7 +85,7 @@ namespace WeatherOS
                     break;
 
                 case "ipconfig":
-                    Console.WriteLine($"Network IP Address: {_assignedIpAddress}");
+                    System.Console.WriteLine($"Network IP Address: {_assignedIpAddress}");
                     break;
 
                 case "weather":
@@ -101,14 +101,14 @@ namespace WeatherOS
                     break;
 
                 case "halt":
-                    Console.WriteLine("Halting system...");
+                    System.Console.WriteLine("Halting system...");
                     Stop();
                     break;
 
                 default:
-                    Console.ForegroundColor = ConsoleColor.Red;
-                    Console.WriteLine($"Unknown command: '{command}'. Type 'help' for a list of commands.");
-                    Console.ResetColor();
+                    System.Console.ForegroundColor = ConsoleColor.Red;
+                    System.Console.WriteLine($"Unknown command: '{command}'. Type 'help' for a list of commands.");
+                    System.Console.ResetColor();
                     break;
             }
         }
@@ -117,49 +117,49 @@ namespace WeatherOS
         {
             _latestWeatherData = _weatherService.GetLatestReading();
 
-            Console.ForegroundColor = ConsoleColor.Cyan;
-            Console.WriteLine("\n[LOCAL TELEMETRY REPORT]");
-            Console.WriteLine("==================================================");
-            Console.ResetColor();
+            System.Console.ForegroundColor = ConsoleColor.Cyan;
+            System.Console.WriteLine("\n[LOCAL TELEMETRY REPORT]");
+            System.Console.WriteLine("==================================================");
+            System.Console.ResetColor();
 
-            Console.WriteLine($"  Source Station     : Local Weather Engine (Standalone x86 PC)");
-            Console.WriteLine($"  Condition          : {_latestWeatherData.Condition}");
+            System.Console.WriteLine($"  Source Station     : Local Weather Engine (Standalone x86 PC)");
+            System.Console.WriteLine($"  Condition          : {_latestWeatherData.Condition}");
             
-            Console.ForegroundColor = ConsoleColor.Yellow;
-            Console.WriteLine($"  Temperature        : {_latestWeatherData.TemperatureCelsius:F1} C");
-            Console.ResetColor();
+            System.Console.ForegroundColor = ConsoleColor.Yellow;
+            System.Console.WriteLine($"  Temperature        : {_latestWeatherData.TemperatureCelsius:F1} C");
+            System.Console.ResetColor();
 
-            Console.ForegroundColor = ConsoleColor.Blue;
-            Console.WriteLine($"  Relative Humidity  : {_latestWeatherData.HumidityPercent:F1} %");
-            Console.ResetColor();
+            System.Console.ForegroundColor = ConsoleColor.Blue;
+            System.Console.WriteLine($"  Relative Humidity  : {_latestWeatherData.HumidityPercent:F1} %");
+            System.Console.ResetColor();
 
-            Console.ForegroundColor = ConsoleColor.Green;
-            Console.WriteLine($"  Atmospheric Press. : {_latestWeatherData.PressureHpa:F1} hPa");
-            Console.ResetColor();
+            System.Console.ForegroundColor = ConsoleColor.Green;
+            System.Console.WriteLine($"  Atmospheric Press. : {_latestWeatherData.PressureHpa:F1} hPa");
+            System.Console.ResetColor();
 
-            Console.WriteLine($"  Wind Speed / Dir   : {_latestWeatherData.WindSpeedKmh:F1} km/h ({_latestWeatherData.WindDirection})");
-            Console.WriteLine("--------------------------------------------------");
-            Console.ForegroundColor = ConsoleColor.DarkGray;
-            Console.WriteLine("  Note: Type 'gui' to inspect visual bar charts.\n");
-            Console.ResetColor();
+            System.Console.WriteLine($"  Wind Speed / Dir   : {_latestWeatherData.WindSpeedKmh:F1} km/h ({_latestWeatherData.WindDirection})");
+            System.Console.WriteLine("--------------------------------------------------");
+            System.Console.ForegroundColor = ConsoleColor.DarkGray;
+            System.Console.WriteLine("  Note: Type 'gui' to inspect visual bar charts.\n");
+            System.Console.ResetColor();
         }
 
         private void TestSerialSensorPort()
         {
-            Console.ForegroundColor = ConsoleColor.Yellow;
-            Console.WriteLine("\n[Hardware Diagnostic - PC COM1 Serial Port]");
-            Console.ResetColor();
-            Console.WriteLine("Note: Placeholder diagnostic for future external sensor hardware.");
+            System.Console.ForegroundColor = ConsoleColor.Yellow;
+            System.Console.WriteLine("\n[Hardware Diagnostic - PC COM1 Serial Port]");
+            System.Console.ResetColor();
+            System.Console.WriteLine("Note: Placeholder diagnostic for future external sensor hardware.");
 
-            Console.ForegroundColor = ConsoleColor.DarkGray;
-            Console.WriteLine("[Port Idle] No external sensor attached. Standalone PC mode active.");
-            Console.ResetColor();
-            Console.WriteLine();
+            System.Console.ForegroundColor = ConsoleColor.DarkGray;
+            System.Console.WriteLine("[Port Idle] No external sensor attached. Standalone PC mode active.");
+            System.Console.ResetColor();
+            System.Console.WriteLine();
         }
 
         private void SwitchToGuiMode()
         {
-            Console.WriteLine("Switching to Graphical Mode (VBE 800x600)...");
+            System.Console.WriteLine("Switching to Graphical Mode (VBE 800x600)...");
             
             bool started = _guiRenderer.Start();
             if (started)
@@ -168,9 +168,9 @@ namespace WeatherOS
             }
             else
             {
-                Console.ForegroundColor = ConsoleColor.Red;
-                Console.WriteLine("Error: Unable to initialize VBE canvas. Check QEMU VGA adapter.");
-                Console.ResetColor();
+                System.Console.ForegroundColor = ConsoleColor.Red;
+                System.Console.WriteLine("Error: Unable to initialize VBE canvas. Check QEMU VGA adapter.");
+                System.Console.ResetColor();
             }
         }
 
@@ -194,45 +194,45 @@ namespace WeatherOS
             _isGuiActive = false;
 
             PrintBootBanner();
-            Console.ForegroundColor = ConsoleColor.Yellow;
-            Console.WriteLine("[GUI Exited] Switched back to Terminal Base Mode.\n");
-            Console.ResetColor();
+            System.Console.ForegroundColor = ConsoleColor.Yellow;
+            System.Console.WriteLine("[GUI Exited] Switched back to Terminal Base Mode.\n");
+            System.Console.ResetColor();
         }
 
         private void PrintBootBanner()
         {
-            Console.Clear();
-            Console.ForegroundColor = ConsoleColor.Cyan;
-            Console.WriteLine("================================================================================");
-            Console.WriteLine("    __      __               _   _                  ____   _____            ");
-            Console.WriteLine("    \\ \\    / /              | | | |                / __ \\ / ____|           ");
-            Console.WriteLine("     \\ \\  / /__  __ _ ______| |_| |__   ___ _ __  | |  | | (___             ");
-            Console.WriteLine("      \\ \\/ / _ \\/ _` |______| __| '_ \\ / _ \\ '__| | |  | |\\___ \\            ");
-            Console.WriteLine("       \\  /  __/ (_| |      | |_| | | |  __/ |    | |__| |____) |           ");
-            Console.WriteLine("        \\/ \\___|\\__,_|       \\__|_| |_|\\___|_|     \\____/|_____/            ");
-            Console.WriteLine("              Dedicated Meteorological x86 Operating System                     ");
-            Console.WriteLine("================================================================================");
-            Console.ResetColor();
+            System.Console.Clear();
+            System.Console.ForegroundColor = ConsoleColor.Cyan;
+            System.Console.WriteLine("================================================================================");
+            System.Console.WriteLine("    __      __               _   _                  ____   _____            ");
+            System.Console.WriteLine("    \\ \\    / /              | | | |                / __ \\ / ____|           ");
+            System.Console.WriteLine("     \\ \\  / /__  __ _ ______| |_| |__   ___ _ __  | |  | | (___             ");
+            System.Console.WriteLine("      \\ \\/ / _ \\/ _` |______| __| '_ \\ / _ \\ '__| | |  | |\\___ \\            ");
+            System.Console.WriteLine("       \\  /  __/ (_| |      | |_| | | |  __/ |    | |__| |____) |           ");
+            System.Console.WriteLine("        \\/ \\___|\\__,_|       \\__|_| |_|\\___|_|     \\____/|_____/            ");
+            System.Console.WriteLine("              Dedicated Meteorological x86 Operating System                     ");
+            System.Console.WriteLine("================================================================================");
+            System.Console.ResetColor();
 
-            Console.Write(" [");
-            if (_isVfsMounted) Console.ForegroundColor = ConsoleColor.Green; else Console.ForegroundColor = ConsoleColor.Red;
-            Console.Write(_isVfsMounted ? " OK " : "FAIL");
-            Console.ResetColor();
-            Console.WriteLine("] Virtual File System Ready");
+            System.Console.Write(" [");
+            if (_isVfsMounted) System.Console.ForegroundColor = ConsoleColor.Green; else System.Console.ForegroundColor = ConsoleColor.Red;
+            System.Console.Write(_isVfsMounted ? " OK " : "FAIL");
+            System.Console.ResetColor();
+            System.Console.WriteLine("] Virtual File System Ready");
 
-            Console.Write(" [");
-            if (_isNetworkConfigured) Console.ForegroundColor = ConsoleColor.Green; else Console.ForegroundColor = ConsoleColor.DarkYellow;
-            Console.Write(_isNetworkConfigured ? " OK " : "WARN");
-            Console.ResetColor();
-            Console.WriteLine($"] IPv4 Network Stack : {_assignedIpAddress}");
+            System.Console.Write(" [");
+            if (_isNetworkConfigured) System.Console.ForegroundColor = ConsoleColor.Green; else System.Console.ForegroundColor = ConsoleColor.DarkYellow;
+            System.Console.Write(_isNetworkConfigured ? " OK " : "WARN");
+            System.Console.ResetColor();
+            System.Console.WriteLine($"] IPv4 Network Stack : {_assignedIpAddress}");
 
-            Console.WriteLine(" [ OK ] Hardware Target    : Standard x86 PC (Standalone Mode)");
+            System.Console.WriteLine(" [ OK ] Hardware Target    : Standard x86 PC (Standalone Mode)");
 
-            Console.ForegroundColor = ConsoleColor.DarkGray;
-            Console.WriteLine("--------------------------------------------------------------------------------");
-            Console.WriteLine(" Type 'help' to view commands or 'gui' to launch the meteorological dashboard.  ");
-            Console.WriteLine("--------------------------------------------------------------------------------\n");
-            Console.ResetColor();
+            System.Console.ForegroundColor = ConsoleColor.DarkGray;
+            System.Console.WriteLine("--------------------------------------------------------------------------------");
+            System.Console.WriteLine(" Type 'help' to view commands or 'gui' to launch the meteorological dashboard.  ");
+            System.Console.WriteLine("--------------------------------------------------------------------------------\n");
+            System.Console.ResetColor();
         }
     }
 }
