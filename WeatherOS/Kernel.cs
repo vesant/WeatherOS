@@ -1,5 +1,6 @@
 using System;
 using Cosmos.Kernel.System;
+using Cosmos.Kernel.System.Keyboard;
 using WeatherOS.Graphics;
 using WeatherOS.Services;
 
@@ -22,7 +23,6 @@ namespace WeatherOS
         {
             try
             {
-                // VFS is handled internally in Gen3 or omitted for now
                 _isVfsMounted = true; 
             }
             catch (Exception)
@@ -32,7 +32,6 @@ namespace WeatherOS
 
             try
             {
-                // Network setup in Gen3 omitted for mock
                 _isNetworkConfigured = false;
                 _assignedIpAddress = "Disconnected (Standalone PC)";
             }
@@ -57,11 +56,11 @@ namespace WeatherOS
             }
 
             Console.Write("WeatherOS> ");
-            string input = Console.ReadLine();
+            string? input = Console.ReadLine();
             ProcessCommand(input);
         }
 
-        private void ProcessCommand(string input)
+        private void ProcessCommand(string? input)
         {
             if (string.IsNullOrWhiteSpace(input)) return;
 
@@ -180,7 +179,7 @@ namespace WeatherOS
             _latestWeatherData = _weatherService.GetLatestReading();
             _guiRenderer.Render(ref _latestWeatherData);
 
-            if (Cosmos.Kernel.System.KeyboardManager.TryReadKey(out var keyEvent))
+            if (KeyboardManager.TryReadKey(out var keyEvent))
             {
                 if (keyEvent.Key == ConsoleKeyEx.Escape || keyEvent.Key == ConsoleKeyEx.Q)
                 {
@@ -215,8 +214,18 @@ namespace WeatherOS
             Console.WriteLine("================================================================================");
             Console.ResetColor();
 
-            Console.WriteLine(" [ OK ] Virtual File System Ready");
-            Console.WriteLine(" [ OK ] IPv4 Network Stack Ready");
+            Console.Write(" [");
+            if (_isVfsMounted) Console.ForegroundColor = ConsoleColor.Green; else Console.ForegroundColor = ConsoleColor.Red;
+            Console.Write(_isVfsMounted ? " OK " : "FAIL");
+            Console.ResetColor();
+            Console.WriteLine("] Virtual File System Ready");
+
+            Console.Write(" [");
+            if (_isNetworkConfigured) Console.ForegroundColor = ConsoleColor.Green; else Console.ForegroundColor = ConsoleColor.DarkYellow;
+            Console.Write(_isNetworkConfigured ? " OK " : "WARN");
+            Console.ResetColor();
+            Console.WriteLine($"] IPv4 Network Stack : {_assignedIpAddress}");
+
             Console.WriteLine(" [ OK ] Hardware Target    : Standard x86 PC (Standalone Mode)");
 
             Console.ForegroundColor = ConsoleColor.DarkGray;

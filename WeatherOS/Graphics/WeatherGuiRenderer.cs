@@ -8,7 +8,7 @@ namespace WeatherOS.Graphics
 {
     public class WeatherGuiRenderer
     {
-        private Canvas _canvas;
+        private Canvas? _canvas;
         private Mode _screenMode;
 
         // Custom palette
@@ -33,14 +33,14 @@ namespace WeatherOS.Graphics
         public WeatherGuiRenderer()
         {
             _screenMode = new Mode(800, 600, ColorDepth.ColorDepth32);
-            _font = PCScreenFont.Default;
+            _font = PCScreenFont.DefaultFont;
         }
 
         public bool Start()
         {
             try
             {
-                _canvas = FullScreenCanvas.GetFullScreenCanvas(_screenMode);
+                _canvas = Canvas.GetFullScreen(_screenMode);
                 _canvas.Clear(_colorBackground);
                 _isActive = true;
                 return true;
@@ -134,7 +134,7 @@ namespace WeatherOS.Graphics
 
             try
             {
-                _canvas?.Disable();
+                Canvas.DisableFullScreen();
                 _canvas = null;
             }
             catch (Exception)
