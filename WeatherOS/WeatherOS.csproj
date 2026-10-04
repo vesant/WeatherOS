@@ -10,6 +10,7 @@
     
     <!-- Cosmos Build Mode: ISO generates a bootable image for VirtualBox, VMware, and QEMU -->
     <CosmosBuildType>ISO</CosmosBuildType>
+    <CheckEolTargetFramework>false</CheckEolTargetFramework>
     <Description>WeatherOS - Dedicated Meteorological Operating System</Description>
   </PropertyGroup>
 
