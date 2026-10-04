@@ -135,7 +135,7 @@ namespace WeatherOS.Graphics
 
             // Condition status label
             _canvas.DrawString(data.Condition, _font, _textPen, 35, 300);
-            _canvas.DrawString("Origem: Estacao Arduino", _font, _textDimPen, 35, 330);
+            _canvas.DrawString("Estacao: PC Local (x86)", _font, _textDimPen, 35, 330);
 
             // 4. Telemetry Metric Charts (Center & Right)
             // Card 1: Temperature Chart

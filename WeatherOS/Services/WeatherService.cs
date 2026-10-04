@@ -69,9 +69,17 @@ namespace WeatherOS.Services
         }
 
         /// <summary>
+        /// Calculates the approximate dew point natively on the PC CPU (Magnus-Tetens simplification).
+        /// Zero allocations, pure value-type arithmetic.
+        /// </summary>
+        public float GetDewPointCelsius()
+        {
+            return _cachedReading.TemperatureCelsius - ((100.0f - _cachedReading.HumidityPercent) / 5.0f);
+        }
+
+        /// <summary>
         /// Placeholder for future network-based sensor reading over raw TCP sockets.
-        /// NOTE: Cosmos does not reliably support HttpClient or complex TLS stacks.
-        /// When streaming data over Wi-Fi/Ethernet from the Arduino Uno Q, use raw TCP sockets or UDP datagrams.
+        /// When streaming data over Wi-Fi/Ethernet from remote stations, use raw TCP sockets or UDP datagrams.
         /// </summary>
         public bool TryPollRemoteTcpTelemetry(string hostIp, int port)
         {

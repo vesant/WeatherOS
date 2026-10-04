@@ -184,7 +184,7 @@ namespace WeatherOS
             Console.WriteLine("  clear        - Clear the terminal screen and redisplay system banner");
             Console.WriteLine("  ipconfig     - Display current IPv4 address and network stack status");
             Console.WriteLine("  weather      - View real-time meteorological observations (Console View)");
-            Console.WriteLine("  serial-test  - Initialize and test serial communication with Arduino Uno Q");
+            Console.WriteLine("  serial-test  - Diagnostic test for PC COM1 port (Future sensor placeholder)");
             Console.WriteLine("  gui          - Switch to the VBE High-Resolution Graphical Dashboard");
             Console.WriteLine("  reboot       - Reboot the computer");
             Console.WriteLine("  shutdown     - Gracefully power off the system\n");
@@ -223,7 +223,7 @@ namespace WeatherOS
             Console.WriteLine("==================================================");
             Console.ResetColor();
 
-            Console.WriteLine($"  Source Station     : Remote Arduino Uno Q (Sensor Hub)");
+            Console.WriteLine($"  Source Station     : Local Weather Engine (Standalone x86 PC)");
             Console.WriteLine($"  Condition          : {_latestWeatherData.Condition}");
             
             Console.ForegroundColor = ConsoleColor.Yellow;
@@ -248,42 +248,40 @@ namespace WeatherOS
         private void TestSerialSensorPort()
         {
             Console.ForegroundColor = ConsoleColor.Yellow;
-            Console.WriteLine("\n[Serial Sensor Test - Cosmos.HAL.SerialPort]");
+            Console.WriteLine("\n[Hardware Diagnostic - PC COM1 Serial Port]");
             Console.ResetColor();
+            Console.WriteLine("Note: Placeholder diagnostic for future external sensor hardware.");
 
             if (!_serialSensorService.IsInitialized)
             {
-                Console.WriteLine("Attempting to initialize COM1 (9600 baud)...");
+                Console.WriteLine("Probing PC COM1 UART (9600 baud)...");
                 bool ok = _serialSensorService.Initialize(Cosmos.HAL.SerialPort.Port.COM1, Cosmos.HAL.SerialPort.BaudRate.BaudRate9600);
                 if (ok)
                 {
                     Console.ForegroundColor = ConsoleColor.Green;
-                    Console.WriteLine("[ OK ] COM1 Port initialized successfully.");
+                    Console.WriteLine("[ OK ] Local COM1 port initialized.");
                     Console.ResetColor();
                 }
                 else
                 {
-                    Console.ForegroundColor = ConsoleColor.Red;
-                    Console.WriteLine("[FAIL] Failed to acquire COM1 port.");
+                    Console.ForegroundColor = ConsoleColor.DarkYellow;
+                    Console.WriteLine("[WARN] COM1 port not detected on this PC motherboard.");
                     Console.ResetColor();
                     return;
                 }
             }
 
-            Console.WriteLine("Listening for incoming Arduino telemetry frame (timeout 2s)...");
-            Console.WriteLine("Sending ping probe 'STATUS?' to Arduino...");
-            _serialSensorService.SendCommand("STATUS?");
-
+            Console.WriteLine("Listening for incoming serial packets...");
             if (_serialSensorService.TryReadTelemetryPacket(out string packet))
             {
                 Console.ForegroundColor = ConsoleColor.Green;
-                Console.WriteLine($"[Received From Arduino]: {packet}");
+                Console.WriteLine($"[Serial Data In]: {packet}");
                 Console.ResetColor();
             }
             else
             {
-                Console.ForegroundColor = ConsoleColor.DarkYellow;
-                Console.WriteLine("[No Frame Received]: Serial line idle. In QEMU, ensure -serial options are configured.");
+                Console.ForegroundColor = ConsoleColor.DarkGray;
+                Console.WriteLine("[Port Idle] No external sensor attached. Standalone PC mode active.");
                 Console.ResetColor();
             }
             Console.WriteLine();
@@ -392,7 +390,7 @@ namespace WeatherOS
             Console.ForegroundColor = ConsoleColor.Green;
             Console.Write(" OK ");
             Console.ResetColor();
-            Console.WriteLine("] Serial Driver (Cosmos.HAL.SerialPort COM1-COM4) Ready");
+            Console.WriteLine("] Hardware Target    : Standard x86 PC (Standalone Mode)");
 
             Console.ForegroundColor = ConsoleColor.DarkGray;
             Console.WriteLine("--------------------------------------------------------------------------------");

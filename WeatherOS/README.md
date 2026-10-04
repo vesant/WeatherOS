@@ -1,6 +1,8 @@
 # WeatherOS 🌦️
 
-WeatherOS is a dedicated x86 Operating System built on top of the **Cosmos** (C# Open Source Managed Operating System) framework, specialized in meteorological telemetry acquisition, processing, and visualization.
+WeatherOS is an autonomous, dedicated x86 Operating System built on top of the **Cosmos** (C# Open Source Managed Operating System) framework, specialized in meteorological calculations, environmental telemetry simulation, and visualization.
+
+It is designed to run directly on standard PC hardware (bare-metal) and inside QEMU, functioning as an independent workstation without requiring any external microcontroller to operate.
 
 ---
 
@@ -8,23 +10,23 @@ WeatherOS is a dedicated x86 Operating System built on top of the **Cosmos** (C#
 
 The system is structured into modular subsystems adhering to Cosmos kernel design patterns and strict Garbage Collector (GC) safety:
 
-- **`Kernel.cs`**: The operating system entry point. Handles `BeforeRun()` hardware discovery (VFS, DHCP network stack) and executes the main `Run()` loop managing state transition between CLI Terminal and Graphical Dashboard.
+- **`Kernel.cs`**: The operating system entry point. Handles `BeforeRun()` PC hardware discovery (Cosmos VFS on storage disk, DHCP network stack via standard PC NIC) and executes the main `Run()` loop managing state transition between CLI Terminal and Graphical Dashboard.
 - **`Graphics/WeatherGuiRenderer.cs`**: High-performance VBE Canvas subsystem (800x600x32). Pre-allocates all GDI primitives (`Pen`, `Color`, `Mode`, `Font`) to ensure zero heap allocations during the render loop.
-- **`Services/WeatherService.cs`**: Telemetry state manager providing meteorological readings (Temperature, Humidity, Pressure, Wind). Prepared for TCP/UDP ingestion.
-- **`Services/SerialSensorService.cs`**: Low-level hardware serial driver wrapping `Cosmos.HAL.SerialPort` (COM1-COM4) to read telemetry packets from external microcontrollers (e.g. Arduino Uno Q).
+- **`Services/WeatherService.cs`**: Standalone meteorological observation and calculation engine. Computes environmental metrics natively on the PC CPU (temperature, humidity, atmospheric pressure, dew point, wind vectors).
+- **`Services/SerialSensorService.cs`**: Non-blocking hardware serial diagnostic driver wrapping `Cosmos.HAL.SerialPort` (COM1-COM4). Serves as a future expansion slot for when external sensors or microcontrollers (like an Arduino Uno Q) are introduced.
 
 ---
 
 ## ⌨️ Shell Commands (Terminal Mode)
 
 - `help`: Lists all available commands with usage descriptions.
-- `clear`: Clears the screen and re-prints the WeatherOS banner and subsystem statuses.
+- `clear`: Clears the screen and re-prints the WeatherOS banner and PC subsystem statuses.
 - `ipconfig`: Displays the current IPv4 network configuration and DHCP status.
-- `weather`: Displays real-time meteorological observations in text mode.
-- `serial-test`: Initializes COM1 (9600 baud) and listens for incoming frames from the Arduino Uno Q.
+- `weather`: Displays real-time meteorological observations and calculations in text mode.
+- `serial-test`: Diagnostic check for the PC's COM1 UART port (optional future sensor interface).
 - `gui`: Switches into the VBE Graphical Dashboard.
-- `reboot`: Restarts the operating system.
-- `shutdown`: Gracefully powers off the machine using ACPI/APM.
+- `reboot`: Restarts the computer via ACPI/APM.
+- `shutdown`: Gracefully powers off the machine.
 
 ---
 
@@ -38,20 +40,17 @@ Entering `gui` shifts the display into an 800x600 32-bit canvas featuring:
 
 ---
 
-## 🔌 Hardware & QEMU Integration
+## 💻 Standard PC & QEMU Execution
 
-### 1. Serial Port with Arduino Uno Q
-- In QEMU, forward the serial port to a host pseudo-terminal (PTY) or real USB-Serial device:
-  ```bash
-  -serial /dev/ttyUSB0
-  # or on Windows:
-  -serial COM3
-  ```
-- **Packet Protocol**: Arduino sends newline-terminated ASCII frames:
-  ```text
-  TEMP:21.5,HUM:58.0,PRES:1014.2,WIND:12.8,DIR:NNW\n
-  ```
+### Standard PC Execution in QEMU:
+WeatherOS runs as a standard standalone PC operating system:
+```bash
+qemu-system-x86_64 -m 512M -cdrom WeatherOS.iso -vga std -net nic,model=rtl8139 -net user
+```
 
-### 2. Network Stack (QEMU TAP / User Mode)
-- QEMU default user network (`-net nic,model=rtl8139 -net user`) supports DHCP automatically.
-- WeatherOS initializes the network via `Cosmos.System.Network.IPv4.Config.Enable(true)`.
+### Future Sensor Expansion (Optional):
+If in the future an Arduino Uno Q or RS-232 telemetry feed is connected to the PC:
+```bash
+# Optional serial redirection to hardware COM port:
+qemu-system-x86_64 -m 512M -cdrom WeatherOS.iso -serial /dev/ttyUSB0
+```
