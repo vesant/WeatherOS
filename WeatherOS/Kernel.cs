@@ -32,12 +32,20 @@ namespace WeatherOS
 
             try
             {
-                _isNetworkConfigured = false;
-                _assignedIpAddress = "Disconnected (Standalone PC)";
+                System.Console.WriteLine("Aguardando IP via DHCP (Pode demorar uns segundos)...");
+                using (var xClient = new Cosmos.System.Network.IPv4.UDP.DHCP.DHCPClient())
+                {
+                    // Envia um pedido à rede (Router) para obter um IP
+                    xClient.SendDiscoverPacket();
+                }
+
+                _assignedIpAddress = Cosmos.System.Network.Config.NetworkConfiguration.CurrentAddress.ToString();
+                _isNetworkConfigured = true;
             }
             catch (Exception)
             {
                 _isNetworkConfigured = false;
+                _assignedIpAddress = "Desligado (Sem Cabo ou Sem DHCP)";
             }
 
             _guiRenderer = new WeatherGuiRenderer();

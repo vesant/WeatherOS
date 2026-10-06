@@ -34,9 +34,8 @@ namespace WeatherOS.Services
     /// </summary>
     public class WeatherService
     {
-        // Pre-allocated weather reading instance to avoid repeated GC heap allocations
         private WeatherData _cachedReading;
-        private int _simulationCycle = 0;
+        private Cosmos.System.Network.IPv4.UDP.UdpClient _udpClient;
 
         public WeatherService()
         {
@@ -47,25 +46,69 @@ namespace WeatherOS.Services
                 pressure: 1014.2f,
                 windSpeed: 12.8f,
                 windDir: "NNW",
-                condition: "Clear Sky / Sunny"
+                condition: "A aguardar satelite..."
             );
+
+            try
+            {
+                // Iniciar o servidor UDP na porta 6000
+                _udpClient = new Cosmos.System.Network.IPv4.UDP.UdpClient(6000);
+            }
+            catch { }
         }
 
         /// <summary>
         /// Retrieves the latest meteorological reading.
-        /// Simulates slight environmental fluctuations without allocating new objects on the heap.
+        /// Polls the UDP socket for incoming Arduino packets.
         /// </summary>
         public WeatherData GetLatestReading()
         {
-            _simulationCycle = (_simulationCycle + 1) % 10;
-
-            // Micro-variations around baseline to simulate active telemetry without floating-point heavy operations
-            _cachedReading.TemperatureCelsius = 21.0f + (_simulationCycle * 0.2f);
-            _cachedReading.HumidityPercent = 58.0f + ((_simulationCycle % 5) * 0.5f);
-            _cachedReading.PressureHpa = 1013.8f + ((_simulationCycle % 3) * 0.3f);
-            _cachedReading.WindSpeedKmh = 12.0f + (_simulationCycle * 0.4f);
+            if (_udpClient != null)
+            {
+                try
+                {
+                    // Usa um timeout pequeno para não bloquear o GUI para sempre se não houver dados (500ms)
+                    var endPoint = new Cosmos.System.Network.IPv4.EndPoint(Cosmos.System.Network.IPv4.Address.Any, 0);
+                    byte[] data = _udpClient.Receive(ref endPoint);
+                    
+                    if (data != null && data.Length > 0)
+                    {
+                        string packet = System.Text.Encoding.ASCII.GetString(data);
+                        ParseTelemetryPacket(packet);
+                    }
+                }
+                catch
+                {
+                    // Sem dados novos ou erro de rede, mantém os valores em cache
+                }
+            }
 
             return _cachedReading;
+        }
+
+        private void ParseTelemetryPacket(string packet)
+        {
+            // Exemplo de pacote: T:22.5;H:60;P:1012;W:15;D:N;C:Chuva
+            string[] parts = packet.Split(';');
+            foreach (var part in parts)
+            {
+                if (part.Length < 3) continue;
+                
+                string key = part.Substring(0, 2); // "T:"
+                string val = part.Substring(2);    // "22.5"
+
+                try
+                {
+                    if (key == "T:") _cachedReading.TemperatureCelsius = float.Parse(val);
+                    else if (key == "H:") _cachedReading.HumidityPercent = float.Parse(val);
+                    else if (key == "P:") _cachedReading.PressureHpa = float.Parse(val);
+                    else if (key == "W:") _cachedReading.WindSpeedKmh = float.Parse(val);
+                    else if (key == "D:") _cachedReading.WindDirection = val;
+                    else if (key == "C:") _cachedReading.Condition = val;
+                }
+                catch { }
+            }
+            _cachedReading.Timestamp = DateTime.UtcNow;
         }
 
         /// <summary>
@@ -75,41 +118,6 @@ namespace WeatherOS.Services
         public float GetDewPointCelsius()
         {
             return _cachedReading.TemperatureCelsius - ((100.0f - _cachedReading.HumidityPercent) / 5.0f);
-        }
-
-        /// <summary>
-        /// Placeholder for future network-based sensor reading over raw TCP sockets.
-        /// When streaming data over Wi-Fi/Ethernet from remote stations, use raw TCP sockets or UDP datagrams.
-        /// </summary>
-        public bool TryPollRemoteTcpTelemetry(string hostIp, int port)
-        {
-            /*
-             * Architectural Roadmap for Cosmos TCP Client:
-             * 
-             * try
-             * {
-             *     using (var client = new Cosmos.System.Network.IPv4.TCP.TcpClient(port))
-             *     {
-             *         var serverIp = Cosmos.System.Network.IPv4.Address.Parse(hostIp);
-             *         client.Connect(serverIp, port);
-             *         
-             *         // Send telemetry query command
-             *         byte[] query = System.Text.Encoding.ASCII.GetBytes("GET_WEATHER\n");
-             *         client.Send(query);
-             *         
-             *         // Receive telemetry packet
-             *         byte[] buffer = new byte[256];
-             *         int bytesRead = client.Receive(ref buffer);
-             *         // Parse CSV/JSON buffer into _cachedReading
-             *         return true;
-             *     }
-             * }
-             * catch
-             * {
-             *     return false;
-             * }
-             */
-            return false;
         }
     }
 }
