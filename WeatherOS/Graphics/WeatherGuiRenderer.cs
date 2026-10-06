@@ -41,9 +41,8 @@ namespace WeatherOS.Graphics
             Mode[] modesToTry = new Mode[] 
             {
                 new Mode(800, 600, ColorDepth.ColorDepth32),
-                new Mode(800, 600, ColorDepth.ColorDepth16),
                 new Mode(1024, 768, ColorDepth.ColorDepth32),
-                new Mode(1024, 768, ColorDepth.ColorDepth16)
+                new Mode(640, 480, ColorDepth.ColorDepth32)
             };
 
             foreach (var mode in modesToTry)

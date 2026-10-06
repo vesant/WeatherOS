@@ -82,10 +82,51 @@ namespace WeatherOS
                     System.Console.WriteLine("  help         - Show this menu.");
                     System.Console.WriteLine("  clear        - Clear the screen.");
                     System.Console.WriteLine("  ipconfig     - Show current network IP address.");
+                    System.Console.WriteLine("  ping <ip>    - Test network connectivity (ICMP Echo Request).");
                     System.Console.WriteLine("  weather      - Fetch and display the latest meteorological reading.");
                     System.Console.WriteLine("  serial-test  - Probe COM1 and listen for Arduino sensor telemetry.");
                     System.Console.WriteLine("  gui          - Switch to graphical meteorological dashboard.");
                     System.Console.WriteLine("  halt         - Shutdown OS.");
+                    break;
+
+                case "ping":
+                    if (!_isNetworkConfigured || parts.Length < 2)
+                    {
+                        System.Console.WriteLine("Erro: Rede desligada ou falta de IP. (Ex: ping 192.168.1.1)");
+                        break;
+                    }
+                    try
+                    {
+                        var address = Cosmos.System.Network.IPv4.Address.Parse(parts[1]);
+                        System.Console.WriteLine($"A enviar ping para {parts[1]}...");
+                        
+                        int successCount = 0;
+                        using (var xClient = new Cosmos.System.Network.IPv4.ICMPClient())
+                        {
+                            xClient.Connect(address);
+                            for (int i = 0; i < 4; i++)
+                            {
+                                xClient.SendEcho();
+                                var endpoint = new Cosmos.System.Network.IPv4.EndPoint(Cosmos.System.Network.IPv4.Address.Zero, 0);
+                                int time = xClient.Receive(ref endpoint, 2000); // 2 segs timeout
+                                
+                                if (time >= 0)
+                                {
+                                    System.Console.WriteLine($"Resposta de {parts[1]}: tempo={time}ms");
+                                    successCount++;
+                                }
+                                else
+                                {
+                                    System.Console.WriteLine("Esgotado o tempo de espera do pedido.");
+                                }
+                            }
+                        }
+                        System.Console.WriteLine($"Estatisticas: 4 enviados, {successCount} recebidos.\n");
+                    }
+                    catch
+                    {
+                        System.Console.WriteLine("IP Invalido ou erro de hardware de rede.\n");
+                    }
                     break;
 
                 case "clear":

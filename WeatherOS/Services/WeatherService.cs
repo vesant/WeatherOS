@@ -68,7 +68,7 @@ namespace WeatherOS.Services
                 try
                 {
                     // Usa um timeout pequeno para não bloquear o GUI para sempre se não houver dados (500ms)
-                    var endPoint = new Cosmos.System.Network.IPv4.EndPoint(Cosmos.System.Network.IPv4.Address.Any, 0);
+                    var endPoint = new Cosmos.System.Network.IPv4.EndPoint(Cosmos.System.Network.IPv4.Address.Zero, 0);
                     byte[] data = _udpClient.Receive(ref endPoint);
                     
                     if (data != null && data.Length > 0)
