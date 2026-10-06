@@ -38,18 +38,35 @@ namespace WeatherOS.Graphics
 
         public bool Start()
         {
-            try
+            Mode[] modesToTry = new Mode[] 
             {
-                _canvas = FullScreenCanvas.GetFullScreenCanvas(_screenMode);
-                _canvas.Clear(_colorBackground);
-                _isActive = true;
-                return true;
-            }
-            catch (Exception)
+                new Mode(800, 600, ColorDepth.ColorDepth32),
+                new Mode(800, 600, ColorDepth.ColorDepth16),
+                new Mode(1024, 768, ColorDepth.ColorDepth32),
+                new Mode(1024, 768, ColorDepth.ColorDepth16)
+            };
+
+            foreach (var mode in modesToTry)
             {
-                _isActive = false;
-                return false;
+                try
+                {
+                    _canvas = FullScreenCanvas.GetFullScreenCanvas(mode);
+                    if (_canvas != null)
+                    {
+                        _screenMode = mode;
+                        _canvas.Clear(_colorBackground);
+                        _isActive = true;
+                        return true;
+                    }
+                }
+                catch
+                {
+                    // Falhou, tenta o próximo modo VBE
+                }
             }
+
+            _isActive = false;
+            return false;
         }
 
         public void Render(ref WeatherData data)
