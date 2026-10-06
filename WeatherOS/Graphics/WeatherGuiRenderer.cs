@@ -16,7 +16,6 @@ namespace WeatherOS.Graphics
         {
             _isActive = true;
             System.Console.Clear();
-            System.Console.CursorVisible = false;
             return true;
         }
 
@@ -24,7 +23,6 @@ namespace WeatherOS.Graphics
         {
             _isActive = false;
             System.Console.Clear();
-            System.Console.CursorVisible = true;
         }
 
         public void Render(ref WeatherData data)
@@ -35,13 +33,13 @@ namespace WeatherOS.Graphics
             System.Console.SetCursorPosition(0, 0);
 
             DrawHeader();
-            DrawDataBox("TEMPERATURE", $"{data.TemperatureCelsius:F1} C", ConsoleColor.Red, 2, 4);
-            DrawDataBox("HUMIDITY", $"{data.HumidityPercent:F1} %", ConsoleColor.Cyan, 28, 4);
-            DrawDataBox("PRESSURE", $"{data.PressureHpa:F1} hPa", ConsoleColor.Green, 54, 4);
+            DrawDataBox("TEMPERATURE", ((int)data.TemperatureCelsius).ToString() + " C", ConsoleColor.Red, 2, 4);
+            DrawDataBox("HUMIDITY", ((int)data.HumidityPercent).ToString() + " %", ConsoleColor.Cyan, 28, 4);
+            DrawDataBox("PRESSURE", ((int)data.PressureHpa).ToString() + " hPa", ConsoleColor.Green, 54, 4);
             
-            DrawDataBox("WIND (SPEED)", $"{data.WindSpeedKmh:F1} km/h", ConsoleColor.Yellow, 2, 10);
-            DrawDataBox("WIND (DIR)", $"{data.WindDirection}", ConsoleColor.Yellow, 28, 10);
-            DrawDataBox("CONDITION", $"{data.Condition}", ConsoleColor.Magenta, 54, 10);
+            DrawDataBox("WIND (SPEED)", ((int)data.WindSpeedKmh).ToString() + " km/h", ConsoleColor.Yellow, 2, 10);
+            DrawDataBox("WIND (DIR)", data.WindDirection, ConsoleColor.Yellow, 28, 10);
+            DrawDataBox("CONDITION", data.Condition, ConsoleColor.Magenta, 54, 10);
 
             DrawFooter();
         }
@@ -50,12 +48,8 @@ namespace WeatherOS.Graphics
         {
             System.Console.ForegroundColor = ConsoleColor.White;
             System.Console.BackgroundColor = ConsoleColor.Blue;
-            string title = "   WEATHER OS - TERMINAL DASHBOARD (UDP TELEMETRY)   ";
-            int padding = (80 - title.Length) / 2;
-            System.Console.WriteLine(new string(' ', padding) + title + new string(' ', 80 - padding - title.Length));
+            System.Console.Write("              WEATHER OS - TERMINAL DASHBOARD (OPENWEATHER API)                ");
             System.Console.ResetColor();
-            System.Console.WriteLine();
-            System.Console.WriteLine();
         }
 
         private void DrawDataBox(string title, string value, ConsoleColor valueColor, int left, int top)
@@ -67,14 +61,16 @@ namespace WeatherOS.Graphics
             System.Console.SetCursorPosition(left, top + 1);
             System.Console.Write("| ");
             System.Console.ForegroundColor = ConsoleColor.White;
-            System.Console.Write(title.PadRight(22));
+            System.Console.Write(title);
+            for(int i = title.Length; i < 22; i++) System.Console.Write(" ");
             System.Console.ForegroundColor = ConsoleColor.DarkGray;
             System.Console.Write(" |");
 
             System.Console.SetCursorPosition(left, top + 2);
             System.Console.Write("| ");
             System.Console.ForegroundColor = valueColor;
-            System.Console.Write(value.PadRight(22));
+            System.Console.Write(value);
+            for(int i = value.Length; i < 22; i++) System.Console.Write(" ");
             System.Console.ForegroundColor = ConsoleColor.DarkGray;
             System.Console.Write(" |");
 
@@ -87,17 +83,18 @@ namespace WeatherOS.Graphics
         {
             System.Console.SetCursorPosition(0, 23);
             System.Console.ForegroundColor = ConsoleColor.DarkGray;
-            System.Console.WriteLine(new string('-', 80));
+            for(int i = 0; i < 79; i++) System.Console.Write("-");
+            
+            System.Console.SetCursorPosition(0, 24);
             System.Console.ForegroundColor = ConsoleColor.Gray;
             System.Console.Write(" >> STATUS: ");
             System.Console.ForegroundColor = ConsoleColor.Green;
-            System.Console.Write("ONLINE (UDP PORT 6000)");
+            System.Console.Write("ONLINE (OPENWEATHER API)");
             System.Console.ForegroundColor = ConsoleColor.Gray;
             System.Console.Write("   |   PRESS ");
             System.Console.ForegroundColor = ConsoleColor.White;
             System.Console.Write("[ESC]");
-            System.Console.ForegroundColor = ConsoleColor.Gray;
-            System.Console.Write(" TO EXIT");
+            System.Console.ResetColor();
         }
     }
 }

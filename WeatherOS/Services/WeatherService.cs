@@ -58,27 +58,111 @@ namespace WeatherOS.Services
 
         public WeatherData GetLatestReading()
         {
-            if (_udpClient != null)
+            return _cachedReading;
+        }
+
+        public void FetchOpenWeather(string city, string apiKey)
+        {
+            try
             {
-                try
-                {
-                    var endPoint = new Cosmos.System.Network.IPv4.EndPoint(Cosmos.System.Network.IPv4.Address.Zero, 0);
-                    // Pode bloquear se nao houver pacotes (usar PowerShell script para destrancar)
-                    byte[] data = _udpClient.Receive(ref endPoint);
-                    
-                    if (data != null && data.Length > 0)
+                System.Console.WriteLine($"[API] A invocar TCP Engine customizado (Bare-Metal TCP Handshake)...");
+                
+                var destIp = new Cosmos.System.Network.IPv4.Address(141, 95, 99, 79);
+                var gatewayIp = new Cosmos.System.Network.IPv4.Address(10, 0, 2, 2);
+                
+                // Acordar o Gateway ARP do VirtualBox com um ICMP invisivel
+                try {
+                    using (var arpWake = new Cosmos.System.Network.IPv4.ICMPClient())
                     {
-                        string packet = System.Text.Encoding.ASCII.GetString(data);
-                        ParseTelemetryPacket(packet);
+                        arpWake.Connect(gatewayIp);
+                        arpWake.SendEcho();
                     }
-                }
-                catch
+                } catch { }
+                
+                string request = $"GET /data/2.5/weather?q={city}&appid={apiKey}&units=metric HTTP/1.1\r\n" +
+                                 "Host: api.openweathermap.org\r\n" +
+                                 "Connection: close\r\n\r\n";
+                                 
+                System.Console.WriteLine("[API] Injectando pacotes SYN no barramento Ethernet...");
+                
+                string response = RawTcpHttp.FetchGet(destIp, gatewayIp, request);
+                
+                if (!string.IsNullOrWhiteSpace(response))
                 {
-                    // Mantém os valores em cache
+                    ParseOpenWeatherJson(response);
+                    System.Console.WriteLine("[API] Sucesso ABSOLUTO! Dados interceptados e processados nativamente via hardware NIC.");
+                }
+                else
+                {
+                    System.Console.WriteLine("[API] Erro: Timeout na maquina de estados TCP customizada.");
                 }
             }
+            catch (Exception ex)
+            {
+                System.Console.WriteLine($"[API] Falha no Motor TCP: {ex.Message}");
+            }
+        }
 
-            return _cachedReading;
+        private void ParseOpenWeatherJson(string json)
+        {
+            try
+            {
+                _cachedReading.TemperatureCelsius = ParseJsonFloat(json, "temp");
+                _cachedReading.HumidityPercent = ParseJsonFloat(json, "humidity");
+                _cachedReading.PressureHpa = ParseJsonFloat(json, "pressure");
+                
+                // OpenWeather returns speed in meters/sec. Multiply by 3.6 for km/h.
+                _cachedReading.WindSpeedKmh = ParseJsonFloat(json, "speed") * 3.6f; 
+                
+                string weatherCondition = ParseJsonString(json, "main");
+                if (!string.IsNullOrWhiteSpace(weatherCondition))
+                {
+                    _cachedReading.Condition = weatherCondition;
+                }
+                
+                _cachedReading.Timestamp = DateTime.UtcNow;
+            }
+            catch { }
+        }
+
+        private float ParseJsonFloat(string json, string key)
+        {
+            string search = "\"" + key + "\":";
+            int idx = json.IndexOf(search);
+            if (idx == -1) return 0f;
+            
+            idx += search.Length;
+            int endIdx = json.IndexOfAny(new char[] { ',', '}' }, idx);
+            if (endIdx == -1) return 0f;
+            
+            string valStr = json.Substring(idx, endIdx - idx).Trim();
+            
+            string[] parts = valStr.Split('.');
+            float val = float.Parse(parts[0]);
+            
+            if (parts.Length > 1)
+            {
+                float divisor = 1;
+                for (int i = 0; i < parts[1].Length; i++) divisor *= 10;
+                float dec = float.Parse(parts[1]);
+                
+                if (val >= 0) val += (dec / divisor);
+                else val -= (dec / divisor);
+            }
+            return val;
+        }
+
+        private string ParseJsonString(string json, string key)
+        {
+            string search = "\"" + key + "\":\"";
+            int idx = json.IndexOf(search);
+            if (idx == -1) return "";
+            
+            idx += search.Length;
+            int endIdx = json.IndexOf("\"", idx);
+            if (endIdx == -1) return "";
+            
+            return json.Substring(idx, endIdx - idx);
         }
 
         private void ParseTelemetryPacket(string packet)

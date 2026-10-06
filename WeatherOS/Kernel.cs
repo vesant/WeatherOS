@@ -83,9 +83,20 @@ namespace WeatherOS
                     System.Console.WriteLine("  ipconfig     - Show current network IP address.");
                     System.Console.WriteLine("  ping <ip>    - Test network connectivity (ICMP Echo Request).");
                     System.Console.WriteLine("  weather      - Fetch and display the latest meteorological reading.");
+                    System.Console.WriteLine("  fetch <city> - Pull live data from OpenWeather API.");
                     System.Console.WriteLine("  serial-test  - Probe COM1 and listen for Arduino sensor telemetry.");
-                    System.Console.WriteLine("  gui          - Switch to graphical meteorological dashboard.");
+                    System.Console.WriteLine("  gui          - Switch to ASCII meteorological dashboard.");
                     System.Console.WriteLine("  poweroff     - ACPI Shutdown / Power off the system.");
+                    break;
+
+                case "fetch":
+                    if (!_isNetworkConfigured || parts.Length < 2)
+                    {
+                        System.Console.WriteLine("Error: Network offline or missing city. (Example: fetch Lisbon)");
+                        break;
+                    }
+                    string city = string.Join(" ", parts, 1, parts.Length - 1);
+                    _weatherService.FetchOpenWeather(city, "bd7e29393f3846fb31118232bdb2001f");
                     break;
 
                 case "ping":
@@ -171,22 +182,22 @@ namespace WeatherOS
             System.Console.WriteLine("==================================================");
             System.Console.ResetColor();
 
-            System.Console.WriteLine($"  Source Station     : Local Weather Engine (Standalone x86 PC)");
-            System.Console.WriteLine($"  Condition          : {_latestWeatherData.Condition}");
+            System.Console.WriteLine("  Source Station     : Local Weather Engine (Standalone x86 PC)");
+            System.Console.WriteLine("  Condition          : " + _latestWeatherData.Condition);
             
             System.Console.ForegroundColor = ConsoleColor.Yellow;
-            System.Console.WriteLine($"  Temperature        : {_latestWeatherData.TemperatureCelsius:F1} C");
+            System.Console.WriteLine("  Temperature        : " + ((int)_latestWeatherData.TemperatureCelsius).ToString() + " C");
             System.Console.ResetColor();
 
             System.Console.ForegroundColor = ConsoleColor.Blue;
-            System.Console.WriteLine($"  Relative Humidity  : {_latestWeatherData.HumidityPercent:F1} %");
+            System.Console.WriteLine("  Relative Humidity  : " + ((int)_latestWeatherData.HumidityPercent).ToString() + " %");
             System.Console.ResetColor();
 
             System.Console.ForegroundColor = ConsoleColor.Green;
-            System.Console.WriteLine($"  Atmospheric Press. : {_latestWeatherData.PressureHpa:F1} hPa");
+            System.Console.WriteLine("  Atmospheric Press. : " + ((int)_latestWeatherData.PressureHpa).ToString() + " hPa");
             System.Console.ResetColor();
 
-            System.Console.WriteLine($"  Wind Speed / Dir   : {_latestWeatherData.WindSpeedKmh:F1} km/h ({_latestWeatherData.WindDirection})");
+            System.Console.WriteLine("  Wind Speed / Dir   : " + ((int)_latestWeatherData.WindSpeedKmh).ToString() + " km/h (" + _latestWeatherData.WindDirection + ")");
             System.Console.WriteLine("--------------------------------------------------");
             System.Console.ForegroundColor = ConsoleColor.DarkGray;
             System.Console.WriteLine("  Note: Type 'gui' to inspect visual bar charts.\n");
@@ -225,21 +236,26 @@ namespace WeatherOS
 
         private void HandleGuiMode()
         {
-            // Desenhar o ecrã PRIMEIRO com os últimos dados conhecidos
-            _guiRenderer.Render(ref _latestWeatherData);
-
-            // Verificar se o utilizador quer sair ANTES de bloquear na rede
-            if (Cosmos.System.KeyboardManager.TryReadKey(out var keyEvent))
+            try
             {
+                _latestWeatherData = _weatherService.GetLatestReading();
+                _guiRenderer.Render(ref _latestWeatherData);
+
+                // Block until a key is pressed (Saves 100% CPU!)
+                var keyEvent = Cosmos.System.KeyboardManager.ReadKey();
                 if (keyEvent.Key == Cosmos.System.ConsoleKeyEx.Escape || keyEvent.Key == Cosmos.System.ConsoleKeyEx.Q)
                 {
                     ExitGuiMode();
-                    return;
                 }
             }
-
-            // Bloqueia à escuta de rede
-            _latestWeatherData = _weatherService.GetLatestReading();
+            catch (Exception ex)
+            {
+                System.Console.ForegroundColor = ConsoleColor.Red;
+                System.Console.Write("[GUI ERROR] ");
+                System.Console.WriteLine(ex.Message);
+                System.Console.ResetColor();
+                while(true) { } // Halt to ensure we see the error!
+            }
         }
 
         private void ExitGuiMode()
