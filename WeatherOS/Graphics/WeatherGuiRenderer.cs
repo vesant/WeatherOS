@@ -38,128 +38,103 @@ namespace WeatherOS.Graphics
 
         public bool Start()
         {
-            Mode[] modesToTry = new Mode[] 
+            try
             {
-                new Mode(800, 600, ColorDepth.ColorDepth32),
-                new Mode(1024, 768, ColorDepth.ColorDepth32),
-                new Mode(640, 480, ColorDepth.ColorDepth32)
-            };
-
-            foreach (var mode in modesToTry)
-            {
-                try
-                {
-                    _canvas = FullScreenCanvas.GetFullScreenCanvas(mode);
-                    if (_canvas != null)
-                    {
-                        _screenMode = mode;
-                        _canvas.Clear(_colorBackground);
-                        _isActive = true;
-                        return true;
-                    }
-                }
-                catch
-                {
-                    // Falhou, tenta o próximo modo VBE
-                }
+                _canvas = FullScreenCanvas.GetFullScreenCanvas(_screenMode);
+                _canvas.Clear(_colorBackground);
+                _isActive = true;
+                return true;
             }
-
-            _isActive = false;
-            return false;
+            catch (Exception)
+            {
+                _isActive = false;
+                return false;
+            }
         }
 
         public void Render(ref WeatherData data)
         {
             if (!_isActive || _canvas == null) return;
 
+            // Clear background
             _canvas.Clear(_colorBackground);
 
-            // Header Bar
-            _canvas.DrawFilledRectangle(_penCardBg, 20, 20, 760, 50);
-            _canvas.DrawRectangle(_penBorder, 20, 20, 760, 50);
-            _canvas.DrawString("WeatherOS - Painel Meteorologico", _font, _penText, 40, 36);
-            _canvas.DrawString("[VBE 800x600x32]", _font, _penTextDim, 640, 36);
+            // Draw Top Banner
+            _canvas.DrawString("WEATHER OS - SATELLITE TELEMETRY", _font, _penText, 30, 20);
+            _canvas.DrawString("Real-time meteorological monitoring dashboard", _font, _penTextDim, 30, 40);
 
-            // Sun and Weather Condition Visual Card
-            _canvas.DrawFilledRectangle(_penCardBg, 20, 90, 240, 420);
-            _canvas.DrawRectangle(_penBorder, 20, 90, 240, 420);
-            _canvas.DrawString("CONDICAO ATUAL", _font, _penTextDim, 35, 105);
-
-            int sunCenterX = 140;
-            int sunCenterY = 220;
-            int sunRadius = 45;
-
-            _canvas.DrawFilledCircle(_penSun, sunCenterX, sunCenterY, sunRadius);
+            // Left Card: Core Metrics
+            DrawDataCard(30, 80, 350, 480, "PRIMARY SENSORS");
             
-            _canvas.DrawLine(_penSunCorona, sunCenterX - 65, sunCenterY, sunCenterX - 50, sunCenterY);
-            _canvas.DrawLine(_penSunCorona, sunCenterX + 50, sunCenterY, sunCenterX + 65, sunCenterY);
-            _canvas.DrawLine(_penSunCorona, sunCenterX, sunCenterY - 65, sunCenterX, sunCenterY - 50);
-            _canvas.DrawLine(_penSunCorona, sunCenterX, sunCenterY + 50, sunCenterX, sunCenterY + 65);
-            _canvas.DrawLine(_penSunCorona, sunCenterX - 45, sunCenterY - 45, sunCenterX - 35, sunCenterY - 35);
-            _canvas.DrawLine(_penSunCorona, sunCenterX + 35, sunCenterY + 35, sunCenterX + 45, sunCenterY + 45);
-            _canvas.DrawLine(_penSunCorona, sunCenterX + 35, sunCenterY - 35, sunCenterX + 45, sunCenterY - 45);
-            _canvas.DrawLine(_penSunCorona, sunCenterX - 45, sunCenterY + 45, sunCenterX - 35, sunCenterY + 35);
+            _canvas.DrawString("LOCAL TEMPERATURE", _font, _penTextDim, 50, 130);
+            _canvas.DrawString($"{data.TemperatureCelsius:F1} C", _font, _penSun, 50, 150);
+            DrawProgressBar(50, 170, 250, 15, data.TemperatureCelsius, -10f, 50f, _penTempBar, _penTempBarBg);
 
-            _canvas.DrawString(data.Condition, _font, _penText, 35, 300);
-            _canvas.DrawString("Estacao: PC Local (x86)", _font, _penTextDim, 35, 330);
+            _canvas.DrawString("RELATIVE HUMIDITY", _font, _penTextDim, 50, 220);
+            _canvas.DrawString($"{data.HumidityPercent:F1} %", _font, _penText, 50, 240);
+            DrawProgressBar(50, 260, 250, 15, data.HumidityPercent, 0f, 100f, _penHumidityBar, _penTempBarBg);
 
-            // Temperature Chart
-            _canvas.DrawFilledRectangle(_penCardBg, 280, 90, 500, 130);
-            _canvas.DrawRectangle(_penBorder, 280, 90, 500, 130);
-            _canvas.DrawString("TEMPERATURA AMBIENTE", _font, _penTextDim, 300, 105);
+            _canvas.DrawString("ATMOSPHERIC PRESSURE", _font, _penTextDim, 50, 310);
+            _canvas.DrawString($"{data.PressureHpa:F1} hPa", _font, _penText, 50, 330);
+            DrawProgressBar(50, 350, 250, 15, data.PressureHpa, 950f, 1050f, _penPressureBar, _penTempBarBg);
+
+            // Right Card: Environment & Wind
+            DrawDataCard(410, 80, 350, 480, "ENVIRONMENTAL DATA");
             
-            _canvas.DrawFilledRectangle(_penTempBarBg, 300, 140, 450, 24);
-            int tempWidth = (int)((data.TemperatureCelsius / 50.0f) * 450);
-            if (tempWidth < 0) tempWidth = 0;
-            if (tempWidth > 450) tempWidth = 450;
-            _canvas.DrawFilledRectangle(_penTempBar, 300, 140, tempWidth, 24);
-            _canvas.DrawRectangle(_penBorder, 300, 140, 450, 24);
-            _canvas.DrawString("Temp: ~21.5 C (Escala 0 a 50 C)", _font, _penText, 300, 180);
+            _canvas.DrawString("SKY CONDITION", _font, _penTextDim, 430, 130);
+            _canvas.DrawString(data.Condition, _font, _penText, 430, 150);
 
-            // Humidity Chart
-            _canvas.DrawFilledRectangle(_penCardBg, 280, 235, 500, 130);
-            _canvas.DrawRectangle(_penBorder, 280, 235, 500, 130);
-            _canvas.DrawString("HUMIDADE RELATIVA DO AR", _font, _penTextDim, 300, 250);
+            // Draw simple sun/weather icon
+            _canvas.DrawFilledCircle(_penSunCorona, 650, 170, 40);
+            _canvas.DrawFilledCircle(_penSun, 650, 170, 35);
 
-            _canvas.DrawFilledRectangle(_penTempBarBg, 300, 285, 450, 24);
-            int humWidth = (int)((data.HumidityPercent / 100.0f) * 450);
-            if (humWidth < 0) humWidth = 0;
-            if (humWidth > 450) humWidth = 450;
-            _canvas.DrawFilledRectangle(_penHumidityBar, 300, 285, humWidth, 24);
-            _canvas.DrawRectangle(_penBorder, 300, 285, 450, 24);
-            _canvas.DrawString("Humidade: ~58 % (Escala 0 a 100 %)", _font, _penText, 300, 325);
+            _canvas.DrawString("WIND DYNAMICS", _font, _penTextDim, 430, 260);
+            _canvas.DrawString($"Speed: {data.WindSpeedKmh:F1} km/h", _font, _penText, 430, 280);
+            _canvas.DrawString($"Heading: {data.WindDirection}", _font, _penText, 430, 300);
 
-            // Atmospheric Pressure
-            _canvas.DrawFilledRectangle(_penCardBg, 280, 380, 500, 130);
-            _canvas.DrawRectangle(_penBorder, 280, 380, 500, 130);
-            _canvas.DrawString("PRESSAO ATMOSFERICA E VENTO", _font, _penTextDim, 300, 395);
-            _canvas.DrawString("Pressao: 1014.2 hPa (Normal: 1013.25 hPa)", _font, _penText, 300, 430);
-            _canvas.DrawString("Vento: 12.8 km/h Direcao: NNW", _font, _penText, 300, 460);
+            // Draw simple compass representation
+            _canvas.DrawRectangle(_penTextDim, 600, 250, 100, 100);
+            _canvas.DrawString("N", _font, _penText, 645, 255);
+            _canvas.DrawString("S", _font, _penText, 645, 335);
+            _canvas.DrawString("W", _font, _penText, 605, 295);
+            _canvas.DrawString("E", _font, _penText, 685, 295);
 
-            // Footer
-            _canvas.DrawFilledRectangle(_penCardBg, 20, 530, 760, 50);
-            _canvas.DrawRectangle(_penBorder, 20, 530, 760, 50);
-            _canvas.DrawString("Controlos: Pressiona [ESC] ou [Q] para reiniciar o sistema (Voltar ao Terminal)", _font, _penText, 40, 547);
+            _canvas.DrawString("SYSTEM STATUS: ONLINE (LOCAL MODE)", _font, _penTextDim, 30, 580);
+            _canvas.DrawString("PRESS [ESC] TO REBOOT AND RETURN TO TERMINAL", _font, _penSunCorona, 450, 580);
 
             _canvas.Display();
         }
 
+        private void DrawDataCard(int x, int y, int width, int height, string title)
+        {
+            // Background
+            _canvas.DrawFilledRectangle(_penCardBg, x, y, width, height);
+            
+            // Border
+            _canvas.DrawRectangle(_penBorder, x, y, width, height);
+            
+            // Card Title Header
+            _canvas.DrawFilledRectangle(_penBorder, x, y, width, 30);
+            _canvas.DrawString(title, _font, _penText, x + 15, y + 8);
+        }
+
+        private void DrawProgressBar(int x, int y, int width, int height, float value, float min, float max, Pen fillPen, Pen bgPen)
+        {
+            _canvas.DrawFilledRectangle(bgPen, x, y, width, height);
+            
+            float clampedValue = Math.Max(min, Math.Min(value, max));
+            float percentage = (clampedValue - min) / (max - min);
+            int fillWidth = (int)(width * percentage);
+
+            if (fillWidth > 0)
+            {
+                _canvas.DrawFilledRectangle(fillPen, x, y, fillWidth, height);
+            }
+        }
+
         public void Stop()
         {
-            if (!_isActive) return;
-
-            try
-            {
-                _canvas.Disable();
-                _canvas = null;
-            }
-            catch (Exception)
-            {
-            }
-            finally
-            {
-                _isActive = false;
-            }
+            _isActive = false;
         }
     }
 }

@@ -32,15 +32,8 @@ namespace WeatherOS
 
             try
             {
-                System.Console.WriteLine("Aguardando IP via DHCP (Pode demorar uns segundos)...");
-                using (var xClient = new Cosmos.System.Network.IPv4.UDP.DHCP.DHCPClient())
-                {
-                    // Envia um pedido à rede (Router) para obter um IP
-                    xClient.SendDiscoverPacket();
-                }
-
-                _assignedIpAddress = Cosmos.System.Network.Config.NetworkConfiguration.CurrentAddress.ToString();
-                _isNetworkConfigured = true;
+                _assignedIpAddress = "Offline (VBE GUI Mode)";
+                _isNetworkConfigured = false;
             }
             catch (Exception)
             {

@@ -35,53 +35,30 @@ namespace WeatherOS.Services
     public class WeatherService
     {
         private WeatherData _cachedReading;
-        private Cosmos.System.Network.IPv4.UDP.UdpClient _udpClient;
+        private int _simulationCycle = 0;
 
         public WeatherService()
         {
-            // Initial baseline weather conditions (e.g., Lisbon or standard meteorology station)
+            // Initial baseline weather conditions
             _cachedReading = new WeatherData(
                 temp: 21.5f,
                 humidity: 58.0f,
                 pressure: 1014.2f,
                 windSpeed: 12.8f,
                 windDir: "NNW",
-                condition: "A aguardar satelite..."
+                condition: "Clear Sky / Sunny"
             );
-
-            try
-            {
-                // Iniciar o servidor UDP na porta 6000
-                _udpClient = new Cosmos.System.Network.IPv4.UDP.UdpClient(6000);
-            }
-            catch { }
         }
 
-        /// <summary>
-        /// Retrieves the latest meteorological reading.
-        /// Polls the UDP socket for incoming Arduino packets.
-        /// </summary>
         public WeatherData GetLatestReading()
         {
-            if (_udpClient != null)
-            {
-                try
-                {
-                    // Usa um timeout pequeno para não bloquear o GUI para sempre se não houver dados (500ms)
-                    var endPoint = new Cosmos.System.Network.IPv4.EndPoint(Cosmos.System.Network.IPv4.Address.Zero, 0);
-                    byte[] data = _udpClient.Receive(ref endPoint);
-                    
-                    if (data != null && data.Length > 0)
-                    {
-                        string packet = System.Text.Encoding.ASCII.GetString(data);
-                        ParseTelemetryPacket(packet);
-                    }
-                }
-                catch
-                {
-                    // Sem dados novos ou erro de rede, mantém os valores em cache
-                }
-            }
+            _simulationCycle = (_simulationCycle + 1) % 10;
+
+            // Micro-variations around baseline to simulate active telemetry
+            _cachedReading.TemperatureCelsius = 21.0f + (_simulationCycle * 0.2f);
+            _cachedReading.HumidityPercent = 58.0f + ((_simulationCycle % 5) * 0.5f);
+            _cachedReading.PressureHpa = 1013.8f + ((_simulationCycle % 3) * 0.3f);
+            _cachedReading.WindSpeedKmh = 12.0f + (_simulationCycle * 0.4f);
 
             return _cachedReading;
         }
