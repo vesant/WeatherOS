@@ -32,8 +32,14 @@ namespace WeatherOS
 
             try
             {
-                _assignedIpAddress = "Offline (VBE GUI Mode)";
-                _isNetworkConfigured = false;
+                System.Console.WriteLine("Initializing Network Stack (DHCP)...");
+                using (var xClient = new Cosmos.System.Network.IPv4.UDP.DHCP.DHCPClient())
+                {
+                    xClient.SendDiscoverPacket();
+                }
+
+                _assignedIpAddress = Cosmos.System.Network.Config.NetworkConfiguration.CurrentAddress.ToString();
+                _isNetworkConfigured = true;
             }
             catch (Exception)
             {
@@ -219,23 +225,32 @@ namespace WeatherOS
 
         private void HandleGuiMode()
         {
-            _latestWeatherData = _weatherService.GetLatestReading();
+            // Desenhar o ecrã PRIMEIRO com os últimos dados conhecidos
             _guiRenderer.Render(ref _latestWeatherData);
 
-            if (KeyboardManager.TryReadKey(out var keyEvent))
+            // Verificar se o utilizador quer sair ANTES de bloquear na rede
+            if (Cosmos.System.KeyboardManager.TryReadKey(out var keyEvent))
             {
-                if (keyEvent.Key == ConsoleKeyEx.Escape || keyEvent.Key == ConsoleKeyEx.Q)
+                if (keyEvent.Key == Cosmos.System.ConsoleKeyEx.Escape || keyEvent.Key == Cosmos.System.ConsoleKeyEx.Q)
                 {
                     ExitGuiMode();
+                    return;
                 }
             }
+
+            // Bloqueia à escuta de rede
+            _latestWeatherData = _weatherService.GetLatestReading();
         }
 
         private void ExitGuiMode()
         {
-            // Devido a um bug conhecido no Cosmos Gen2 (falha ao restaurar os registos VGA a partir de VBE),
-            // a forma mais limpa de sair do modo gráfico é fazer um reboot instantâneo.
-            Cosmos.System.Power.Reboot();
+            _guiRenderer.Stop();
+            _isGuiActive = false;
+
+            PrintBootBanner();
+            System.Console.ForegroundColor = ConsoleColor.Yellow;
+            System.Console.WriteLine("[DASHBOARD ENCERRADO] Regresso ao Terminal.\n");
+            System.Console.ResetColor();
         }
 
         private void PrintBootBanner()

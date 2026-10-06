@@ -35,7 +35,7 @@ namespace WeatherOS.Services
     public class WeatherService
     {
         private WeatherData _cachedReading;
-        private int _simulationCycle = 0;
+        private Cosmos.System.Network.IPv4.UDP.UdpClient _udpClient;
 
         public WeatherService()
         {
@@ -46,19 +46,37 @@ namespace WeatherOS.Services
                 pressure: 1014.2f,
                 windSpeed: 12.8f,
                 windDir: "NNW",
-                condition: "Clear Sky / Sunny"
+                condition: "Awaiting UDP Telemetry..."
             );
+
+            try
+            {
+                _udpClient = new Cosmos.System.Network.IPv4.UDP.UdpClient(6000);
+            }
+            catch { }
         }
 
         public WeatherData GetLatestReading()
         {
-            _simulationCycle = (_simulationCycle + 1) % 10;
-
-            // Micro-variations around baseline to simulate active telemetry
-            _cachedReading.TemperatureCelsius = 21.0f + (_simulationCycle * 0.2f);
-            _cachedReading.HumidityPercent = 58.0f + ((_simulationCycle % 5) * 0.5f);
-            _cachedReading.PressureHpa = 1013.8f + ((_simulationCycle % 3) * 0.3f);
-            _cachedReading.WindSpeedKmh = 12.0f + (_simulationCycle * 0.4f);
+            if (_udpClient != null)
+            {
+                try
+                {
+                    var endPoint = new Cosmos.System.Network.IPv4.EndPoint(Cosmos.System.Network.IPv4.Address.Zero, 0);
+                    // Pode bloquear se nao houver pacotes (usar PowerShell script para destrancar)
+                    byte[] data = _udpClient.Receive(ref endPoint);
+                    
+                    if (data != null && data.Length > 0)
+                    {
+                        string packet = System.Text.Encoding.ASCII.GetString(data);
+                        ParseTelemetryPacket(packet);
+                    }
+                }
+                catch
+                {
+                    // Mantém os valores em cache
+                }
+            }
 
             return _cachedReading;
         }
