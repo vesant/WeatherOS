@@ -8,7 +8,7 @@ namespace WeatherOS
 {
     public class Kernel : Cosmos.System.Kernel
     {
-        private WeatherGuiRenderer _guiRenderer = null!;
+        private TuiDesktop _tuiDesktop = null!;
         private WeatherService _weatherService = null!;
         private SerialSensorService _serialSensorService = null!;
         
@@ -17,7 +17,6 @@ namespace WeatherOS
         private bool _isVfsMounted = false;
         private bool _isNetworkConfigured = false;
         private string _assignedIpAddress = "127.0.0.1 (Loopback)";
-        private bool _isGuiActive = false;
 
         protected override void BeforeRun()
         {
@@ -47,8 +46,8 @@ namespace WeatherOS
                 _assignedIpAddress = "Offline (No Cable / DHCP)";
             }
 
-            _guiRenderer = new WeatherGuiRenderer();
             _weatherService = new WeatherService();
+            _tuiDesktop = new TuiDesktop(_weatherService);
             _serialSensorService = new SerialSensorService();
 
             var splash = new Graphics.SplashScreen();
@@ -59,12 +58,6 @@ namespace WeatherOS
 
         protected override void Run()
         {
-            if (_isGuiActive)
-            {
-                HandleGuiMode();
-                return;
-            }
-
             System.Console.Write("WeatherOS> ");
             string input = System.Console.ReadLine();
             ProcessCommand(input);
@@ -222,54 +215,9 @@ namespace WeatherOS
 
         private void SwitchToGuiMode()
         {
-            System.Console.WriteLine("Switching to full-screen ASCII tty (Terminal Dashboard)...");
-            
-            bool started = _guiRenderer.Start();
-            if (started)
-            {
-                _isGuiActive = true;
-            }
-            else
-            {
-                System.Console.ForegroundColor = ConsoleColor.Red;
-                System.Console.WriteLine("[sys] error: unable to initialize dashboard renderer.");
-                System.Console.ResetColor();
-            }
-        }
-
-        private void HandleGuiMode()
-        {
-            try
-            {
-                _latestWeatherData = _weatherService.GetLatestReading();
-                _guiRenderer.Render(ref _latestWeatherData);
-
-                // Block until a key is pressed (Saves 100% CPU!)
-                var keyEvent = Cosmos.System.KeyboardManager.ReadKey();
-                if (keyEvent.Key == Cosmos.System.ConsoleKeyEx.Escape || keyEvent.Key == Cosmos.System.ConsoleKeyEx.Q)
-                {
-                    ExitGuiMode();
-                }
-            }
-            catch (Exception ex)
-            {
-                System.Console.ForegroundColor = ConsoleColor.Red;
-                System.Console.Write("[GUI ERROR] ");
-                System.Console.WriteLine(ex.Message);
-                System.Console.ResetColor();
-                while(true) { } // Halt to ensure we see the error!
-            }
-        }
-
-        private void ExitGuiMode()
-        {
-            _guiRenderer.Stop();
-            _isGuiActive = false;
-
+            System.Console.WriteLine("Loading TUI Desktop Environment...");
+            _tuiDesktop.Start();
             PrintBootBanner();
-            System.Console.ForegroundColor = ConsoleColor.Yellow;
-            System.Console.WriteLine("[sys] tty1: Terminated graphical session.\n");
-            System.Console.ResetColor();
         }
 
         private void PrintBootBanner()
