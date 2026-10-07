@@ -219,7 +219,7 @@ namespace WeatherOS
 
         private void SwitchToGuiMode()
         {
-            System.Console.WriteLine("Switching to Graphical Mode (VBE 800x600)...");
+            System.Console.WriteLine("Switching to full-screen ASCII tty (Terminal Dashboard)...");
             
             bool started = _guiRenderer.Start();
             if (started)
@@ -229,7 +229,7 @@ namespace WeatherOS
             else
             {
                 System.Console.ForegroundColor = ConsoleColor.Red;
-                System.Console.WriteLine("Error: Unable to initialize VBE canvas. Check QEMU VGA adapter.");
+                System.Console.WriteLine("[sys] error: unable to initialize dashboard renderer.");
                 System.Console.ResetColor();
             }
         }
@@ -265,7 +265,7 @@ namespace WeatherOS
 
             PrintBootBanner();
             System.Console.ForegroundColor = ConsoleColor.Yellow;
-            System.Console.WriteLine("[DASHBOARD ENCERRADO] Regresso ao Terminal.\n");
+            System.Console.WriteLine("[sys] tty1: Terminated graphical session.\n");
             System.Console.ResetColor();
         }
 
@@ -274,12 +274,12 @@ namespace WeatherOS
             System.Console.Clear();
             System.Console.ForegroundColor = ConsoleColor.Cyan;
             System.Console.WriteLine("================================================================================");
-            System.Console.WriteLine("    __      __               _   _                  ____   _____            ");
-            System.Console.WriteLine("    \\ \\    / /              | | | |                / __ \\ / ____|           ");
-            System.Console.WriteLine("     \\ \\  / /__  __ _ ______| |_| |__   ___ _ __  | |  | | (___             ");
-            System.Console.WriteLine("      \\ \\/ / _ \\/ _` |______| __| '_ \\ / _ \\ '__| | |  | |\\___ \\            ");
-            System.Console.WriteLine("       \\  /  __/ (_| |      | |_| | | |  __/ |    | |__| |____) |           ");
-            System.Console.WriteLine("        \\/ \\___|\\__,_|       \\__|_| |_|\\___|_|     \\____/|_____/            ");
+            System.Console.WriteLine("  __          __         _   _                  ____   _____            ");
+            System.Console.WriteLine("  \\ \\        / /        | | | |                / __ \\ / ____|           ");
+            System.Console.WriteLine("   \\ \\  /\\  / /__  __ _ | |_| |__   ___ _ __  | |  | | (___             ");
+            System.Console.WriteLine("    \\ \\/  \\/ / _ \\/ _` || __| '_ \\ / _ \\ '__| | |  | |\\___ \\            ");
+            System.Console.WriteLine("     \\  /\\  /  __/ (_| || |_| | | |  __/ |    | |__| |____) |           ");
+            System.Console.WriteLine("      \\/  \\/ \\___|\\__,_| \\__|_| |_|\\___|_|     \\____/|_____/            ");
             System.Console.WriteLine("              Dedicated Meteorological x86 Operating System                     ");
             System.Console.WriteLine("================================================================================");
             System.Console.ResetColor();

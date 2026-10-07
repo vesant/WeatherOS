@@ -14,9 +14,10 @@ namespace WeatherOS.Services
         public float WindSpeedKmh;
         public string WindDirection;
         public string Condition;
+        public string Location;
         public DateTime Timestamp;
 
-        public WeatherData(float temp, float humidity, float pressure, float windSpeed, string windDir, string condition)
+        public WeatherData(float temp, float humidity, float pressure, float windSpeed, string windDir, string condition, string loc)
         {
             TemperatureCelsius = temp;
             HumidityPercent = humidity;
@@ -24,6 +25,7 @@ namespace WeatherOS.Services
             WindSpeedKmh = windSpeed;
             WindDirection = windDir;
             Condition = condition;
+            Location = loc;
             Timestamp = DateTime.UtcNow;
         }
     }
@@ -46,7 +48,8 @@ namespace WeatherOS.Services
                 pressure: 1014.2f,
                 windSpeed: 12.8f,
                 windDir: "NNW",
-                condition: "Awaiting UDP Telemetry..."
+                condition: "Awaiting Telemetry...",
+                loc: "UNKNOWN"
             );
 
             try
@@ -65,7 +68,7 @@ namespace WeatherOS.Services
         {
             try
             {
-                System.Console.WriteLine($"[API] A invocar TCP Engine customizado (Bare-Metal TCP Handshake)...");
+                System.Console.WriteLine("[net] raw_tcp: initializing bare-metal TCP handshake sequence...");
                 
                 var destIp = new Cosmos.System.Network.IPv4.Address(141, 95, 99, 79);
                 var gatewayIp = new Cosmos.System.Network.IPv4.Address(10, 0, 2, 2);
@@ -83,23 +86,24 @@ namespace WeatherOS.Services
                                  "Host: api.openweathermap.org\r\n" +
                                  "Connection: close\r\n\r\n";
                                  
-                System.Console.WriteLine("[API] Injectando pacotes SYN no barramento Ethernet...");
+                System.Console.WriteLine($"[net] raw_tcp: sending SYN to {destIp.ToString()} via gateway {gatewayIp.ToString()}");
                 
                 string response = RawTcpHttp.FetchGet(destIp, gatewayIp, request);
                 
                 if (!string.IsNullOrWhiteSpace(response))
                 {
                     ParseOpenWeatherJson(response);
-                    System.Console.WriteLine("[API] Sucesso ABSOLUTO! Dados interceptados e processados nativamente via hardware NIC.");
+                    _cachedReading.Location = city.ToUpper();
+                    System.Console.WriteLine("[net] raw_tcp: payload received successfully. (status: 200 OK)");
                 }
                 else
                 {
-                    System.Console.WriteLine("[API] Erro: Timeout na maquina de estados TCP customizada.");
+                    System.Console.WriteLine("[net] raw_tcp: error: connection timed out during handshake.");
                 }
             }
             catch (Exception ex)
             {
-                System.Console.WriteLine($"[API] Falha no Motor TCP: {ex.Message}");
+                System.Console.WriteLine($"[net] raw_tcp: critical socket failure: {ex.Message}");
             }
         }
 
