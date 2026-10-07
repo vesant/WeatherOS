@@ -51,6 +51,9 @@ namespace WeatherOS
             _weatherService = new WeatherService();
             _serialSensorService = new SerialSensorService();
 
+            var splash = new Graphics.SplashScreen();
+            splash.Run();
+
             PrintBootBanner();
         }
 
