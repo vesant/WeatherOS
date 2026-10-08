@@ -82,7 +82,9 @@ namespace WeatherOS.Services
                     }
                 } catch { }
                 
-                string request = $"GET /data/2.5/weather?q={city}&appid={apiKey}&units=metric HTTP/1.1\r\n" +
+                string safeCity = city.Replace(" ", "%20");
+                
+                string request = $"GET /data/2.5/weather?q={safeCity}&appid={apiKey}&units=metric HTTP/1.1\r\n" +
                                  "Host: api.openweathermap.org\r\n" +
                                  "Connection: close\r\n\r\n";
                                  
@@ -92,9 +94,19 @@ namespace WeatherOS.Services
                 
                 if (!string.IsNullOrWhiteSpace(response))
                 {
-                    ParseOpenWeatherJson(response);
-                    _cachedReading.Location = city.ToUpper();
-                    System.Console.WriteLine("[net] raw_tcp: payload received successfully. (status: 200 OK)");
+                    if (response.Contains("404 Not Found"))
+                    {
+                        _cachedReading.Location = "NOT FOUND";
+                        _cachedReading.Condition = "City Invalid";
+                        _cachedReading.TemperatureCelsius = 0;
+                        _cachedReading.HumidityPercent = 0;
+                        System.Console.WriteLine("[net] raw_tcp: error 404 - city not found on openweathermap.");
+                    }
+                    else
+                    {
+                        ParseOpenWeatherJson(response);
+                        System.Console.WriteLine("[net] raw_tcp: payload received successfully. (status: 200 OK)");
+                    }
                 }
                 else
                 {
@@ -124,6 +136,17 @@ namespace WeatherOS.Services
                     _cachedReading.Condition = weatherCondition;
                 }
                 
+                string cityName = ParseJsonString(json, "name");
+                string countryCode = ParseJsonString(json, "country");
+                
+                if (!string.IsNullOrWhiteSpace(cityName))
+                {
+                    if (!string.IsNullOrWhiteSpace(countryCode))
+                        _cachedReading.Location = (cityName + ", " + countryCode).ToUpper();
+                    else
+                        _cachedReading.Location = cityName.ToUpper();
+                }
+                
                 _cachedReading.Timestamp = DateTime.UtcNow;
             }
             catch { }
@@ -142,16 +165,26 @@ namespace WeatherOS.Services
             string valStr = json.Substring(idx, endIdx - idx).Trim();
             
             string[] parts = valStr.Split('.');
-            float val = float.Parse(parts[0]);
+            
+            // Cosmos 2022 OS often crashes on float.Parse, so we use int.Parse
+            int valInt = 0;
+            if (!string.IsNullOrEmpty(parts[0]))
+            {
+                try { valInt = int.Parse(parts[0]); } catch { }
+            }
+            
+            float val = valInt;
             
             if (parts.Length > 1)
             {
                 float divisor = 1;
                 for (int i = 0; i < parts[1].Length; i++) divisor *= 10;
-                float dec = float.Parse(parts[1]);
                 
-                if (val >= 0) val += (dec / divisor);
-                else val -= (dec / divisor);
+                int decInt = 0;
+                try { decInt = int.Parse(parts[1]); } catch { }
+                
+                if (val >= 0) val += ((float)decInt / divisor);
+                else val -= ((float)decInt / divisor);
             }
             return val;
         }
