@@ -64,6 +64,40 @@ namespace WeatherOS.Services
             return _cachedReading;
         }
 
+        public string FetchAutoLocation()
+        {
+            try
+            {
+                System.Console.WriteLine("[net] raw_tcp: Auto-locating via IP (ip-api.com)...");
+                var destIp = new Cosmos.System.Network.IPv4.Address(208, 95, 112, 1); // ip-api.com IP (approximate/dns mock)
+                var gatewayIp = new Cosmos.System.Network.IPv4.Address(10, 0, 2, 2);
+                
+                string request = "GET /json/ HTTP/1.1\r\nHost: ip-api.com\r\nConnection: close\r\n\r\n";
+                string response = RawTcpHttp.FetchGet(destIp, gatewayIp, request);
+                
+                if (string.IsNullOrWhiteSpace(response))
+                {
+                    System.Threading.Thread.Sleep(1000);
+                    response = RawTcpHttp.FetchGet(destIp, gatewayIp, request);
+                }
+
+                if (!string.IsNullOrWhiteSpace(response))
+                {
+                    string city = ParseJsonString(response, "city");
+                    if (!string.IsNullOrWhiteSpace(city)) return city;
+                }
+            }
+            catch { }
+            return "";
+        }
+
+        private bool _debugMode = false;
+
+        public void SetDebugMode(bool debug)
+        {
+            _debugMode = debug;
+        }
+
         public void FetchOpenWeather(string city, string apiKey)
         {
             try
@@ -88,9 +122,24 @@ namespace WeatherOS.Services
                                  "Host: api.openweathermap.org\r\n" +
                                  "Connection: close\r\n\r\n";
                                  
-                System.Console.WriteLine($"[net] raw_tcp: sending SYN to {destIp.ToString()} via gateway {gatewayIp.ToString()}");
+                if (_debugMode) System.Console.WriteLine($"[net] raw_tcp: sending SYN to {destIp.ToString()} via gateway {gatewayIp.ToString()}");
                 
                 string response = RawTcpHttp.FetchGet(destIp, gatewayIp, request);
+
+                // Retry logic for VirtualBox ARP drops
+                if (string.IsNullOrWhiteSpace(response))
+                {
+                    if (_debugMode) System.Console.WriteLine("[net] raw_tcp: First attempt timed out (ARP missing?). Retrying in 1s...");
+                    System.Threading.Thread.Sleep(1000);
+                    try {
+                        using (var arpWake = new Cosmos.System.Network.IPv4.ICMPClient())
+                        {
+                            arpWake.Connect(gatewayIp);
+                            arpWake.SendEcho();
+                        }
+                    } catch { }
+                    response = RawTcpHttp.FetchGet(destIp, gatewayIp, request);
+                }
                 
                 if (!string.IsNullOrWhiteSpace(response))
                 {
@@ -100,26 +149,37 @@ namespace WeatherOS.Services
                         _cachedReading.Condition = "City Invalid";
                         _cachedReading.TemperatureCelsius = 0;
                         _cachedReading.HumidityPercent = 0;
-                        System.Console.WriteLine("[net] raw_tcp: error 404 - city not found on openweathermap.");
+                        if (_debugMode) System.Console.WriteLine("[net] raw_tcp: error 404 - city not found on openweathermap.");
+                    }
+                    else if (CustomIndexOf(response, "\"temp\":", 0) != -1)
+                    {
+                        ParseOpenWeatherJson(response, city);
+                        if (_debugMode) System.Console.WriteLine("[net] raw_tcp: payload received successfully. (status: 200 OK)");
                     }
                     else
                     {
-                        ParseOpenWeatherJson(response);
-                        System.Console.WriteLine("[net] raw_tcp: payload received successfully. (status: 200 OK)");
+                        if (_debugMode) System.Console.WriteLine("[net] raw_tcp: HTTP error or malformed response.");
+                        if (_debugMode) System.Console.WriteLine("[net] raw_tcp: --- RESPONSE DUMP START ---");
+                        if (_debugMode)
+                        {
+                            if (response.Length > 200) System.Console.WriteLine(response.Substring(0, 200) + "...");
+                            else System.Console.WriteLine(response);
+                        }
+                        if (_debugMode) System.Console.WriteLine("[net] raw_tcp: --- RESPONSE DUMP END ---");
                     }
                 }
                 else
                 {
-                    System.Console.WriteLine("[net] raw_tcp: error: connection timed out during handshake.");
+                    if (_debugMode) System.Console.WriteLine("[net] raw_tcp: error: connection timed out during handshake.");
                 }
             }
             catch (Exception ex)
             {
-                System.Console.WriteLine($"[net] raw_tcp: critical socket failure: {ex.Message}");
+                if (_debugMode) System.Console.WriteLine($"[net] raw_tcp: critical socket failure: {ex.Message}");
             }
         }
 
-        private void ParseOpenWeatherJson(string json)
+        private void ParseOpenWeatherJson(string json, string fallbackCity)
         {
             try
             {
@@ -146,60 +206,92 @@ namespace WeatherOS.Services
                     else
                         _cachedReading.Location = cityName.ToUpper();
                 }
+                else if (!string.IsNullOrWhiteSpace(fallbackCity))
+                {
+                    _cachedReading.Location = fallbackCity.ToUpper();
+                }
                 
                 _cachedReading.Timestamp = DateTime.UtcNow;
             }
             catch { }
         }
 
+        private int CustomIndexOf(string source, string search, int startIndex = 0)
+        {
+            if (string.IsNullOrEmpty(source) || string.IsNullOrEmpty(search)) return -1;
+            if (startIndex < 0 || startIndex >= source.Length) return -1;
+            int searchLen = search.Length;
+            int maxIdx = source.Length - searchLen;
+            for (int i = startIndex; i <= maxIdx; i++)
+            {
+                bool match = true;
+                for (int j = 0; j < searchLen; j++)
+                {
+                    if (source[i + j] != search[j]) { match = false; break; }
+                }
+                if (match) return i;
+            }
+            return -1;
+        }
+
         private float ParseJsonFloat(string json, string key)
         {
             string search = "\"" + key + "\":";
-            int idx = json.IndexOf(search);
+            int idx = CustomIndexOf(json, search, 0);
             if (idx == -1) return 0f;
             
             idx += search.Length;
-            int endIdx = json.IndexOfAny(new char[] { ',', '}' }, idx);
-            if (endIdx == -1) return 0f;
+            
+            int endIdx = idx;
+            while (endIdx < json.Length)
+            {
+                char c = json[endIdx];
+                if (c == ',' || c == '}') break;
+                endIdx++;
+            }
+            if (endIdx >= json.Length) return 0f;
             
             string valStr = json.Substring(idx, endIdx - idx).Trim();
             
-            string[] parts = valStr.Split('.');
+            float result = 0f;
+            float fraction = 0f;
+            float divisor = 10f;
+            bool isNegative = false;
+            bool inFraction = false;
             
-            // Cosmos 2022 OS often crashes on float.Parse, so we use int.Parse
-            int valInt = 0;
-            if (!string.IsNullOrEmpty(parts[0]))
+            for (int i = 0; i < valStr.Length; i++)
             {
-                try { valInt = int.Parse(parts[0]); } catch { }
+                char c = valStr[i];
+                if (c == '-') isNegative = true;
+                else if (c == '.') inFraction = true;
+                else if (c >= '0' && c <= '9')
+                {
+                    int digit = c - '0';
+                    if (!inFraction) result = (result * 10f) + digit;
+                    else
+                    {
+                        fraction += digit / divisor;
+                        divisor *= 10f;
+                    }
+                }
             }
-            
-            float val = valInt;
-            
-            if (parts.Length > 1)
-            {
-                float divisor = 1;
-                for (int i = 0; i < parts[1].Length; i++) divisor *= 10;
-                
-                int decInt = 0;
-                try { decInt = int.Parse(parts[1]); } catch { }
-                
-                if (val >= 0) val += ((float)decInt / divisor);
-                else val -= ((float)decInt / divisor);
-            }
-            return val;
+            return isNegative ? -result : result;
         }
 
         private string ParseJsonString(string json, string key)
         {
-            string search = "\"" + key + "\":\"";
-            int idx = json.IndexOf(search);
+            string search = "\"" + key + "\":";
+            int idx = CustomIndexOf(json, search, 0);
             if (idx == -1) return "";
             
             idx += search.Length;
-            int endIdx = json.IndexOf("\"", idx);
-            if (endIdx == -1) return "";
+            while (idx < json.Length && (json[idx] == ' ' || json[idx] == '\"')) idx++;
             
-            return json.Substring(idx, endIdx - idx);
+            int endIdx = idx;
+            while (endIdx < json.Length && json[endIdx] != '\"' && json[endIdx] != ',' && json[endIdx] != '}') endIdx++;
+            if (endIdx >= json.Length) return "";
+            
+            return json.Substring(idx, endIdx - idx).Trim();
         }
 
         private void ParseTelemetryPacket(string packet)

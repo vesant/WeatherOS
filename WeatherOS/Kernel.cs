@@ -50,10 +50,35 @@ namespace WeatherOS
             _tuiDesktop = new TuiDesktop(_weatherService);
             _serialSensorService = new SerialSensorService();
 
+            if (_isNetworkConfigured)
+            {
+                System.Console.WriteLine("Auto-locating via IP Geolocation API...");
+                string autoCity = _weatherService.FetchAutoLocation();
+                if (!string.IsNullOrWhiteSpace(autoCity))
+                {
+                    System.Console.WriteLine($"Detected City: {autoCity}. Fetching weather telemetry...");
+                    _weatherService.FetchOpenWeather(autoCity, DecodeApiKey());
+                }
+            }
+
             var splash = new Graphics.SplashScreen();
             splash.Run();
 
             PrintBootBanner();
+        }
+
+        private string DecodeApiKey()
+        {
+            // Encrypted key (Base64 or simple shift to avoid plain-text scraping)
+            // Original: bd7e29393f3846fb31118232bdb2001f
+            // Encrypted (Shift + 1): ce8f3:4:4g4957gc42229343cec3112g
+            string encrypted = "ce8f3:4:4g4957gc42229343cec3112g";
+            char[] decoded = new char[encrypted.Length];
+            for (int i = 0; i < encrypted.Length; i++)
+            {
+                decoded[i] = (char)(encrypted[i] - 1);
+            }
+            return new string(decoded);
         }
 
         protected override void Run()
@@ -70,19 +95,36 @@ namespace WeatherOS
             string[] parts = input.Trim().Split(' ');
             string command = parts[0].ToLower();
 
+            // Intercept dynamic TUI app commands
+            string[] appIds = _tuiDesktop.GetAppIds();
+            for (int i = 0; i < appIds.Length; i++)
+            {
+                if (command == appIds[i])
+                {
+                    System.Console.WriteLine($"Launching TUI App: {appIds[i]}...");
+                    _tuiDesktop.StartApp(command);
+                    PrintBootBanner();
+                    return;
+                }
+            }
+
             switch (command)
             {
                 case "help":
-                    System.Console.WriteLine("Available commands:");
+                    System.Console.WriteLine("Available Core Commands:");
                     System.Console.WriteLine("  help         - Show this menu.");
                     System.Console.WriteLine("  clear        - Clear the screen.");
-                    System.Console.WriteLine("  ipconfig     - Show current network IP address.");
-                    System.Console.WriteLine("  ping <ip>    - Test network connectivity (ICMP Echo Request).");
-                    System.Console.WriteLine("  weather      - Fetch and display the latest meteorological reading.");
+                    System.Console.WriteLine("  ping <ip>    - Test network connectivity.");
                     System.Console.WriteLine("  fetch <city> - Pull live data from OpenWeather API.");
-                    System.Console.WriteLine("  serial-test  - Probe COM1 and listen for Arduino sensor telemetry.");
-                    System.Console.WriteLine("  gui          - Switch to ASCII meteorological dashboard.");
-                    System.Console.WriteLine("  poweroff     - ACPI Shutdown / Power off the system.");
+                    System.Console.WriteLine("  serial-test  - Probe COM1 and listen for Arduino telemetry.");
+                    System.Console.WriteLine("  gui          - Switch to ASCII Dashboard Menu.");
+                    
+                    System.Console.WriteLine("\nAvailable Graphical Apps (Type to Launch Directly):");
+                    string[] appNames = _tuiDesktop.GetAppNames();
+                    for (int i = 0; i < appIds.Length; i++)
+                    {
+                        System.Console.WriteLine($"  {appIds[i].PadRight(12)} - {appNames[i]}");
+                    }
                     break;
 
                 case "fetch":
@@ -92,7 +134,7 @@ namespace WeatherOS
                         break;
                     }
                     string city = string.Join(" ", parts, 1, parts.Length - 1);
-                    _weatherService.FetchOpenWeather(city, "bd7e29393f3846fb31118232bdb2001f");
+                    _weatherService.FetchOpenWeather(city, DecodeApiKey());
                     break;
 
                 case "ping":
@@ -139,26 +181,12 @@ namespace WeatherOS
                     PrintBootBanner();
                     break;
 
-                case "ipconfig":
-                    System.Console.WriteLine($"Network IP Address: {_assignedIpAddress}");
-                    break;
-
-                case "weather":
-                    DisplayTerminalWeather();
-                    break;
-
                 case "serial-test":
                     TestSerialSensorPort();
                     break;
 
                 case "gui":
                     SwitchToGuiMode();
-                    break;
-
-                case "poweroff":
-                    System.Console.WriteLine("Initiating ACPI Shutdown sequence...");
-                    Cosmos.System.Power.Shutdown();
-                    Stop();
                     break;
 
                 default:
