@@ -18,7 +18,7 @@ namespace WeatherOS.Services
         private static bool _finReceived = false;
         
         // Static buffers to avoid memory allocation inside IRQ!
-        private static byte[] _rxBuffer = new byte[8192];
+        private static byte[] _rxBuffer = new byte[65536];
         private static int _rxLength = 0;
 
         // O tipo do delegate no UserKit 2022
@@ -113,9 +113,11 @@ namespace WeatherOS.Services
             return -1;
         }
 
-        private static void SendTcpPacket(NetworkDevice nic, byte tcpFlags, byte[] payload)
+        private static void SendTcpPacket(Cosmos.HAL.NetworkDevice nic, byte tcpFlags, byte[] payload)
         {
-            int tcpLen = 20 + payload.Length;
+            bool isSyn = (tcpFlags & 0x02) != 0;
+            int tcpOptionsLen = isSyn ? 12 : 0;
+            int tcpLen = 20 + tcpOptionsLen + payload.Length;
             int ipLen = 20 + tcpLen;
             int frameLen = 14 + ipLen;
             byte[] frame = new byte[frameLen];
@@ -148,13 +150,37 @@ namespace WeatherOS.Services
             frame[tcpOffset + 8] = (byte)(_acknowledgment >> 24); frame[tcpOffset + 9] = (byte)(_acknowledgment >> 16);
             frame[tcpOffset + 10] = (byte)(_acknowledgment >> 8); frame[tcpOffset + 11] = (byte)(_acknowledgment & 0xFF);
 
-            frame[tcpOffset + 12] = 0x50;
+            int dataOffset = 5 + (tcpOptionsLen / 4);
+            frame[tcpOffset + 12] = (byte)(dataOffset << 4);
             frame[tcpOffset + 13] = tcpFlags;
             frame[tcpOffset + 14] = 0xFA; frame[tcpOffset + 15] = 0xF0;
 
+            int currentOffset = tcpOffset + 20;
+
+            if (isSyn)
+            {
+                // MSS
+                frame[currentOffset++] = 0x02; 
+                frame[currentOffset++] = 0x04; 
+                frame[currentOffset++] = 0x05; 
+                frame[currentOffset++] = 0xB4;
+                // NOP
+                frame[currentOffset++] = 0x01;
+                // Window Scale (8)
+                frame[currentOffset++] = 0x03;
+                frame[currentOffset++] = 0x03;
+                frame[currentOffset++] = 0x08;
+                // NOP, NOP
+                frame[currentOffset++] = 0x01;
+                frame[currentOffset++] = 0x01;
+                // SACK Permitted
+                frame[currentOffset++] = 0x04;
+                frame[currentOffset++] = 0x02;
+            }
+
             if (payload.Length > 0)
             {
-                Array.Copy(payload, 0, frame, 54, payload.Length);
+                Array.Copy(payload, 0, frame, currentOffset, payload.Length);
             }
 
             byte[] pseudo = new byte[12 + tcpLen];
@@ -211,14 +237,14 @@ namespace WeatherOS.Services
                 _sequence += 1;
                 _synAckReceived = true;
             }
-            // PSH-ACK
-            else if ((flags & 0x18) == 0x18 && _synAckReceived)
+            // ACK or PSH-ACK
+            else if ((flags & 0x10) == 0x10 && _synAckReceived)
             {
                 if (payloadLen > 0)
                 {
                     _acknowledgment = remoteSeq + (uint)payloadLen;
                     
-                    if (_rxLength + payloadLen < 8192)
+                    if (_rxLength + payloadLen < 65536) // Increased buffer for large JSON
                     {
                         Array.Copy(packet, payloadOffset, _rxBuffer, _rxLength, payloadLen);
                         _rxLength += payloadLen;

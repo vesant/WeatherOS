@@ -15,6 +15,8 @@ namespace WeatherOS.Services
         public string WindDirection;
         public string Condition;
         public string Location;
+        public string AlertMessage;
+        public string AlertLevel;
         public DateTime Timestamp;
 
         public WeatherData(float temp, float humidity, float pressure, float windSpeed, string windDir, string condition, string loc)
@@ -26,14 +28,12 @@ namespace WeatherOS.Services
             WindDirection = windDir;
             Condition = condition;
             Location = loc;
+            AlertMessage = "";
+            AlertLevel = "NONE";
             Timestamp = DateTime.UtcNow;
         }
     }
 
-    /// <summary>
-    /// Service responsible for managing meteorological telemetry.
-    /// Acts as a mock provider currently, with architecture ready for TCP socket ingestion from Arduino or remote stations.
-    /// </summary>
     public class WeatherService
     {
         private WeatherData _cachedReading;
@@ -41,7 +41,6 @@ namespace WeatherOS.Services
 
         public WeatherService()
         {
-            // Initial baseline weather conditions
             _cachedReading = new WeatherData(
                 temp: 21.5f,
                 humidity: 58.0f,
@@ -52,24 +51,17 @@ namespace WeatherOS.Services
                 loc: "UNKNOWN"
             );
 
-            try
-            {
-                _udpClient = new Cosmos.System.Network.IPv4.UDP.UdpClient(6000);
-            }
-            catch { }
+            try { _udpClient = new Cosmos.System.Network.IPv4.UDP.UdpClient(6000); } catch { }
         }
 
-        public WeatherData GetLatestReading()
-        {
-            return _cachedReading;
-        }
+        public WeatherData GetLatestReading() { return _cachedReading; }
 
         public string FetchAutoLocation()
         {
             try
             {
                 System.Console.WriteLine("[net] raw_tcp: Auto-locating via IP (ip-api.com)...");
-                var destIp = new Cosmos.System.Network.IPv4.Address(208, 95, 112, 1); // ip-api.com IP (approximate/dns mock)
+                var destIp = new Cosmos.System.Network.IPv4.Address(208, 95, 112, 1);
                 var gatewayIp = new Cosmos.System.Network.IPv4.Address(10, 0, 2, 2);
                 
                 string request = "GET /json/ HTTP/1.1\r\nHost: ip-api.com\r\nConnection: close\r\n\r\n";
@@ -92,11 +84,7 @@ namespace WeatherOS.Services
         }
 
         private bool _debugMode = false;
-
-        public void SetDebugMode(bool debug)
-        {
-            _debugMode = debug;
-        }
+        public void SetDebugMode(bool debug) { _debugMode = debug; }
 
         public void FetchOpenWeather(string city, string apiKey)
         {
@@ -104,10 +92,10 @@ namespace WeatherOS.Services
             {
                 System.Console.WriteLine("[net] raw_tcp: initializing bare-metal TCP handshake sequence...");
                 
-                var destIp = new Cosmos.System.Network.IPv4.Address(141, 95, 99, 79);
+                // IP for api.weatherapi.com
+                var destIp = new Cosmos.System.Network.IPv4.Address(79, 127, 134, 228); 
                 var gatewayIp = new Cosmos.System.Network.IPv4.Address(10, 0, 2, 2);
                 
-                // Acordar o Gateway ARP do VirtualBox com um ICMP invisivel
                 try {
                     using (var arpWake = new Cosmos.System.Network.IPv4.ICMPClient())
                     {
@@ -117,16 +105,13 @@ namespace WeatherOS.Services
                 } catch { }
                 
                 string safeCity = city.Replace(" ", "%20");
-                
-                string request = $"GET /data/2.5/weather?q={safeCity}&appid={apiKey}&units=metric HTTP/1.1\r\n" +
-                                 "Host: api.openweathermap.org\r\n" +
-                                 "Connection: close\r\n\r\n";
+                string request = $"GET /v1/forecast.json?key={apiKey}&q={safeCity}&days=1&aqi=no&alerts=yes HTTP/1.1\r\n" +
+                                 "Host: api.weatherapi.com\r\nConnection: close\r\n\r\n";
                                  
                 if (_debugMode) System.Console.WriteLine($"[net] raw_tcp: sending SYN to {destIp.ToString()} via gateway {gatewayIp.ToString()}");
                 
                 string response = RawTcpHttp.FetchGet(destIp, gatewayIp, request);
 
-                // Retry logic for VirtualBox ARP drops
                 if (string.IsNullOrWhiteSpace(response))
                 {
                     if (_debugMode) System.Console.WriteLine("[net] raw_tcp: First attempt timed out (ARP missing?). Retrying in 1s...");
@@ -143,72 +128,124 @@ namespace WeatherOS.Services
                 
                 if (!string.IsNullOrWhiteSpace(response))
                 {
-                    if (response.Contains("404 Not Found"))
+                    if (response.Contains("400 Bad Request") || response.Contains("error"))
                     {
                         _cachedReading.Location = "NOT FOUND";
-                        _cachedReading.Condition = "City Invalid";
+                        _cachedReading.Condition = "City Invalid or API Error";
                         _cachedReading.TemperatureCelsius = 0;
                         _cachedReading.HumidityPercent = 0;
-                        if (_debugMode) System.Console.WriteLine("[net] raw_tcp: error 404 - city not found on openweathermap.");
+                        _cachedReading.AlertLevel = "NONE";
+                        if (_debugMode) System.Console.WriteLine("[net] raw_tcp: HTTP Error (400 Bad Request / 401 Unauthorized / Invalid Key).");
                     }
-                    else if (CustomIndexOf(response, "\"temp\":", 0) != -1)
+                    else if (CustomIndexOf(response, "\"temp_c\":", 0) != -1)
                     {
-                        ParseOpenWeatherJson(response, city);
+                        ParseWeatherApiJson(response, city);
                         if (_debugMode) System.Console.WriteLine("[net] raw_tcp: payload received successfully. (status: 200 OK)");
                     }
                     else
                     {
                         if (_debugMode) System.Console.WriteLine("[net] raw_tcp: HTTP error or malformed response.");
-                        if (_debugMode) System.Console.WriteLine("[net] raw_tcp: --- RESPONSE DUMP START ---");
-                        if (_debugMode)
-                        {
-                            if (response.Length > 200) System.Console.WriteLine(response.Substring(0, 200) + "...");
-                            else System.Console.WriteLine(response);
-                        }
-                        if (_debugMode) System.Console.WriteLine("[net] raw_tcp: --- RESPONSE DUMP END ---");
                     }
                 }
                 else
                 {
-                    if (_debugMode) System.Console.WriteLine("[net] raw_tcp: error: connection timed out during handshake.");
+                    if (_debugMode) System.Console.WriteLine("[net] raw_tcp: error: connection completely timed out (No SYN-ACK).");
                 }
             }
             catch (Exception ex)
             {
-                if (_debugMode) System.Console.WriteLine($"[net] raw_tcp: critical socket failure: {ex.Message}");
+                if (_debugMode) System.Console.WriteLine($"[net] raw_tcp: critical failure: {ex.Message}");
             }
         }
 
-        private void ParseOpenWeatherJson(string json, string fallbackCity)
+        private void ParseWeatherApiJson(string json, string fallbackCity)
         {
             try
             {
-                _cachedReading.TemperatureCelsius = ParseJsonFloat(json, "temp");
+                _cachedReading.TemperatureCelsius = ParseJsonFloat(json, "temp_c");
                 _cachedReading.HumidityPercent = ParseJsonFloat(json, "humidity");
-                _cachedReading.PressureHpa = ParseJsonFloat(json, "pressure");
+                _cachedReading.PressureHpa = ParseJsonFloat(json, "pressure_mb");
+                _cachedReading.WindSpeedKmh = ParseJsonFloat(json, "wind_kph"); 
                 
-                // OpenWeather returns speed in meters/sec. Multiply by 3.6 for km/h.
-                _cachedReading.WindSpeedKmh = ParseJsonFloat(json, "speed") * 3.6f; 
-                
-                string weatherCondition = ParseJsonString(json, "main");
-                if (!string.IsNullOrWhiteSpace(weatherCondition))
-                {
-                    _cachedReading.Condition = weatherCondition;
-                }
+                // Condition text is inside "condition": {"text": "..."}
+                string weatherCondition = ParseJsonString(json, "text");
+                if (!string.IsNullOrWhiteSpace(weatherCondition)) _cachedReading.Condition = weatherCondition;
                 
                 string cityName = ParseJsonString(json, "name");
                 string countryCode = ParseJsonString(json, "country");
                 
                 if (!string.IsNullOrWhiteSpace(cityName))
-                {
-                    if (!string.IsNullOrWhiteSpace(countryCode))
-                        _cachedReading.Location = (cityName + ", " + countryCode).ToUpper();
-                    else
-                        _cachedReading.Location = cityName.ToUpper();
-                }
+                    _cachedReading.Location = (!string.IsNullOrWhiteSpace(countryCode)) ? (cityName + ", " + countryCode).ToUpper() : cityName.ToUpper();
                 else if (!string.IsNullOrWhiteSpace(fallbackCity))
-                {
                     _cachedReading.Location = fallbackCity.ToUpper();
+
+                // Check for Official Weather Alerts first
+                _cachedReading.AlertLevel = "NONE";
+                _cachedReading.AlertMessage = "";
+
+                int alertIdx = CustomIndexOf(json, "\"alert\":[", 0);
+                if (alertIdx != -1)
+                {
+                    // Check if it's not empty
+                    int closeBracket = CustomIndexOf(json, "]", alertIdx);
+                    if (closeBracket > alertIdx + 5)
+                    {
+                        string headline = ParseJsonString(json.Substring(alertIdx), "headline");
+                        string severity = ParseJsonString(json.Substring(alertIdx), "severity").ToUpper();
+                        
+                        if (!string.IsNullOrWhiteSpace(headline))
+                        {
+                            _cachedReading.AlertMessage = headline;
+                            _cachedReading.AlertLevel = (severity == "EXTREME" || severity == "SEVERE" || headline.ToUpper().Contains("WARNING")) ? "RED" : "YELLOW";
+                        }
+                    }
+                }
+
+                // If no official alert, fall back to heuristic
+                if (_cachedReading.AlertLevel == "NONE")
+                {
+                    string condUpper = (_cachedReading.Condition ?? "").ToUpper();
+                    
+                    if (condUpper.Contains("THUNDERSTORM") || condUpper.Contains("TORNADO") || condUpper.Contains("HURRICANE"))
+                    {
+                        _cachedReading.AlertLevel = "RED";
+                        _cachedReading.AlertMessage = "SEVERE WEATHER WARNING: " + condUpper;
+                    }
+                    else if (_cachedReading.WindSpeedKmh > 70)
+                    {
+                        _cachedReading.AlertLevel = "RED";
+                        _cachedReading.AlertMessage = "HIGH WIND WARNING (" + ((int)_cachedReading.WindSpeedKmh) + " km/h)";
+                    }
+                    else if (_cachedReading.WindSpeedKmh > 40)
+                    {
+                        _cachedReading.AlertLevel = "YELLOW";
+                        _cachedReading.AlertMessage = "STRONG WIND ADVISORY (" + ((int)_cachedReading.WindSpeedKmh) + " km/h)";
+                    }
+                    else if (_cachedReading.TemperatureCelsius > 38)
+                    {
+                        _cachedReading.AlertLevel = "RED";
+                        _cachedReading.AlertMessage = "EXTREME HEAT WARNING";
+                    }
+                    else if (_cachedReading.TemperatureCelsius > 32)
+                    {
+                        _cachedReading.AlertLevel = "YELLOW";
+                        _cachedReading.AlertMessage = "HEAT ADVISORY";
+                    }
+                    else if (_cachedReading.TemperatureCelsius < -5)
+                    {
+                        _cachedReading.AlertLevel = "RED";
+                        _cachedReading.AlertMessage = "EXTREME FREEZING WARNING";
+                    }
+                    else if (condUpper.Contains("HEAVY RAIN") || condUpper.Contains("EXTREME RAIN"))
+                    {
+                        _cachedReading.AlertLevel = "RED";
+                        _cachedReading.AlertMessage = "FLASH FLOOD WARNING: " + condUpper;
+                    }
+                    else if (condUpper.Contains("SNOW") && _cachedReading.WindSpeedKmh > 30)
+                    {
+                        _cachedReading.AlertLevel = "RED";
+                        _cachedReading.AlertMessage = "BLIZZARD WARNING";
+                    }
                 }
                 
                 _cachedReading.Timestamp = DateTime.UtcNow;

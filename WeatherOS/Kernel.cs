@@ -36,10 +36,18 @@ namespace WeatherOS
 
             try
             {
-                System.Console.WriteLine("Initializing Network Stack (DHCP)...");
-                using (var xClient = new Cosmos.System.Network.IPv4.UDP.DHCP.DHCPClient())
+                if (Cosmos.HAL.NetworkDevice.Devices.Count > 0)
                 {
-                    xClient.SendDiscoverPacket();
+                    System.Console.WriteLine("Initializing Network Stack (DHCP)...");
+                    using (var xClient = new Cosmos.System.Network.IPv4.UDP.DHCP.DHCPClient())
+                    {
+                        xClient.SendDiscoverPacket();
+                    }
+                }
+                else
+                {
+                    System.Console.WriteLine("No supported network card found. Skipping DHCP.");
+                    throw new Exception("No NIC");
                 }
 
                 _assignedIpAddress = Cosmos.System.Network.Config.NetworkConfiguration.CurrentAddress.ToString();
@@ -74,16 +82,8 @@ namespace WeatherOS
 
         private string DecodeApiKey()
         {
-            // Encrypted key (Base64 or simple shift to avoid plain-text scraping)
-            // Original: bd7e29393f3846fb31118232bdb2001f
-            // Encrypted (Shift + 1): ce8f3:4:4g4957gc42229343cec3112g
-            string encrypted = "ce8f3:4:4g4957gc42229343cec3112g";
-            char[] decoded = new char[encrypted.Length];
-            for (int i = 0; i < encrypted.Length; i++)
-            {
-                decoded[i] = (char)(encrypted[i] - 1);
-            }
-            return new string(decoded);
+            // Nova chave do WeatherAPI.com
+            return "bc0cfac1c3144fc3bf0145134260810";
         }
 
         protected override void Run()
@@ -140,6 +140,9 @@ namespace WeatherOS
                     }
                     string city = string.Join(" ", parts, 1, parts.Length - 1);
                     _weatherService.FetchOpenWeather(city, DecodeApiKey());
+                    var data = _weatherService.GetLatestReading();
+                    System.Console.WriteLine($"\n  -> {data.Location}: {data.TemperatureCelsius}C, {data.Condition}");
+                    if (data.AlertLevel != "NONE") System.Console.WriteLine($"  -> [ALERT {data.AlertLevel}]: {data.AlertMessage}");
                     break;
 
                 case "ping":

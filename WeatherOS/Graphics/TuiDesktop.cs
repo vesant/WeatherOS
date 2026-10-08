@@ -90,7 +90,12 @@ namespace WeatherOS.Graphics
 
         private void SaveNotepad()
         {
-            try { File.WriteAllText(@"0:\" + _notepadFilename, _notepadBuffer); } catch { }
+            try { 
+                File.WriteAllText(@"0:\" + _notepadFilename, _notepadBuffer); 
+                _notepadBuffer = "File saved to 0:\\" + _notepadFilename + "\n\n" + _notepadBuffer;
+            } catch (Exception ex) { 
+                _notepadBuffer = "ERROR SAVING (Disk not formatted?): " + ex.Message + "\n\n" + _notepadBuffer; 
+            }
         }
 
         private void DeleteNotepad()
@@ -103,10 +108,8 @@ namespace WeatherOS.Graphics
 
         private string DecodeApiKey()
         {
-            string encrypted = "ce8f3:4:4g4957gc42229343cec3112g";
-            char[] decoded = new char[encrypted.Length];
-            for (int i = 0; i < encrypted.Length; i++) decoded[i] = (char)(encrypted[i] - 1);
-            return new string(decoded);
+            // Retorna a nova chave da WeatherAPI.com (podemos voltar a ofuscar no futuro)
+            return "bc0cfac1c3144fc3bf0145134260810";
         }
 
         public string[] GetAppNames() { return _apps; }
@@ -632,6 +635,27 @@ namespace WeatherOS.Graphics
             System.Console.Write("Wind Dir : " + data.WindDirection);
 
             DrawWeatherIcon(data.Condition, 8, 7);
+
+            // Alert Banner
+            if (data.AlertLevel != "NONE" && !string.IsNullOrEmpty(data.AlertMessage))
+            {
+                System.Console.SetCursorPosition(7, 16);
+                System.Console.BackgroundColor = (data.AlertLevel == "RED") ? ConsoleColor.Red : ConsoleColor.Yellow;
+                System.Console.ForegroundColor = (data.AlertLevel == "RED") ? ConsoleColor.White : ConsoleColor.Black;
+                
+                string alertPrefix = data.AlertLevel == "RED" ? "[!] ALERT: " : "[*] ADVISORY: ";
+                string fullMsg = " " + alertPrefix + data.AlertMessage + " ";
+                
+                // Pad to banner width
+                while (fullMsg.Length < 66) fullMsg += " ";
+                
+                System.Console.Write(fullMsg);
+
+                System.Console.SetCursorPosition(7, 17);
+                string footerMsg = " Take appropriate precautions in your area. ";
+                while (footerMsg.Length < 66) footerMsg += " ";
+                System.Console.Write(footerMsg);
+            }
         }
 
         private void DrawWeatherIcon(string condition, int left, int top)
