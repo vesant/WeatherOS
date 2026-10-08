@@ -263,14 +263,15 @@ namespace WeatherOS.Graphics
             System.Console.BackgroundColor = ConsoleColor.Gray;
             System.Console.ForegroundColor = ConsoleColor.Black;
             if (_currentApp == "launcher")
-                System.Console.Write("  [TAB] Select App      [ENTER] Open App      [ESC] Exit GUI                    ");
+                System.Console.Write("  [TAB] Select App      [ENTER] Open App      [ESC] Exit GUI                   "); // 79 chars
             else
-                System.Console.Write("  [ESC] Return to Menu                                                          ");
+                System.Console.Write("  [ESC] Return to Menu                                                         "); // 79 chars
             
             for (int y = 1; y < 24; y++)
             {
                 System.Console.SetCursorPosition(0, y);
                 System.Console.BackgroundColor = bgDesktop;
+                // Write 80 characters for the middle lines (it wraps, which is fine, but doesn't scroll)
                 for (int x = 0; x < 80; x++) System.Console.Write(" ");
             }
 
@@ -288,7 +289,7 @@ namespace WeatherOS.Graphics
             System.Console.SetCursorPosition(0, 24);
             System.Console.BackgroundColor = ConsoleColor.Gray;
             System.Console.ForegroundColor = ConsoleColor.Black;
-            System.Console.Write("  WeatherOS TUI v3.0 (Dynamic Themed OS)                                        ");
+            System.Console.Write("  WeatherOS TUI v3.0 (Dynamic Themed OS)                                       "); // 79 chars
             System.Console.ResetColor();
         }
 
