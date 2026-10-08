@@ -24,6 +24,9 @@ namespace WeatherOS.Services
         // O tipo do delegate no UserKit 2022
         private static Cosmos.HAL.DataReceivedHandler _oldHandler;
 
+        public static uint TotalRxBytes = 0;
+        public static uint TotalTxBytes = 0;
+
         public static string FetchGet(Address destIp, Address gatewayIp, string requestString)
         {
             _synAckReceived = false;
@@ -164,6 +167,7 @@ namespace WeatherOS.Services
             int tcpChecksum = CalculateChecksum(pseudo, 0, pseudo.Length);
             frame[tcpOffset + 16] = (byte)(tcpChecksum >> 8); frame[tcpOffset + 17] = (byte)(tcpChecksum & 0xFF);
 
+            TotalTxBytes += (uint)frame.Length;
             nic.QueueBytes(frame);
         }
 
@@ -179,6 +183,8 @@ namespace WeatherOS.Services
 
         private static void CustomDataReceived(byte[] packet)
         {
+            if (packet != null) TotalRxBytes += (uint)packet.Length;
+            
             if (packet == null || packet.Length < 54) { _oldHandler?.Invoke(packet); return; }
             if (packet[12] != 0x08 || packet[13] != 0x00) { _oldHandler?.Invoke(packet); return; } // Not IPv4
             if (packet[23] != 0x06) { _oldHandler?.Invoke(packet); return; } // Not TCP
