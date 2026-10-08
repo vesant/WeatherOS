@@ -18,14 +18,19 @@ namespace WeatherOS
         private bool _isNetworkConfigured = false;
         private string _assignedIpAddress = "127.0.0.1 (Loopback)";
 
+        private Cosmos.System.FileSystem.CosmosVFS _vfs;
+
         protected override void BeforeRun()
         {
             try
             {
+                _vfs = new Cosmos.System.FileSystem.CosmosVFS();
+                Cosmos.System.FileSystem.VFS.VFSManager.RegisterVFS(_vfs);
                 _isVfsMounted = true; 
             }
-            catch (Exception)
+            catch (Exception ex)
             {
+                System.Console.WriteLine("VFS Init Error: " + ex.Message);
                 _isVfsMounted = false;
             }
 

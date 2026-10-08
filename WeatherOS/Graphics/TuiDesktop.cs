@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using Cosmos.System;
 using WeatherOS.Services;
 
@@ -27,13 +28,77 @@ namespace WeatherOS.Graphics
         private string _cityInputBuffer = "";
         private string _calcInputBuffer = "";
         private string _calcResult = "";
+        
+        // Notepad State
+        private int _notepadState = 0; // 0=Menu, 1=Editor, 2=PromptOpen, 3=PromptSave, 4=PromptDelete
         private string _notepadBuffer = "";
+        private string _notepadFilename = "";
+        private string _notepadInputBuffer = "";
         private string _apiKeyInputBuffer = "";
 
         public TuiDesktop(WeatherService weatherService)
         {
             _weatherService = weatherService;
             _apiKey = DecodeApiKey();
+            LoadSettings();
+        }
+
+        private void LoadSettings()
+        {
+            try
+            {
+                if (File.Exists(@"0:\settings.ini"))
+                {
+                    string[] lines = File.ReadAllLines(@"0:\settings.ini");
+                    foreach (string line in lines)
+                    {
+                        if (line.StartsWith("DarkMode=")) _isDarkMode = line.Substring(9) == "true";
+                        if (line.StartsWith("AutoLoc=")) _autoLocation = line.Substring(8) == "true";
+                        if (line.StartsWith("DebugLog="))
+                        {
+                            _showDebugLogs = line.Substring(9) == "true";
+                            _weatherService.SetDebugMode(_showDebugLogs);
+                        }
+                        if (line.StartsWith("CustomKey="))
+                        {
+                            string k = line.Substring(10);
+                            if (!string.IsNullOrWhiteSpace(k))
+                            {
+                                _customApiKey = k;
+                                _apiKey = k;
+                                _apiKeyInputBuffer = k;
+                            }
+                        }
+                    }
+                }
+            } catch { }
+        }
+
+        private void SaveSettings()
+        {
+            try { File.WriteAllText(@"0:\settings.ini", $"DarkMode={(_isDarkMode ? "true" : "false")}\nAutoLoc={(_autoLocation ? "true" : "false")}\nDebugLog={(_showDebugLogs ? "true" : "false")}\nCustomKey={_customApiKey}\n"); } catch { }
+        }
+
+        private void LoadNotepad()
+        {
+            try { 
+                string path = @"0:\" + _notepadFilename;
+                if (File.Exists(path)) _notepadBuffer = File.ReadAllText(path); 
+                else _notepadBuffer = "";
+            } catch { _notepadBuffer = "Error reading file."; }
+        }
+
+        private void SaveNotepad()
+        {
+            try { File.WriteAllText(@"0:\" + _notepadFilename, _notepadBuffer); } catch { }
+        }
+
+        private void DeleteNotepad()
+        {
+            try { 
+                string path = @"0:\" + _notepadFilename;
+                if (File.Exists(path)) File.Delete(path); 
+            } catch { }
         }
 
         private string DecodeApiKey()
@@ -105,6 +170,14 @@ namespace WeatherOS.Graphics
         {
             if (keyEvent.Key == ConsoleKeyEx.Escape)
             {
+                if (_currentApp == "settings") SaveSettings();
+                
+                if (_currentApp == "notepad")
+                {
+                    HandleNotepadInput(keyEvent);
+                    return;
+                }
+
                 if (_currentApp == "launcher") _isActive = false;
                 else _currentApp = "launcher";
             }
@@ -154,12 +227,13 @@ namespace WeatherOS.Graphics
             else if (keyEvent.Key == ConsoleKeyEx.Enter)
             {
                 if (_settingsIndex == 0) _currentApp = "resources";
-                else if (_settingsIndex == 1) _isDarkMode = !_isDarkMode;
-                else if (_settingsIndex == 2) _autoLocation = !_autoLocation;
+                else if (_settingsIndex == 1) { _isDarkMode = !_isDarkMode; SaveSettings(); }
+                else if (_settingsIndex == 2) { _autoLocation = !_autoLocation; SaveSettings(); }
                 else if (_settingsIndex == 3)
                 {
                     _showDebugLogs = !_showDebugLogs;
                     _weatherService.SetDebugMode(_showDebugLogs);
+                    SaveSettings();
                 }
                 else if (_settingsIndex == 4)
                 {
@@ -167,11 +241,14 @@ namespace WeatherOS.Graphics
                     if (!string.IsNullOrWhiteSpace(_apiKeyInputBuffer))
                     {
                         _apiKey = _apiKeyInputBuffer;
+                        _customApiKey = _apiKeyInputBuffer;
                     }
                     else
                     {
                         _apiKey = DecodeApiKey(); // Reset to default
+                        _customApiKey = "";
                     }
+                    SaveSettings();
                 }
             }
             else if (_settingsIndex == 4) // Typing in the custom API key field
@@ -242,14 +319,77 @@ namespace WeatherOS.Graphics
 
         private void HandleNotepadInput(KeyEvent keyEvent)
         {
-            if (keyEvent.Key == ConsoleKeyEx.Backspace)
+            if (_notepadState == 0) // Menu
             {
-                if (_notepadBuffer.Length > 0) _notepadBuffer = _notepadBuffer.Substring(0, _notepadBuffer.Length - 1);
+                if (keyEvent.KeyChar == '1') // New Note
+                {
+                    _notepadBuffer = "";
+                    _notepadFilename = "untitled.txt";
+                    _notepadState = 1;
+                }
+                else if (keyEvent.KeyChar == '2') // Open Note
+                {
+                    _notepadInputBuffer = "";
+                    _notepadState = 2;
+                }
+                else if (keyEvent.KeyChar == '3') // Save Note
+                {
+                    _notepadInputBuffer = _notepadFilename;
+                    if (string.IsNullOrWhiteSpace(_notepadInputBuffer)) _notepadInputBuffer = "untitled.txt";
+                    _notepadState = 3;
+                }
+                else if (keyEvent.KeyChar == '4') // Delete Note
+                {
+                    _notepadInputBuffer = "";
+                    _notepadState = 4;
+                }
+                else if (keyEvent.KeyChar == '5' || keyEvent.Key == ConsoleKeyEx.Escape)
+                {
+                    _currentApp = "launcher";
+                }
             }
-            else if (keyEvent.Key == ConsoleKeyEx.Enter) _notepadBuffer += "\n";
-            else if (keyEvent.KeyChar >= 32 && keyEvent.KeyChar <= 126 && _notepadBuffer.Length < 500)
+            else if (_notepadState == 1) // Editor
             {
-                _notepadBuffer += keyEvent.KeyChar;
+                if (keyEvent.Key == ConsoleKeyEx.Escape)
+                {
+                    _notepadState = 0; // Return to menu
+                }
+                else if (keyEvent.Key == ConsoleKeyEx.Backspace)
+                {
+                    if (_notepadBuffer.Length > 0) _notepadBuffer = _notepadBuffer.Substring(0, _notepadBuffer.Length - 1);
+                }
+                else if (keyEvent.Key == ConsoleKeyEx.Enter) { _notepadBuffer += "\n"; }
+                else if (keyEvent.KeyChar >= 32 && keyEvent.KeyChar <= 126 && _notepadBuffer.Length < 1000)
+                {
+                    _notepadBuffer += keyEvent.KeyChar;
+                }
+            }
+            else if (_notepadState == 2 || _notepadState == 3 || _notepadState == 4) // Prompts
+            {
+                if (keyEvent.Key == ConsoleKeyEx.Escape)
+                {
+                    _notepadState = 0;
+                }
+                else if (keyEvent.Key == ConsoleKeyEx.Enter)
+                {
+                    if (!string.IsNullOrWhiteSpace(_notepadInputBuffer))
+                    {
+                        if (!_notepadInputBuffer.Contains(".")) _notepadInputBuffer += ".txt"; // Auto append extension
+                        _notepadFilename = _notepadInputBuffer;
+                        
+                        if (_notepadState == 2) { LoadNotepad(); _notepadState = 1; }
+                        else if (_notepadState == 3) { SaveNotepad(); _notepadState = 0; }
+                        else if (_notepadState == 4) { DeleteNotepad(); _notepadState = 0; }
+                    }
+                }
+                else if (keyEvent.Key == ConsoleKeyEx.Backspace)
+                {
+                    if (_notepadInputBuffer.Length > 0) _notepadInputBuffer = _notepadInputBuffer.Substring(0, _notepadInputBuffer.Length - 1);
+                }
+                else if (keyEvent.KeyChar >= 32 && keyEvent.KeyChar <= 126 && _notepadInputBuffer.Length < 32)
+                {
+                    _notepadInputBuffer += keyEvent.KeyChar;
+                }
             }
         }
 
@@ -595,24 +735,64 @@ namespace WeatherOS.Graphics
 
         private void DrawNotepadApp()
         {
-            DrawWindow(5, 3, 70, 18, "NOTEPAD (Volatile)");
+            string title = _notepadState == 1 ? $"NOTEPAD ({_notepadFilename})" : "NOTEPAD (VFS Manager)";
+            DrawWindow(5, 3, 70, 18, title);
             ConsoleColor winBg = _isDarkMode ? ConsoleColor.Black : ConsoleColor.Blue;
             System.Console.BackgroundColor = winBg;
             System.Console.ForegroundColor = ConsoleColor.White;
 
-            string[] lines = _notepadBuffer.Split('\n');
-            for (int i = 0; i < lines.Length && i < 15; i++)
+            if (_notepadState == 0) // Menu
             {
-                System.Console.SetCursorPosition(7, 5 + i);
-                string line = lines[i];
-                if (line.Length > 65) line = line.Substring(0, 65);
-                System.Console.Write(line);
-                if (i == lines.Length - 1) System.Console.Write("_");
+                System.Console.SetCursorPosition(25, 7);
+                System.Console.Write("1. New Note");
+                System.Console.SetCursorPosition(25, 9);
+                System.Console.Write("2. Open Note");
+                System.Console.SetCursorPosition(25, 11);
+                System.Console.Write("3. Save Current Note");
+                System.Console.SetCursorPosition(25, 13);
+                System.Console.Write("4. Delete Note");
+                System.Console.SetCursorPosition(25, 15);
+                System.Console.Write("5. Back to Desktop");
+                System.Console.SetCursorPosition(25, 18);
+                System.Console.ForegroundColor = ConsoleColor.Cyan;
+                System.Console.Write($"Open File: {(!string.IsNullOrEmpty(_notepadFilename) ? _notepadFilename : "None")}");
             }
-            if (lines.Length == 0)
+            else if (_notepadState == 1) // Editor
             {
-                System.Console.SetCursorPosition(7, 5);
-                System.Console.Write("_");
+                string[] lines = _notepadBuffer.Split('\n');
+                for (int i = 0; i < lines.Length && i < 15; i++)
+                {
+                    System.Console.SetCursorPosition(7, 5 + i);
+                    string line = lines[i];
+                    if (line.Length > 65) line = line.Substring(0, 65);
+                    System.Console.Write(line);
+                    if (i == lines.Length - 1) System.Console.Write("_");
+                }
+                if (lines.Length == 0)
+                {
+                    System.Console.SetCursorPosition(7, 5);
+                    System.Console.Write("_");
+                }
+            }
+            else // Prompts (2, 3, 4)
+            {
+                string prompt = "";
+                if (_notepadState == 2) prompt = "Enter filename to OPEN:";
+                else if (_notepadState == 3) prompt = "Enter filename to SAVE:";
+                else if (_notepadState == 4) prompt = "Enter filename to DELETE:";
+
+                System.Console.SetCursorPosition(10, 10);
+                System.Console.ForegroundColor = ConsoleColor.Yellow;
+                System.Console.Write(prompt);
+
+                System.Console.SetCursorPosition(10, 12);
+                System.Console.ForegroundColor = ConsoleColor.White;
+                System.Console.Write("0:\\" + _notepadInputBuffer + "_");
+                for (int i = _notepadInputBuffer.Length; i < 30; i++) System.Console.Write(" ");
+                
+                System.Console.SetCursorPosition(10, 15);
+                System.Console.ForegroundColor = ConsoleColor.DarkGray;
+                System.Console.Write("[Press ENTER to confirm, ESC to cancel]");
             }
         }
 
