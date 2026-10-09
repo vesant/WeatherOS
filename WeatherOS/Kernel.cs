@@ -48,6 +48,8 @@ namespace WeatherOS
                     Cosmos.System.Network.NetworkStack.ConfigIP(Cosmos.HAL.NetworkDevice.Devices[0], config);
                     _assignedIpAddress = ip.ToString();
                     _isNetworkConfigured = true;
+                    System.Console.WriteLine("[net] Starting Bare-Metal AutoConfig...");
+                    WeatherOS.Services.RawTcpHttp.DoAutoConfig(Cosmos.HAL.NetworkDevice.Devices[0]);
                 }
                 else
                 {

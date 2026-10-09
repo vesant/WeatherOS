@@ -25,7 +25,98 @@ namespace WeatherOS.Services
         private static Cosmos.HAL.DataReceivedHandler _oldHandler;
 
         public static uint TotalRxBytes = 0;
-        public static uint TotalTxBytes = 0; private static ushort _ipId = 1;
+                public static uint TotalTxBytes = 0; private static ushort _ipId = 1;
+        public static bool _dhcpOfferReceived = false;
+        public static bool _arpReplyReceived = false;
+        public static byte[] _gatewayIp = new byte[4];
+
+        public static void DoAutoConfig(Cosmos.HAL.NetworkDevice nic)
+        {
+            _macSource = nic.MACAddress.bytes;
+            _ipSource = new byte[] { 0, 0, 0, 0 };
+            _macDest = new byte[] { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
+            _oldHandler = nic.DataReceived;
+            nic.DataReceived = CustomDataReceived;
+
+            // 1. DHCP Discover
+            System.Console.WriteLine("[net] raw_tcp: broadcasting DHCP Discover...");
+            _dhcpOfferReceived = false;
+            byte[] dhcp = new byte[342];
+            for(int i=0; i<6; i++) dhcp[i] = 0xFF;
+            Array.Copy(_macSource, 0, dhcp, 6, 6);
+            dhcp[12] = 0x08; dhcp[13] = 0x00; // IPv4
+            dhcp[14] = 0x45; dhcp[15] = 0x00;
+            dhcp[16] = 0x01; dhcp[17] = 0x48; // Total Length (328)
+            dhcp[18] = 0x00; dhcp[19] = 0x00; // ID
+            dhcp[20] = 0x00; dhcp[21] = 0x00; // Flags/Frag
+            dhcp[22] = 0x40; // TTL
+            dhcp[23] = 17; // UDP
+            dhcp[24] = 0x00; dhcp[25] = 0x00; // Checksum
+            // Src IP 0.0.0.0
+            dhcp[30] = 0xFF; dhcp[31] = 0xFF; dhcp[32] = 0xFF; dhcp[33] = 0xFF; // Dest 255.255.255.255
+            
+            int ipSum = CalculateChecksum(dhcp, 14, 20);
+            dhcp[24] = (byte)(ipSum >> 8); dhcp[25] = (byte)(ipSum & 0xFF);
+
+            // UDP
+            dhcp[34] = 0x00; dhcp[35] = 68; // Src Port
+            dhcp[36] = 0x00; dhcp[37] = 67; // Dest Port
+            dhcp[38] = 0x01; dhcp[39] = 0x34; // UDP Length (308)
+            dhcp[40] = 0x00; dhcp[41] = 0x00; // Checksum (0 is allowed for UDP IPv4)
+
+            // DHCP
+            dhcp[42] = 1; // BootRequest
+            dhcp[43] = 1; // Ethernet
+            dhcp[44] = 6; // MAC Len
+            dhcp[45] = 0; // Hops
+            dhcp[46] = 0x12; dhcp[47] = 0x34; dhcp[48] = 0x56; dhcp[49] = 0x78; // XID
+            dhcp[52] = 0x80; dhcp[53] = 0x00; // Broadcast flag
+            Array.Copy(_macSource, 0, dhcp, 70, 6); // Client MAC
+            dhcp[278] = 0x63; dhcp[279] = 0x82; dhcp[280] = 0x53; dhcp[281] = 0x63; // Magic
+            dhcp[282] = 53; dhcp[283] = 1; dhcp[284] = 1; // Discover
+            dhcp[285] = 255; // End
+
+            nic.QueueBytes(dhcp);
+
+            long timeout = 0;
+            while (!_dhcpOfferReceived && timeout < 50000000L) { WeatherOS.Kernel.CustomNIC?.HackPoll(); timeout++; }
+            
+            if (!_dhcpOfferReceived) {
+                System.Console.WriteLine("[net] raw_tcp: DHCP failed! Falling back to 192.168.1.100.");
+                _ipSource = new byte[] { 192, 168, 1, 100 };
+                _gatewayIp = new byte[] { 192, 168, 1, 1 };
+            } else {
+                System.Console.WriteLine($"[net] raw_tcp: DHCP OK! IP: {_ipSource[0]}.{_ipSource[1]}.{_ipSource[2]}.{_ipSource[3]}");
+            }
+
+            // 2. ARP Request for Gateway
+            System.Console.WriteLine($"[net] raw_tcp: ARP Request for Gateway {_gatewayIp[0]}.{_gatewayIp[1]}.{_gatewayIp[2]}.{_gatewayIp[3]}...");
+            _arpReplyReceived = false;
+            byte[] arp = new byte[42];
+            for(int i=0; i<6; i++) arp[i] = 0xFF;
+            Array.Copy(_macSource, 0, arp, 6, 6);
+            arp[12] = 0x08; arp[13] = 0x06;
+            arp[14] = 0x00; arp[15] = 0x01;
+            arp[16] = 0x08; arp[17] = 0x00;
+            arp[18] = 0x06; arp[19] = 0x04;
+            arp[20] = 0x00; arp[21] = 0x01;
+            Array.Copy(_macSource, 0, arp, 22, 6);
+            Array.Copy(_ipSource, 0, arp, 28, 4);
+            for(int i=0; i<6; i++) arp[32+i] = 0x00;
+            Array.Copy(_gatewayIp, 0, arp, 38, 4);
+
+            nic.QueueBytes(arp);
+
+            timeout = 0;
+            while (!_arpReplyReceived && timeout < 50000000L) { WeatherOS.Kernel.CustomNIC?.HackPoll(); timeout++; }
+
+            if (!_arpReplyReceived) {
+                System.Console.WriteLine("[net] raw_tcp: ARP failed! Router might ignore us.");
+            } else {
+                System.Console.WriteLine($"[net] raw_tcp: ARP OK! Router MAC: {_macDest[0]:X2}:{_macDest[1]:X2}:{_macDest[2]:X2}:{_macDest[3]:X2}:{_macDest[4]:X2}:{_macDest[5]:X2}");
+            }
+        }
+
 
         public static string FetchGet(Address destIp, Address gatewayIp, string requestString) {
             _synAckReceived = false;
@@ -34,13 +125,8 @@ namespace WeatherOS.Services
             
             var nic = NetworkDevice.Devices[0];
             
-            // 1. Obter MACs e IPs
-            _macSource = nic.MACAddress.bytes;
-            _ipSource = Cosmos.System.Network.Config.NetworkConfiguration.CurrentAddress.ToByteArray();
+            // IPs and MACs already configured by DoAutoConfig()
             _ipDest = destIp.ToByteArray();
-
-            // Endereço MAC Real do Router Físico do User (64-64-4a-ba-df-a4)
-            _macDest = new byte[] { 0x64, 0x64, 0x4A, 0xBA, 0xDF, 0xA4 };
 
             _oldHandler = nic.DataReceived;
             nic.DataReceived = CustomDataReceived;
@@ -229,17 +315,62 @@ namespace WeatherOS.Services
             return (ushort)(~sum);
         }
 
-        private static void CustomDataReceived(byte[] packet)
+                private static void CustomDataReceived(byte[] packet)
         {
             if (packet != null) TotalRxBytes += (uint)packet.Length;
-            
-            if (packet == null || packet.Length < 54) { _oldHandler?.Invoke(packet); return; }
+            if (packet == null || packet.Length < 42) { _oldHandler?.Invoke(packet); return; }
+
+            // Is ARP?
+            if (packet[12] == 0x08 && packet[13] == 0x06)
+            {
+                if (packet[20] == 0x00 && packet[21] == 0x02)
+                {
+                    if (packet[28] == _gatewayIp[0] && packet[29] == _gatewayIp[1] &&
+                        packet[30] == _gatewayIp[2] && packet[31] == _gatewayIp[3])
+                    {
+                        Array.Copy(packet, 22, _macDest, 0, 6);
+                        _arpReplyReceived = true;
+                    }
+                }
+                return;
+            }
+
             if (packet[12] != 0x08 || packet[13] != 0x00) { _oldHandler?.Invoke(packet); return; } // Not IPv4
+
+            // Is UDP?
+            if (packet[23] == 17)
+            {
+                int ipHdrLen = (packet[14] & 0x0F) * 4;
+                int udpOff = 14 + ipHdrLen;
+                if (packet.Length >= udpOff + 8 && packet[udpOff + 2] == 0x00 && packet[udpOff + 3] == 0x44)
+                {
+                    int dhcpOff = udpOff + 8;
+                    if (packet.Length >= dhcpOff + 240 && packet[dhcpOff + 236] == 0x63 && packet[dhcpOff + 237] == 0x82)
+                    {
+                        Array.Copy(packet, dhcpOff + 16, _ipSource, 0, 4);
+                        int optIdx = dhcpOff + 240;
+                        while (optIdx < packet.Length && packet[optIdx] != 255)
+                        {
+                            byte opt = packet[optIdx];
+                            if (opt == 0) { optIdx++; continue; }
+                            byte len = packet[optIdx + 1];
+                            if (opt == 3 && len >= 4) Array.Copy(packet, optIdx + 2, _gatewayIp, 0, 4);
+                            optIdx += 2 + len;
+                        }
+                        if (_gatewayIp[0] == 0) { Array.Copy(_ipSource, 0, _gatewayIp, 0, 4); _gatewayIp[3] = 1; }
+                        _dhcpOfferReceived = true;
+                    }
+                }
+                return;
+            }
+
             if (packet[23] != 0x06) { _oldHandler?.Invoke(packet); return; } // Not TCP
+            if (packet.Length < 54) { _oldHandler?.Invoke(packet); return; }
             if (packet[30] != _ipSource[0] || packet[31] != _ipSource[1] || packet[32] != _ipSource[2] || packet[33] != _ipSource[3]) { _oldHandler?.Invoke(packet); return; }
 
             int ipHeaderLen = (packet[14] & 0x0F) * 4;
             int ipTotalLen = (packet[16] << 8) | packet[17];
+
             int tcpOffset = 14 + ipHeaderLen;
 
             int destPort = (packet[tcpOffset + 2] << 8) | packet[tcpOffset + 3];
@@ -288,5 +419,9 @@ namespace WeatherOS.Services
         }
     }
 }
+
+
+
+
 
 
