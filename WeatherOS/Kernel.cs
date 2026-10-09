@@ -46,7 +46,7 @@ namespace WeatherOS
                     
                     var config = new Cosmos.System.Network.Config.IPConfig(ip, subnet, gateway);
                     Cosmos.System.Network.NetworkStack.ConfigIP(Cosmos.HAL.NetworkDevice.Devices[0], config);
-                    _assignedIpAddress = ip.ToString();
+                    _assignedIpAddress = "Dynamic (Bare-Metal)";
                     _isNetworkConfigured = true;
                     System.Console.WriteLine("[net] Starting Bare-Metal AutoConfig...");
                     WeatherOS.Services.RawTcpHttp.DoAutoConfig(Cosmos.HAL.NetworkDevice.Devices[0]);

@@ -843,13 +843,13 @@ namespace WeatherOS.Graphics
             System.Console.ForegroundColor = ConsoleColor.Cyan;
 
             System.Console.SetCursorPosition(20, 9);
-            System.Console.Write("Adapter: " + (Cosmos.HAL.NetworkDevice.Devices.Count > 0 ? "Ethernet (E1000/RTL8139)" : "None"));
+            System.Console.Write("Adapter: " + (Cosmos.HAL.NetworkDevice.Devices.Count > 0 ? "RTL8102E Bare-Metal" : "None"));
 
             System.Console.SetCursorPosition(20, 11);
-            System.Console.Write("IP Address : 10.0.2.15");
+            System.Console.Write("IP Address : Dynamic (AutoConfig)");
 
             System.Console.SetCursorPosition(20, 12);
-            System.Console.Write("Gateway    : 10.0.2.2");
+            System.Console.Write("Gateway    : Dynamic");
 
             System.Console.SetCursorPosition(20, 13);
             System.Console.Write("Subnet Mask: 255.255.255.0");

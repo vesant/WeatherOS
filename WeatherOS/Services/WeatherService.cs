@@ -93,7 +93,7 @@ namespace WeatherOS.Services
                 System.Console.WriteLine("[net] raw_tcp: initializing bare-metal TCP handshake sequence...");
                 
                 // IP for api.weatherapi.com (updated resolved IP)
-                var destIp = new Cosmos.System.Network.IPv4.Address(79, 127, 134, 131); 
+                var destIp = new Cosmos.System.Network.IPv4.Address(185, 93, 2, 251); 
                 var gatewayIp = new Cosmos.System.Network.IPv4.Address(10, 0, 2, 2);
                 
                 
@@ -102,7 +102,7 @@ namespace WeatherOS.Services
                 string request = $"GET /v1/forecast.json?key={apiKey}&q={safeCity}&days=1&aqi=no&alerts=yes HTTP/1.1\r\n" +
                                  "Host: api.weatherapi.com\r\nConnection: close\r\n\r\n";
                                  
-                if (_debugMode) System.Console.WriteLine($"[net] raw_tcp: sending SYN to {destIp.ToString()} via gateway {gatewayIp.ToString()}");
+                if (_debugMode) System.Console.WriteLine($"[net] raw_tcp: sending SYN to {destIp.ToString()} via Bare-Metal DHCP Gateway");
                 
                 string response = RawTcpHttp.FetchGet(destIp, gatewayIp, request);
 

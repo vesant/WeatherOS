@@ -79,7 +79,10 @@ namespace WeatherOS.Services
             nic.QueueBytes(dhcp);
 
             long timeout = 0;
-            while (!_dhcpOfferReceived && timeout < 50000000L) { WeatherOS.Kernel.CustomNIC?.HackPoll(); timeout++; }
+            while (!_dhcpOfferReceived && timeout < 500000000L) { if (timeout % 5000000 == 0) System.Console.Write(".");
+                        if (timeout % 5000000 == 0) System.Console.Write(".");
+                        WeatherOS.Kernel.CustomNIC?.HackPoll();
+                        timeout++; }
             
             if (!_dhcpOfferReceived) {
                 System.Console.WriteLine("[net] raw_tcp: DHCP failed! Falling back to 192.168.1.100.");
@@ -108,13 +111,17 @@ namespace WeatherOS.Services
             nic.QueueBytes(arp);
 
             timeout = 0;
-            while (!_arpReplyReceived && timeout < 50000000L) { WeatherOS.Kernel.CustomNIC?.HackPoll(); timeout++; }
+            while (!_arpReplyReceived && timeout < 500000000L) { if (timeout % 5000000 == 0) System.Console.Write(".");
+                        if (timeout % 5000000 == 0) System.Console.Write(".");
+                        WeatherOS.Kernel.CustomNIC?.HackPoll();
+                        timeout++; }
 
             if (!_arpReplyReceived) {
                 System.Console.WriteLine("[net] raw_tcp: ARP failed! Router might ignore us.");
             } else {
-                System.Console.WriteLine($"[net] raw_tcp: ARP OK! Router MAC: {_macDest[0]:X2}:{_macDest[1]:X2}:{_macDest[2]:X2}:{_macDest[3]:X2}:{_macDest[4]:X2}:{_macDest[5]:X2}");
+                System.Console.WriteLine("$[net] raw_tcp: ARP OK! Router MAC: {_macDest[0]:X2}:{_macDest[1]:X2}:{_macDest[2]:X2}:{_macDest[3]:X2}:{_macDest[4]:X2}:{_macDest[5]:X2}");
             }
+            nic.DataReceived = _oldHandler;
         }
 
 
@@ -140,15 +147,16 @@ namespace WeatherOS.Services
                     SendTcpPacket(nic, 0x02, new byte[0]); // SYN
                     
                     long timeout = 0;
-                    while (!_synAckReceived && timeout < 20000000L)
+                    while (!_synAckReceived && timeout < 200000000L)
                     {
+                        if (timeout % 5000000 == 0) System.Console.Write(".");
                         WeatherOS.Kernel.CustomNIC?.HackPoll();
                         timeout++;
                     }
                     if (_synAckReceived) break;
                 }
 
-                if (!_synAckReceived) return null;
+                if (!_synAckReceived) { nic.DataReceived = _oldHandler; return null; }
 
                 // 5. Enviar ACK + HTTP Payload
                 byte[] payload = System.Text.Encoding.ASCII.GetBytes(requestString);
@@ -157,10 +165,11 @@ namespace WeatherOS.Services
 
                 // 6. Esperar FIN ou timeout (dados)
                 long timeout2 = 0;
-                while (!_finReceived && timeout2 < 40000000L)
+                while (!_finReceived && timeout2 < 400000000L)
                 {
-                    WeatherOS.Kernel.CustomNIC?.HackPoll();
-                    timeout2++;
+                    if (timeout2 % 5000000 == 0) System.Console.Write(".");
+                        WeatherOS.Kernel.CustomNIC?.HackPoll();
+                        timeout2++;
                 }
 
                 // 7. Descodificar a string
@@ -172,9 +181,9 @@ namespace WeatherOS.Services
                 int bodyIdx = CustomIndexOf(responseStr, "\r\n\r\n");
                 if (bodyIdx != -1)
                 {
-                    return responseStr.Substring(bodyIdx + 4);
+                    nic.DataReceived = _oldHandler; return responseStr.Substring(bodyIdx + 4);
                 }
-                return responseStr;
+                nic.DataReceived = _oldHandler; return responseStr;
             }
             finally
             {
@@ -301,6 +310,7 @@ namespace WeatherOS.Services
             TotalTxBytes += (uint)frame.Length;
             if (!nic.QueueBytes(frame))
             {
+                System.Console.WriteLine("\n[net] ERROR: Tx Ring Full!");
                 WeatherOS.Kernel.CustomNIC?.HackPoll();
             }
         }
@@ -317,6 +327,7 @@ namespace WeatherOS.Services
 
                 private static void CustomDataReceived(byte[] packet)
         {
+            if (_oldHandler == CustomDataReceived) _oldHandler = null; // STOP RECURSION FATAL BUG
             if (packet != null) TotalRxBytes += (uint)packet.Length;
             if (packet == null || packet.Length < 42) { _oldHandler?.Invoke(packet); return; }
 
@@ -419,6 +430,14 @@ namespace WeatherOS.Services
         }
     }
 }
+
+
+
+
+
+
+
+
 
 
 
