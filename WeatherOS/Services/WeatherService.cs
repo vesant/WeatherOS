@@ -92,17 +92,11 @@ namespace WeatherOS.Services
             {
                 System.Console.WriteLine("[net] raw_tcp: initializing bare-metal TCP handshake sequence...");
                 
-                // IP for api.weatherapi.com
-                var destIp = new Cosmos.System.Network.IPv4.Address(79, 127, 134, 228); 
+                // IP for api.weatherapi.com (updated resolved IP)
+                var destIp = new Cosmos.System.Network.IPv4.Address(79, 127, 134, 131); 
                 var gatewayIp = new Cosmos.System.Network.IPv4.Address(10, 0, 2, 2);
                 
-                try {
-                    using (var arpWake = new Cosmos.System.Network.IPv4.ICMPClient())
-                    {
-                        arpWake.Connect(gatewayIp);
-                        arpWake.SendEcho();
-                    }
-                } catch { }
+                
                 
                 string safeCity = city.Replace(" ", "%20");
                 string request = $"GET /v1/forecast.json?key={apiKey}&q={safeCity}&days=1&aqi=no&alerts=yes HTTP/1.1\r\n" +
@@ -116,13 +110,7 @@ namespace WeatherOS.Services
                 {
                     if (_debugMode) System.Console.WriteLine("[net] raw_tcp: First attempt timed out (ARP missing?). Retrying in 1s...");
                     System.Threading.Thread.Sleep(1000);
-                    try {
-                        using (var arpWake = new Cosmos.System.Network.IPv4.ICMPClient())
-                        {
-                            arpWake.Connect(gatewayIp);
-                            arpWake.SendEcho();
-                        }
-                    } catch { }
+                    
                     response = RawTcpHttp.FetchGet(destIp, gatewayIp, request);
                 }
                 
@@ -366,3 +354,4 @@ namespace WeatherOS.Services
         }
     }
 }
+

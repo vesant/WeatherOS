@@ -25,10 +25,9 @@ namespace WeatherOS.Services
         private static Cosmos.HAL.DataReceivedHandler _oldHandler;
 
         public static uint TotalRxBytes = 0;
-        public static uint TotalTxBytes = 0;
+        public static uint TotalTxBytes = 0; private static ushort _ipId = 1;
 
-        public static string FetchGet(Address destIp, Address gatewayIp, string requestString)
-        {
+        public static string FetchGet(Address destIp, Address gatewayIp, string requestString) {
             _synAckReceived = false;
             _finReceived = false;
             _rxLength = 0;
@@ -40,11 +39,12 @@ namespace WeatherOS.Services
             _ipSource = Cosmos.System.Network.Config.NetworkConfiguration.CurrentAddress.ToByteArray();
             _ipDest = destIp.ToByteArray();
 
-            // Usamos o MAC padrao do VirtualBox NAT Gateway
-            _macDest = new byte[] { 0x52, 0x54, 0x00, 0x12, 0x35, 0x02 };
+            // Endereço MAC Real do Router Físico do User (64-64-4a-ba-df-a4)
+            _macDest = new byte[] { 0x64, 0x64, 0x4A, 0xBA, 0xDF, 0xA4 };
 
             _oldHandler = nic.DataReceived;
             nic.DataReceived = CustomDataReceived;
+            SendArpWakeup(nic);
 
             try
             {
@@ -54,8 +54,9 @@ namespace WeatherOS.Services
                     SendTcpPacket(nic, 0x02, new byte[0]); // SYN
                     
                     long timeout = 0;
-                    while (!_synAckReceived && timeout < 2000000000L)
+                    while (!_synAckReceived && timeout < 20000000L)
                     {
+                        WeatherOS.Kernel.CustomNIC?.HackPoll();
                         timeout++;
                     }
                     if (_synAckReceived) break;
@@ -70,8 +71,9 @@ namespace WeatherOS.Services
 
                 // 6. Esperar FIN ou timeout (dados)
                 long timeout2 = 0;
-                while (!_finReceived && timeout2 < 4000000000L)
+                while (!_finReceived && timeout2 < 40000000L)
                 {
+                    WeatherOS.Kernel.CustomNIC?.HackPoll();
                     timeout2++;
                 }
 
@@ -113,6 +115,23 @@ namespace WeatherOS.Services
             return -1;
         }
 
+                private static void SendArpWakeup(Cosmos.HAL.NetworkDevice nic)
+        {
+            byte[] arp = new byte[42];
+            for(int i=0; i<6; i++) arp[i] = 0xFF;
+            Array.Copy(_macSource, 0, arp, 6, 6);
+            arp[12] = 0x08; arp[13] = 0x06;
+            arp[14] = 0x00; arp[15] = 0x01;
+            arp[16] = 0x08; arp[17] = 0x00;
+            arp[18] = 0x06; arp[19] = 0x04;
+            arp[20] = 0x00; arp[21] = 0x01;
+            Array.Copy(_macSource, 0, arp, 22, 6);
+            Array.Copy(_ipSource, 0, arp, 28, 4);
+            for(int i=0; i<6; i++) arp[32+i] = 0x00;
+            arp[38] = 192; arp[39] = 168; arp[40] = 31; arp[41] = 1;
+            nic.QueueBytes(arp);
+        }
+
         private static void SendTcpPacket(Cosmos.HAL.NetworkDevice nic, byte tcpFlags, byte[] payload)
         {
             bool isSyn = (tcpFlags & 0x02) != 0;
@@ -147,8 +166,8 @@ namespace WeatherOS.Services
             frame[tcpOffset + 4] = (byte)(_sequence >> 24); frame[tcpOffset + 5] = (byte)(_sequence >> 16);
             frame[tcpOffset + 6] = (byte)(_sequence >> 8); frame[tcpOffset + 7] = (byte)(_sequence & 0xFF);
             
-            frame[tcpOffset + 8] = (byte)(_acknowledgment >> 24); frame[tcpOffset + 9] = (byte)(_acknowledgment >> 16);
-            frame[tcpOffset + 10] = (byte)(_acknowledgment >> 8); frame[tcpOffset + 11] = (byte)(_acknowledgment & 0xFF);
+            uint ackToSend = isSyn ? 0 : _acknowledgment; frame[tcpOffset + 8] = (byte)(ackToSend >> 24); frame[tcpOffset + 9] = (byte)(ackToSend >> 16);
+            frame[tcpOffset + 10] = (byte)(ackToSend >> 8); frame[tcpOffset + 11] = (byte)(ackToSend & 0xFF);
 
             int dataOffset = 5 + (tcpOptionsLen / 4);
             frame[tcpOffset + 12] = (byte)(dataOffset << 4);
@@ -194,7 +213,10 @@ namespace WeatherOS.Services
             frame[tcpOffset + 16] = (byte)(tcpChecksum >> 8); frame[tcpOffset + 17] = (byte)(tcpChecksum & 0xFF);
 
             TotalTxBytes += (uint)frame.Length;
-            nic.QueueBytes(frame);
+            if (!nic.QueueBytes(frame))
+            {
+                WeatherOS.Kernel.CustomNIC?.HackPoll();
+            }
         }
 
         private static int CalculateChecksum(byte[] buffer, int offset, int length)
@@ -266,3 +288,5 @@ namespace WeatherOS.Services
         }
     }
 }
+
+

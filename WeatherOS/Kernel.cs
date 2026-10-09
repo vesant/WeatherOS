@@ -19,9 +19,48 @@ namespace WeatherOS
         private string _assignedIpAddress = "127.0.0.1 (Loopback)";
 
         private Cosmos.System.FileSystem.CosmosVFS _vfs;
+        public static Cosmos.HAL.Network.RTL8102E CustomNIC;
 
         protected override void BeforeRun()
         {
+            try
+            {
+                CustomNIC = new Cosmos.HAL.Network.RTL8102E();
+                if (CustomNIC.Initialize())
+                {
+                    Cosmos.HAL.NetworkDevice.Devices.Add(CustomNIC);
+                    System.Console.WriteLine("Custom RTL8102E Driver Loaded!");
+                }
+            }
+            catch { }
+
+            try
+            {
+                if (Cosmos.HAL.NetworkDevice.Devices.Count > 0)
+                {
+                    System.Console.WriteLine("Configuring Static IP (Bypassing DHCP Freeze)...");
+                    
+                    var ip = new Cosmos.System.Network.IPv4.Address(192, 168, 31, 100);
+                    var subnet = new Cosmos.System.Network.IPv4.Address(255, 255, 255, 0);
+                    var gateway = new Cosmos.System.Network.IPv4.Address(192, 168, 31, 1);
+                    
+                    var config = new Cosmos.System.Network.Config.IPConfig(ip, subnet, gateway);
+                    Cosmos.System.Network.NetworkStack.ConfigIP(Cosmos.HAL.NetworkDevice.Devices[0], config);
+                    _assignedIpAddress = ip.ToString();
+                    _isNetworkConfigured = true;
+                }
+                else
+                {
+                    System.Console.WriteLine("No supported network card found.");
+                    throw new Exception("No NIC");
+                }
+            }
+            catch (Exception)
+            {
+                _isNetworkConfigured = false;
+                _assignedIpAddress = "Offline (No Cable)";
+            }
+
             try
             {
                 _vfs = new Cosmos.System.FileSystem.CosmosVFS();
@@ -32,31 +71,6 @@ namespace WeatherOS
             {
                 System.Console.WriteLine("VFS Init Error: " + ex.Message);
                 _isVfsMounted = false;
-            }
-
-            try
-            {
-                if (Cosmos.HAL.NetworkDevice.Devices.Count > 0)
-                {
-                    System.Console.WriteLine("Initializing Network Stack (DHCP)...");
-                    using (var xClient = new Cosmos.System.Network.IPv4.UDP.DHCP.DHCPClient())
-                    {
-                        xClient.SendDiscoverPacket();
-                    }
-                }
-                else
-                {
-                    System.Console.WriteLine("No supported network card found. Skipping DHCP.");
-                    throw new Exception("No NIC");
-                }
-
-                _assignedIpAddress = Cosmos.System.Network.Config.NetworkConfiguration.CurrentAddress.ToString();
-                _isNetworkConfigured = true;
-            }
-            catch (Exception)
-            {
-                _isNetworkConfigured = false;
-                _assignedIpAddress = "Offline (No Cable / DHCP)";
             }
 
             _weatherService = new WeatherService();
