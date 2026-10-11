@@ -1,6 +1,7 @@
 using System;
 using Cosmos.System;
 using Cosmos.System.Graphics;
+using WeatherOS.Commands;
 using WeatherOS.Graphics;
 using WeatherOS.Services;
 
@@ -11,12 +12,10 @@ namespace WeatherOS
         private TuiDesktop _tuiDesktop = null!;
         private WeatherService _weatherService = null!;
         private SerialSensorService _serialSensorService = null!;
-        
-        private WeatherData _latestWeatherData;
+        private CommandManager _commandManager = null!;
 
         private bool _isVfsMounted = false;
         private bool _isNetworkConfigured = false;
-        private string _assignedIpAddress = "127.0.0.1 (Loopback)";
 
         private Cosmos.System.FileSystem.CosmosVFS _vfs;
         public static Cosmos.HAL.Network.RTL8102E CustomNIC;
@@ -46,10 +45,13 @@ namespace WeatherOS
                     
                     var config = new Cosmos.System.Network.Config.IPConfig(ip, subnet, gateway);
                     Cosmos.System.Network.NetworkStack.ConfigIP(Cosmos.HAL.NetworkDevice.Devices[0], config);
-                    _assignedIpAddress = "Dynamic (Bare-Metal)";
                     _isNetworkConfigured = true;
                     System.Console.WriteLine("[net] Starting Bare-Metal AutoConfig...");
                     WeatherOS.Services.RawTcpHttp.DoAutoConfig(Cosmos.HAL.NetworkDevice.Devices[0]);
+                    if (WeatherOS.Services.RawTcpHttp.GetAssignedIp() == "0.0.0.0")
+                    {
+                        _isNetworkConfigured = false;
+                    }
                 }
                 else
                 {
@@ -60,7 +62,6 @@ namespace WeatherOS
             catch (Exception)
             {
                 _isNetworkConfigured = false;
-                _assignedIpAddress = "Offline (No Cable)";
             }
 
             try
@@ -79,14 +80,48 @@ namespace WeatherOS
             _tuiDesktop = new TuiDesktop(_weatherService);
             _serialSensorService = new SerialSensorService();
 
+            InitializeCommandManager();
+
             if (_isNetworkConfigured)
             {
-                System.Console.WriteLine("Auto-locating via IP Geolocation API...");
-                string autoCity = _weatherService.FetchAutoLocation();
-                if (!string.IsNullOrWhiteSpace(autoCity))
+                string targetCity = "Setubal";
+                bool autoLocEnabled = true;
+
+                try
                 {
-                    System.Console.WriteLine($"Detected City: {autoCity}. Fetching weather telemetry...");
-                    _weatherService.FetchOpenWeather(autoCity, DecodeApiKey());
+                    if (System.IO.File.Exists(@"0:\settings.ini"))
+                    {
+                        string[] lines = System.IO.File.ReadAllLines(@"0:\settings.ini");
+                        foreach (var line in lines)
+                        {
+                            if (line.StartsWith("DefaultCity="))
+                            {
+                                string c = line.Substring(12).Trim();
+                                if (!string.IsNullOrWhiteSpace(c)) targetCity = c;
+                            }
+                            if (line.StartsWith("AutoLoc="))
+                            {
+                                autoLocEnabled = line.Substring(8).Trim() == "true";
+                            }
+                            if (line.StartsWith("DebugLog="))
+                            {
+                                bool dbg = line.Substring(9).Trim() == "true";
+                                _weatherService.SetDebugMode(dbg);
+                            }
+                        }
+                    }
+                }
+                catch { }
+
+                if (autoLocEnabled)
+                {
+                    System.Console.WriteLine("[net] Auto-locating via IP and fetching weather telemetry (wttr.in)...");
+                    _weatherService.FetchOpenWeather("", DecodeApiKey());
+                }
+                else
+                {
+                    System.Console.WriteLine($"[net] Auto-locate disabled. Fetching weather for default: {targetCity}...");
+                    _weatherService.FetchOpenWeather(targetCity, DecodeApiKey());
                 }
             }
 
@@ -96,16 +131,33 @@ namespace WeatherOS
             PrintBootBanner();
         }
 
+        private void InitializeCommandManager()
+        {
+            _commandManager = new CommandManager();
+            _commandManager.Register(new HelpCommand(_commandManager, _tuiDesktop));
+            _commandManager.Register(new ClearCommand(() => PrintBootBanner()));
+            _commandManager.Register(new PingCommand());
+            _commandManager.Register(new FetchCommand(_weatherService, () => DecodeApiKey()));
+            _commandManager.Register(new SetCityCommand(_weatherService, () => DecodeApiKey()));
+            _commandManager.Register(new WeatherCommand(_weatherService));
+            _commandManager.Register(new SerialTestCommand());
+            _commandManager.Register(new DebugCommand(_weatherService));
+            _commandManager.Register(new GuiCommand(() => SwitchToGuiMode()));
+            _commandManager.Register(new DisksCommand());
+            _commandManager.Register(new FormatCommand());
+            _commandManager.Register(new WipeCommand());
+            _commandManager.Register(new PoweroffCommand());
+            _commandManager.Register(new RebootCommand());
+        }
+
         private string DecodeApiKey()
         {
-            // Nova chave do WeatherAPI.com
             return "bc0cfac1c3144fc3bf0145134260810";
         }
 
         protected override void Run()
         {
-            System.Console.Write("WeatherOS> ");
-            string input = System.Console.ReadLine();
+            string input = TerminalLineEditor.ReadLine("WeatherOS> ");
             ProcessCommand(input);
         }
 
@@ -129,140 +181,28 @@ namespace WeatherOS
                 }
             }
 
-            switch (command)
+            // Poweroff alias support (halt -> poweroff)
+            if (command == "halt")
             {
-                case "help":
-                    System.Console.WriteLine("Available Core Commands:");
-                    System.Console.WriteLine("  help         - Show this menu.");
-                    System.Console.WriteLine("  clear        - Clear the screen.");
-                    System.Console.WriteLine("  ping <ip>    - Test network connectivity.");
-                    System.Console.WriteLine("  fetch <city> - Pull live data from OpenWeather API.");
-                    System.Console.WriteLine("  serial-test  - Probe COM1 and listen for Arduino telemetry.");
-                    System.Console.WriteLine("  gui          - Switch to ASCII Dashboard Menu.");
-                    
-                    System.Console.WriteLine("\nAvailable Graphical Apps (Type to Launch Directly):");
-                    string[] appNames = _tuiDesktop.GetAppNames();
-                    for (int i = 0; i < appIds.Length; i++)
-                    {
-                        System.Console.WriteLine($"  {appIds[i].PadRight(12)} - {appNames[i]}");
-                    }
-                    break;
-
-                case "fetch":
-                    if (!_isNetworkConfigured || parts.Length < 2)
-                    {
-                        System.Console.WriteLine("Error: Network offline or missing city. (Example: fetch Lisbon)");
-                        break;
-                    }
-                    string city = string.Join(" ", parts, 1, parts.Length - 1);
-                    _weatherService.FetchOpenWeather(city, DecodeApiKey());
-                    var data = _weatherService.GetLatestReading();
-                    System.Console.WriteLine($"\n  -> {data.Location}: {data.TemperatureCelsius}C, {data.Condition}");
-                    if (data.AlertLevel != "NONE") System.Console.WriteLine($"  -> [ALERT {data.AlertLevel}]: {data.AlertMessage}");
-                    break;
-
-                case "ping":
-                    if (!_isNetworkConfigured || parts.Length < 2)
-                    {
-                        System.Console.WriteLine("Error: Network offline or missing IP. (Example: ping 192.168.1.1)");
-                        break;
-                    }
-                    try
-                    {
-                        var address = Cosmos.System.Network.IPv4.Address.Parse(parts[1]);
-                        System.Console.WriteLine($"Pinging {parts[1]} with 32 bytes of data...");
-                        
-                        int successCount = 0;
-                        using (var xClient = new Cosmos.System.Network.IPv4.ICMPClient())
-                        {
-                            xClient.Connect(address);
-                            for (int i = 0; i < 4; i++)
-                            {
-                                xClient.SendEcho();
-                                var endpoint = new Cosmos.System.Network.IPv4.EndPoint(Cosmos.System.Network.IPv4.Address.Zero, 0);
-                                int time = xClient.Receive(ref endpoint, 2000);
-                                
-                                if (time >= 0)
-                                {
-                                    System.Console.WriteLine($"Reply from {parts[1]}: time={time}ms");
-                                    successCount++;
-                                }
-                                else
-                                {
-                                    System.Console.WriteLine("Request timed out.");
-                                }
-                            }
-                        }
-                        System.Console.WriteLine($"Ping statistics: 4 sent, {successCount} received.\n");
-                    }
-                    catch
-                    {
-                        System.Console.WriteLine("Invalid IP address or hardware error.\n");
-                    }
-                    break;
-
-                case "clear":
-                    PrintBootBanner();
-                    break;
-
-                case "serial-test":
-                    TestSerialSensorPort();
-                    break;
-
-                case "gui":
-                    SwitchToGuiMode();
-                    break;
-
-                default:
-                    System.Console.ForegroundColor = ConsoleColor.Red;
-                    System.Console.WriteLine($"Unknown command: '{command}'. Type 'help' for a list of commands.");
-                    System.Console.ResetColor();
-                    break;
+                input = "poweroff";
             }
-        }
+            if (command == "lsblk" || command == "diskpart")
+            {
+                input = "disks";
+            }
+            if (command == "clean")
+            {
+                // clean alias for wipe
+                input = "wipe" + (parts.Length > 1 ? " " + parts[1] : "");
+            }
 
-        private void DisplayTerminalWeather()
-        {
-            _latestWeatherData = _weatherService.GetLatestReading();
-
-            System.Console.ForegroundColor = ConsoleColor.Cyan;
-            System.Console.WriteLine("\n[LOCAL TELEMETRY REPORT]");
-            System.Console.WriteLine("==================================================");
-            System.Console.ResetColor();
-
-            System.Console.WriteLine("  Source Station     : Local Weather Engine (Standalone x86 PC)");
-            System.Console.WriteLine("  Condition          : " + _latestWeatherData.Condition);
-            
-            System.Console.ForegroundColor = ConsoleColor.Yellow;
-            System.Console.WriteLine("  Temperature        : " + ((int)_latestWeatherData.TemperatureCelsius).ToString() + " C");
-            System.Console.ResetColor();
-
-            System.Console.ForegroundColor = ConsoleColor.Blue;
-            System.Console.WriteLine("  Relative Humidity  : " + ((int)_latestWeatherData.HumidityPercent).ToString() + " %");
-            System.Console.ResetColor();
-
-            System.Console.ForegroundColor = ConsoleColor.Green;
-            System.Console.WriteLine("  Atmospheric Press. : " + ((int)_latestWeatherData.PressureHpa).ToString() + " hPa");
-            System.Console.ResetColor();
-
-            System.Console.WriteLine("  Wind Speed / Dir   : " + ((int)_latestWeatherData.WindSpeedKmh).ToString() + " km/h (" + _latestWeatherData.WindDirection + ")");
-            System.Console.WriteLine("--------------------------------------------------");
-            System.Console.ForegroundColor = ConsoleColor.DarkGray;
-            System.Console.WriteLine("  Note: Type 'gui' to inspect visual bar charts.\n");
-            System.Console.ResetColor();
-        }
-
-        private void TestSerialSensorPort()
-        {
-            System.Console.ForegroundColor = ConsoleColor.Yellow;
-            System.Console.WriteLine("\n[Hardware Diagnostic - PC COM1 Serial Port]");
-            System.Console.ResetColor();
-            System.Console.WriteLine("Note: Placeholder diagnostic for future external sensor hardware.");
-
-            System.Console.ForegroundColor = ConsoleColor.DarkGray;
-            System.Console.WriteLine("[Port Idle] No external sensor attached. Standalone PC mode active.");
-            System.Console.ResetColor();
-            System.Console.WriteLine();
+            bool executed = _commandManager.Execute(input);
+            if (!executed)
+            {
+                System.Console.ForegroundColor = ConsoleColor.Red;
+                System.Console.WriteLine($"Unknown command: '{command}'. Type 'help' for a list of commands.");
+                System.Console.ResetColor();
+            }
         }
 
         private void SwitchToGuiMode()
@@ -297,14 +237,15 @@ namespace WeatherOS
             if (_isNetworkConfigured) System.Console.ForegroundColor = ConsoleColor.Green; else System.Console.ForegroundColor = ConsoleColor.DarkYellow;
             System.Console.Write(_isNetworkConfigured ? " OK " : "WARN");
             System.Console.ResetColor();
-            System.Console.WriteLine($"] IPv4 Network Stack : {_assignedIpAddress}");
+            string ipDisplay = WeatherOS.Services.WeatherService.IsDebugModeActive ? WeatherOS.Services.RawTcpHttp.GetAssignedIp() : WeatherOS.Services.RawTcpHttp.GetMaskedIp();
+            System.Console.WriteLine($"] IPv4 Network Stack : {ipDisplay}");
 
             System.Console.WriteLine(" [ OK ] Hardware Target    : Standard x86 PC (Standalone Mode)");
 
             System.Console.ForegroundColor = ConsoleColor.DarkGray;
-            System.Console.WriteLine("--------------------------------------------------------------------------------");
-            System.Console.WriteLine(" Type 'help' to view commands or 'gui' to launch the meteorological dashboard.  ");
-            System.Console.WriteLine("--------------------------------------------------------------------------------\n");
+            System.Console.WriteLine("-------------------------------------------------------------------------------");
+            System.Console.WriteLine(" Type 'help' to view commands or 'gui' to launch the meteorological dashboard. ");
+            System.Console.WriteLine("-------------------------------------------------------------------------------\n");
             System.Console.ResetColor();
         }
     }

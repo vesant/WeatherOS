@@ -21,6 +21,11 @@ namespace Cosmos.HAL.Network
         public override Cosmos.HAL.Network.MACAddress MACAddress => new Cosmos.HAL.Network.MACAddress(macBytes);
         public override string Name => "RTL8102E";
         public override bool Ready => true;
+
+        public static uint HardwareTxBytes = 0;
+        public static uint HardwareRxBytes = 0;
+        public static uint HardwareTxPackets = 0;
+        public static uint HardwareRxPackets = 0;
         
         // Boilerplate methods
         public override byte[] ReceivePacket() { return null; }
@@ -233,6 +238,16 @@ namespace Cosmos.HAL.Network
 
         private bool Phase4And5()
         {
+            Console.WriteLine("r8102e: configuring RxConfig and TxConfig...");
+            // RxConfig (0x44): Accept Broadcast (0x08), Multicast (0x04), Physical Match (0x02), Unlimited FIFO (0x700), Max DMA (0xE000) -> 0x0000E70E
+            mmio.DWords[0x44] = 0x0000E70E;
+            
+            // TxConfig (0x40): Max DMA burst
+            mmio.DWords[0x40] = 0x60000000;
+
+            // RxMaxSize (0xDA): 1536 bytes
+            mmio.Words[0xDA] = 0x0600;
+
             Console.WriteLine("r8102e: enabling RX and TX in CR...");
             // Command Register (0x37): RE=0x08, TE=0x04 -> 0x0C
             mmio.Bytes[0x37] = 0x0C;
@@ -240,8 +255,12 @@ namespace Cosmos.HAL.Network
             Console.WriteLine("r8102e: verifying PHY Link Status...");
             // PHYStatus register is at offset 0x6C (8-bit)
             // Bit 1 indicates Link Status (1 = UP, 0 = DOWN)
-            byte phyStatus = mmio.Bytes[0x6C];
-            if ((phyStatus & 0x02) != 0)
+            int linkSpins = 0;
+            while ((mmio.Bytes[0x6C] & 0x02) == 0 && linkSpins < 500000)
+            {
+                linkSpins++;
+            }
+            if ((mmio.Bytes[0x6C] & 0x02) != 0)
             {
                 Console.WriteLine("r8102e: PHY Link is UP! Cable connected.");
             }
@@ -259,14 +278,27 @@ namespace Cosmos.HAL.Network
             return true;
         }
 
+        public bool IsPhyLinkUp()
+        {
+            if (mmio == null) return false;
+            return (mmio.Bytes[0x6C] & 0x02) != 0;
+        }
+
         private int currentTxDesc = 0;
 
         public override bool QueueBytes(byte[] buffer, int offset, int length)
         {
             uint descOffset = (uint)(currentTxDesc * 16);
-            uint cmdStatus = Read32(txDescBlock, descOffset);
             
-            // Check if MAC still owns the descriptor
+            // Wait briefly for descriptor if still owned by NIC
+            int spins = 5000;
+            while ((Read32(txDescBlock, descOffset) & 0x80000000) != 0 && spins > 0)
+            {
+                mmio.Bytes[0x38] = 0x40; // Kick doorbell in case previous poll was missed
+                spins--;
+            }
+
+            uint cmdStatus = Read32(txDescBlock, descOffset);
             if ((cmdStatus & 0x80000000) != 0)
                 return false; // Queue full!
 
@@ -294,8 +326,12 @@ namespace Cosmos.HAL.Network
             
             Write32(txDescBlock, descOffset, newCmdStatus);
             
+            HardwareTxBytes += txLength;
+            HardwareTxPackets++;
+
             // Trigger TX poll (TxPoll register 0x38 = 0x40)
             mmio.Bytes[0x38] = 0x40;
+            mmio.Bytes[0x38] = 0x40; // Double kick (Linux 8168 doorbell hack)
             
             currentTxDesc = (currentTxDesc + 1) % 4;
             return true;
@@ -320,8 +356,12 @@ namespace Cosmos.HAL.Network
                 // Bit 31 is 0! MAC transferred a packet to RAM!
                 // Realtek includes the 4-byte Ethernet CRC in the length. Cosmos doesn't want it.
                 uint rawLength = cmdStatus & 0x3FFF;
+                if (rawLength > 1536) rawLength = 1536;
                 uint length = rawLength > 4 ? rawLength - 4 : rawLength; 
                 
+                HardwareRxBytes += length;
+                HardwareRxPackets++;
+
                 // Read into managed array for Cosmos NetworkStack
                 byte[] packet = new byte[length];
                 for (uint i = 0; i < length; i++)
@@ -344,7 +384,17 @@ namespace Cosmos.HAL.Network
                 currentRxDesc = (currentRxDesc + 1) % 4;
             }
 
-            // 2. Read and Clear Interrupt Status Register (0x3E)
+            // 2. Transmit Watchdog: check if any TX descriptor is pending and kick TPPOLL
+            for (int t = 0; t < 4; t++)
+            {
+                if ((Read32(txDescBlock, (uint)(t * 16)) & 0x80000000) != 0)
+                {
+                    mmio.Bytes[0x38] = 0x40;
+                    break;
+                }
+            }
+
+            // 3. Read and Clear Interrupt Status Register (0x3E)
             ushort status = mmio.Words[0x3E];
             if (status != 0)
             {

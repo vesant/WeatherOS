@@ -11,38 +11,185 @@ namespace WeatherOS.Services
         private static byte[] _ipSource = new byte[4];
         private static byte[] _ipDest = new byte[4];
         private static ushort _sourcePort = 54321;
-        private static uint _sequence = 1000;
+        private static uint _sequence = 0x4F9B2C11;
         private static uint _acknowledgment = 0;
 
         private static bool _synAckReceived = false;
         private static bool _finReceived = false;
         
-        // Static buffers to avoid memory allocation inside IRQ!
-        private static byte[] _rxBuffer = new byte[65536];
+        // Static buffer to avoid memory allocation inside IRQ!
+        private static byte[] _rxBuffer = new byte[131072]; // 128 KB
         private static int _rxLength = 0;
 
-        // O tipo do delegate no UserKit 2022
         private static Cosmos.HAL.DataReceivedHandler _oldHandler;
 
-        public static uint TotalRxBytes = 0;
-                public static uint TotalTxBytes = 0; private static ushort _ipId = 1;
+        private static uint _localRxBytes = 0;
+        private static uint _localTxBytes = 0;
+
+        public static uint TotalRxBytes
+        {
+            get { return Cosmos.HAL.Network.RTL8102E.HardwareRxBytes > _localRxBytes ? Cosmos.HAL.Network.RTL8102E.HardwareRxBytes : _localRxBytes; }
+            set { _localRxBytes = value; }
+        }
+
+        public static uint TotalTxBytes
+        {
+            get { return Cosmos.HAL.Network.RTL8102E.HardwareTxBytes > _localTxBytes ? Cosmos.HAL.Network.RTL8102E.HardwareTxBytes : _localTxBytes; }
+            set { _localTxBytes = value; }
+        }
+        private static ushort _ipId = 0x8A3C;
         public static bool _dhcpOfferReceived = false;
+        public static bool _dhcpAckReceived = false;
         public static bool _arpReplyReceived = false;
         public static byte[] _gatewayIp = new byte[4];
+        public static byte[] _dhcpServerIp = new byte[4];
+        
+        private static ushort _pingIdentifier = 0x1234;
+        private static bool _pingReplyReceived = false;
+
+        public static string GetAssignedIp()
+        {
+            if (_ipSource[0] == 0 && _ipSource[1] == 0) return "0.0.0.0";
+            return $"{_ipSource[0]}.{_ipSource[1]}.{_ipSource[2]}.{_ipSource[3]}";
+        }
+
+        public static string GetGatewayIp()
+        {
+            if (_gatewayIp[0] == 0 && _gatewayIp[1] == 0) return "0.0.0.0";
+            return $"{_gatewayIp[0]}.{_gatewayIp[1]}.{_gatewayIp[2]}.{_gatewayIp[3]}";
+        }
+
+        public static string GetMaskedIp()
+        {
+            if (_ipSource[0] == 0 && _ipSource[1] == 0) return "Offline";
+            return $"{_ipSource[0]}.{_ipSource[1]}.***.*** (Secured)";
+        }
 
         public static void DoAutoConfig(Cosmos.HAL.NetworkDevice nic)
         {
             _macSource = nic.MACAddress.bytes;
             _ipSource = new byte[] { 0, 0, 0, 0 };
+            _gatewayIp = new byte[] { 0, 0, 0, 0 };
+            _dhcpServerIp = new byte[] { 0, 0, 0, 0 };
             _macDest = new byte[] { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
             _oldHandler = nic.DataReceived;
             nic.DataReceived = CustomDataReceived;
 
-            // 1. DHCP Discover
+            // Wait for PHY Link up to 2-3 seconds
+            System.Console.WriteLine("[net] raw_tcp: verifying physical link before DHCP...");
+            int phyWait = 0;
+            while (phyWait < 2000000)
+            {
+                if (WeatherOS.Kernel.CustomNIC != null && WeatherOS.Kernel.CustomNIC.IsPhyLinkUp()) break;
+                phyWait++;
+            }
+
+            // 1. DHCP Discover with Retransmissions
             System.Console.WriteLine("[net] raw_tcp: broadcasting DHCP Discover...");
             _dhcpOfferReceived = false;
+            _dhcpAckReceived = false;
+            byte[] dhcp = BuildDhcpPacket(1, null, null); // Discover
+            nic.QueueBytes(dhcp);
+
+            int dotCount = 0;
+            int retransCount = 0;
+            int timeout = 0;
+            while (!_dhcpOfferReceived && timeout < 10000000)
+            {
+                WeatherOS.Kernel.CustomNIC?.HackPoll();
+                timeout++;
+                dotCount++;
+                if (dotCount >= 1000000)
+                {
+                    dotCount = 0;
+                    System.Console.Write(".");
+                }
+                retransCount++;
+                if (retransCount >= 2500000)
+                {
+                    retransCount = 0;
+                    nic.QueueBytes(dhcp); // Retransmit Discover
+                }
+            }
+            
+            if (!_dhcpOfferReceived)
+            {
+                System.Console.WriteLine("\n[net] raw_tcp: DHCP failed! No lease offer received.");
+                _ipSource = new byte[] { 0, 0, 0, 0 };
+                _gatewayIp = new byte[] { 0, 0, 0, 0 };
+                nic.DataReceived = _oldHandler;
+                return;
+            }
+
+            // 1b. DHCP Request to officially confirm lease with the router
+            byte[] dhcpReq = BuildDhcpPacket(3, _ipSource, _dhcpServerIp); // Request
+            nic.QueueBytes(dhcpReq);
+            int reqTimeout = 0;
+            while (!_dhcpAckReceived && reqTimeout < 3000000)
+            {
+                WeatherOS.Kernel.CustomNIC?.HackPoll();
+                reqTimeout++;
+            }
+
+            if (WeatherOS.Services.WeatherService.IsDebugModeActive)
+            {
+                System.Console.WriteLine($"\n[net] raw_tcp: DHCP OK! IP: {_ipSource[0]}.{_ipSource[1]}.{_ipSource[2]}.{_ipSource[3]}");
+            }
+            else
+            {
+                System.Console.WriteLine($"\n[net] raw_tcp: DHCP OK! IP: {_ipSource[0]}.{_ipSource[1]}.***.*** [Secured]");
+            }
+
+            // Configure Cosmos NetworkStack with real leased IP
+            try
+            {
+                var myIp = new Cosmos.System.Network.IPv4.Address(_ipSource[0], _ipSource[1], _ipSource[2], _ipSource[3]);
+                var mySubnet = new Cosmos.System.Network.IPv4.Address(255, 255, 255, 0);
+                var myGw = new Cosmos.System.Network.IPv4.Address(_gatewayIp[0], _gatewayIp[1], _gatewayIp[2], _gatewayIp[3]);
+                Cosmos.System.Network.NetworkStack.ConfigIP(nic, new Cosmos.System.Network.Config.IPConfig(myIp, mySubnet, myGw));
+            }
+            catch { }
+
+            // 2. ARP Request for Gateway
+            System.Console.WriteLine($"[net] raw_tcp: ARP Request for Gateway {_gatewayIp[0]}.{_gatewayIp[1]}.{_gatewayIp[2]}.{_gatewayIp[3]}...");
+            SendArpRequest(_gatewayIp);
+
+            dotCount = 0;
+            retransCount = 0;
+            timeout = 0;
+            while (!_arpReplyReceived && timeout < 6000000)
+            {
+                WeatherOS.Kernel.CustomNIC?.HackPoll();
+                timeout++;
+                dotCount++;
+                if (dotCount >= 1000000)
+                {
+                    dotCount = 0;
+                    System.Console.Write(".");
+                }
+                retransCount++;
+                if (retransCount >= 2000000)
+                {
+                    retransCount = 0;
+                    SendArpRequest(_gatewayIp); // Retransmit ARP
+                }
+            }
+
+            if (!_arpReplyReceived)
+            {
+                System.Console.WriteLine("\n[net] raw_tcp: ARP failed! Router might ignore us.");
+            }
+            else
+            {
+                System.Console.WriteLine($"\n[net] raw_tcp: ARP OK! Router MAC: {_macDest[0]:X2}:{_macDest[1]:X2}:{_macDest[2]:X2}:{_macDest[3]:X2}:{_macDest[4]:X2}:{_macDest[5]:X2}");
+            }
+            nic.DataReceived = _oldHandler;
+        }
+
+        private static byte[] BuildDhcpPacket(byte msgType, byte[] requestedIp, byte[] serverIp)
+        {
             byte[] dhcp = new byte[342];
-            for(int i=0; i<6; i++) dhcp[i] = 0xFF;
+            for (int i = 0; i < 6; i++) dhcp[i] = 0xFF; // Broadcast
             Array.Copy(_macSource, 0, dhcp, 6, 6);
             dhcp[12] = 0x08; dhcp[13] = 0x00; // IPv4
             dhcp[14] = 0x45; dhcp[15] = 0x00;
@@ -52,7 +199,6 @@ namespace WeatherOS.Services
             dhcp[22] = 0x40; // TTL
             dhcp[23] = 17; // UDP
             dhcp[24] = 0x00; dhcp[25] = 0x00; // Checksum
-            // Src IP 0.0.0.0
             dhcp[30] = 0xFF; dhcp[31] = 0xFF; dhcp[32] = 0xFF; dhcp[33] = 0xFF; // Dest 255.255.255.255
             
             int ipSum = CalculateChecksum(dhcp, 14, 20);
@@ -62,9 +208,9 @@ namespace WeatherOS.Services
             dhcp[34] = 0x00; dhcp[35] = 68; // Src Port
             dhcp[36] = 0x00; dhcp[37] = 67; // Dest Port
             dhcp[38] = 0x01; dhcp[39] = 0x34; // UDP Length (308)
-            dhcp[40] = 0x00; dhcp[41] = 0x00; // Checksum (0 is allowed for UDP IPv4)
+            dhcp[40] = 0x00; dhcp[41] = 0x00;
 
-            // DHCP
+            // DHCP Body
             dhcp[42] = 1; // BootRequest
             dhcp[43] = 1; // Ethernet
             dhcp[44] = 6; // MAC Len
@@ -73,126 +219,284 @@ namespace WeatherOS.Services
             dhcp[52] = 0x80; dhcp[53] = 0x00; // Broadcast flag
             Array.Copy(_macSource, 0, dhcp, 70, 6); // Client MAC
             dhcp[278] = 0x63; dhcp[279] = 0x82; dhcp[280] = 0x53; dhcp[281] = 0x63; // Magic
-            dhcp[282] = 53; dhcp[283] = 1; dhcp[284] = 1; // Discover
-            dhcp[285] = 255; // End
-
-            nic.QueueBytes(dhcp);
-
-            long timeout = 0;
-            while (!_dhcpOfferReceived && timeout < 500000000L) { if (timeout % 5000000 == 0) System.Console.Write(".");
-                        if (timeout % 5000000 == 0) System.Console.Write(".");
-                        WeatherOS.Kernel.CustomNIC?.HackPoll();
-                        timeout++; }
             
-            if (!_dhcpOfferReceived) {
-                System.Console.WriteLine("[net] raw_tcp: DHCP failed! Falling back to 192.168.1.100.");
-                _ipSource = new byte[] { 192, 168, 1, 100 };
-                _gatewayIp = new byte[] { 192, 168, 1, 1 };
-            } else {
-                System.Console.WriteLine($"[net] raw_tcp: DHCP OK! IP: {_ipSource[0]}.{_ipSource[1]}.{_ipSource[2]}.{_ipSource[3]}");
+            int opt = 282;
+            dhcp[opt++] = 53; dhcp[opt++] = 1; dhcp[opt++] = msgType; // 1 = Discover, 3 = Request
+            if (msgType == 3 && requestedIp != null)
+            {
+                dhcp[opt++] = 50; dhcp[opt++] = 4; // Requested IP
+                dhcp[opt++] = requestedIp[0]; dhcp[opt++] = requestedIp[1];
+                dhcp[opt++] = requestedIp[2]; dhcp[opt++] = requestedIp[3];
+                if (serverIp != null && serverIp[0] != 0)
+                {
+                    dhcp[opt++] = 54; dhcp[opt++] = 4; // Server Identifier
+                    dhcp[opt++] = serverIp[0]; dhcp[opt++] = serverIp[1];
+                    dhcp[opt++] = serverIp[2]; dhcp[opt++] = serverIp[3];
+                }
             }
-
-            // 2. ARP Request for Gateway
-            System.Console.WriteLine($"[net] raw_tcp: ARP Request for Gateway {_gatewayIp[0]}.{_gatewayIp[1]}.{_gatewayIp[2]}.{_gatewayIp[3]}...");
-            _arpReplyReceived = false;
-            byte[] arp = new byte[42];
-            for(int i=0; i<6; i++) arp[i] = 0xFF;
-            Array.Copy(_macSource, 0, arp, 6, 6);
-            arp[12] = 0x08; arp[13] = 0x06;
-            arp[14] = 0x00; arp[15] = 0x01;
-            arp[16] = 0x08; arp[17] = 0x00;
-            arp[18] = 0x06; arp[19] = 0x04;
-            arp[20] = 0x00; arp[21] = 0x01;
-            Array.Copy(_macSource, 0, arp, 22, 6);
-            Array.Copy(_ipSource, 0, arp, 28, 4);
-            for(int i=0; i<6; i++) arp[32+i] = 0x00;
-            Array.Copy(_gatewayIp, 0, arp, 38, 4);
-
-            nic.QueueBytes(arp);
-
-            timeout = 0;
-            while (!_arpReplyReceived && timeout < 500000000L) { if (timeout % 5000000 == 0) System.Console.Write(".");
-                        if (timeout % 5000000 == 0) System.Console.Write(".");
-                        WeatherOS.Kernel.CustomNIC?.HackPoll();
-                        timeout++; }
-
-            if (!_arpReplyReceived) {
-                System.Console.WriteLine("[net] raw_tcp: ARP failed! Router might ignore us.");
-            } else {
-                System.Console.WriteLine("$[net] raw_tcp: ARP OK! Router MAC: {_macDest[0]:X2}:{_macDest[1]:X2}:{_macDest[2]:X2}:{_macDest[3]:X2}:{_macDest[4]:X2}:{_macDest[5]:X2}");
-            }
-            nic.DataReceived = _oldHandler;
+            dhcp[opt] = 255; // End
+            return dhcp;
         }
 
+        public static void SendArpRequest(byte[] targetIp)
+        {
+            if (targetIp == null || targetIp.Length != 4) return;
+            var nic = Cosmos.HAL.NetworkDevice.Devices[0];
+            _arpReplyReceived = false;
+            byte[] arp = new byte[42];
+            for (int i = 0; i < 6; i++) arp[i] = 0xFF; // Broadcast
+            Array.Copy(_macSource, 0, arp, 6, 6);
+            arp[12] = 0x08; arp[13] = 0x06; // ARP
+            arp[14] = 0x00; arp[15] = 0x01; // Ethernet
+            arp[16] = 0x08; arp[17] = 0x00; // IPv4
+            arp[18] = 0x06; arp[19] = 0x04; // MAC/IP lens
+            arp[20] = 0x00; arp[21] = 0x01; // Op: Request
+            Array.Copy(_macSource, 0, arp, 22, 6);
+            Array.Copy(_ipSource, 0, arp, 28, 4);
+            for (int i = 0; i < 6; i++) arp[32 + i] = 0x00;
+            Array.Copy(targetIp, 0, arp, 38, 4);
+            _localTxBytes += (uint)arp.Length;
+            nic.QueueBytes(arp);
+        }
 
-        public static string FetchGet(Address destIp, Address gatewayIp, string requestString) {
-            _synAckReceived = false;
-            _finReceived = false;
-            _rxLength = 0;
-            
-            var nic = NetworkDevice.Devices[0];
-            
-            // IPs and MACs already configured by DoAutoConfig()
-            _ipDest = destIp.ToByteArray();
+        private static void SendArpReply(byte[] reqPacket)
+        {
+            var nic = Cosmos.HAL.NetworkDevice.Devices[0];
+            byte[] reply = new byte[42];
+            Array.Copy(reqPacket, 22, reply, 0, 6); // Dest MAC = sender of request
+            Array.Copy(_macSource, 0, reply, 6, 6);  // Src MAC = our MAC
+            reply[12] = 0x08; reply[13] = 0x06;      // ARP
+            reply[14] = 0x00; reply[15] = 0x01;      // Ethernet
+            reply[16] = 0x08; reply[17] = 0x00;      // IPv4
+            reply[18] = 0x06; reply[19] = 0x04;      // Lens
+            reply[20] = 0x00; reply[21] = 0x02;      // Op: Reply
+            Array.Copy(_macSource, 0, reply, 22, 6); // Sender MAC
+            Array.Copy(_ipSource, 0, reply, 28, 4);  // Sender IP
+            Array.Copy(reqPacket, 22, reply, 32, 6); // Target MAC
+            Array.Copy(reqPacket, 28, reply, 38, 4); // Target IP
+            _localTxBytes += (uint)reply.Length;
+            nic.QueueBytes(reply);
+        }
 
+        public static bool Ping(Cosmos.System.Network.IPv4.Address targetAddress, out int rttMs)
+        {
+            rttMs = 0;
+            if (_ipSource[0] == 0) return false;
+
+            var nic = Cosmos.HAL.NetworkDevice.Devices[0];
             _oldHandler = nic.DataReceived;
             nic.DataReceived = CustomDataReceived;
-            SendArpWakeup(nic);
 
             try
             {
-                // 3. Enviar SYN com Retransmissao
+                _pingReplyReceived = false;
+                _pingIdentifier++;
+                
+                byte[] targetBytes = targetAddress.ToByteArray();
+                
+                byte[] ping = new byte[74];
+                Array.Copy(_macDest, 0, ping, 0, 6); // To router MAC
+                Array.Copy(_macSource, 0, ping, 6, 6);
+                ping[12] = 0x08; ping[13] = 0x00; // IPv4
+                
+                ping[14] = 0x45; ping[15] = 0x00;
+                ping[16] = 0x00; ping[17] = 60; // Total Length (60)
+                ping[18] = (byte)(_ipId >> 8); ping[19] = (byte)(_ipId & 0xFF); _ipId++;
+                ping[20] = 0x40; ping[21] = 0x00;
+                ping[22] = 64;   // TTL
+                ping[23] = 0x01; // ICMP
+                ping[24] = 0x00; ping[25] = 0x00; // Checksum
+                Array.Copy(_ipSource, 0, ping, 26, 4);
+                Array.Copy(targetBytes, 0, ping, 30, 4);
+                
+                int ipSum = CalculateChecksum(ping, 14, 20);
+                ping[24] = (byte)(ipSum >> 8); ping[25] = (byte)(ipSum & 0xFF);
+                
+                // ICMP
+                ping[34] = 0x08; // Echo Request
+                ping[35] = 0x00; // Code 0
+                ping[36] = 0x00; ping[37] = 0x00; // Checksum
+                ping[38] = (byte)(_pingIdentifier >> 8); ping[39] = (byte)(_pingIdentifier & 0xFF);
+                ping[40] = 0x00; ping[41] = 0x01; // Seq 1
+                
+                string pingData = "WeatherOS Bare-Metal Ping Engine";
+                for (int i = 0; i < 32 && i < pingData.Length; i++)
+                {
+                    ping[42 + i] = (byte)pingData[i];
+                }
+                
+                int icmpSum = CalculateChecksum(ping, 34, 40);
+                ping[36] = (byte)(icmpSum >> 8); ping[37] = (byte)(icmpSum & 0xFF);
+                
+                _localTxBytes += (uint)ping.Length;
+                nic.QueueBytes(ping);
+                
+                int loops = 0;
+                while (!_pingReplyReceived && loops < 500000)
+                {
+                    WeatherOS.Kernel.CustomNIC?.HackPoll();
+                    loops++;
+                }
+                
+                if (_pingReplyReceived)
+                {
+                    rttMs = loops / 10000;
+                    if (rttMs < 1) rttMs = 1;
+                    return true;
+                }
+                return false;
+            }
+            finally
+            {
+                nic.DataReceived = _oldHandler;
+            }
+        }
+
+        public static string FetchGet(Address destIp, Address gatewayIp, string requestString)
+        {
+            var nic = NetworkDevice.Devices[0];
+            _ipDest = destIp.ToByteArray();
+
+            // Refresh router ARP cache before starting TCP
+            if (_gatewayIp[0] != 0) SendArpRequest(_gatewayIp);
+
+            // Flush any residual incoming packets from previous session
+            for (int drain = 0; drain < 10; drain++)
+            {
+                WeatherOS.Kernel.CustomNIC?.HackPoll();
+            }
+
+            _synAckReceived = false;
+            _finReceived = false;
+            _rxLength = 0;
+            _sequence = 0x4F9B2C11 + (uint)(_sourcePort * 101);
+            _acknowledgment = 0;
+
+            _oldHandler = nic.DataReceived;
+            nic.DataReceived = CustomDataReceived;
+
+            try
+            {
+                // Send SYN with fast retransmission (up to 3 attempts, ~1.5s per attempt)
                 for (int attempt = 0; attempt < 3; attempt++)
                 {
                     SendTcpPacket(nic, 0x02, new byte[0]); // SYN
                     
-                    long timeout = 0;
-                    while (!_synAckReceived && timeout < 200000000L)
+                    int synTimeout = 0;
+                    while (!_synAckReceived && synTimeout < 1500000)
                     {
-                        if (timeout % 5000000 == 0) System.Console.Write(".");
                         WeatherOS.Kernel.CustomNIC?.HackPoll();
-                        timeout++;
+                        synTimeout++;
+                        if (!WeatherOS.Graphics.TuiDesktop.IsGuiActive && (synTimeout % 500000 == 0))
+                        {
+                            System.Console.Write(".");
+                        }
                     }
                     if (_synAckReceived) break;
                 }
 
-                if (!_synAckReceived) { nic.DataReceived = _oldHandler; return null; }
+                if (!_synAckReceived)
+                {
+                    return null;
+                }
 
-                // 5. Enviar ACK + HTTP Payload
-                byte[] payload = System.Text.Encoding.ASCII.GetBytes(requestString);
+                // Send ACK + HTTP Request Payload
+                byte[] payload = new byte[requestString.Length];
+                for (int p = 0; p < requestString.Length; p++)
+                {
+                    payload[p] = (byte)requestString[p];
+                }
                 SendTcpPacket(nic, 0x18, payload); // ACK + PSH
                 _sequence += (uint)payload.Length;
 
-                // 6. Esperar FIN ou timeout (dados)
-                long timeout2 = 0;
-                while (!_finReceived && timeout2 < 400000000L)
+                // Wait for response data
+                int dataTimeout = 0;
+                int lastRxLen = _rxLength;
+                int quietLoops = 0;
+                while (!_finReceived && dataTimeout < 4000000)
                 {
-                    if (timeout2 % 5000000 == 0) System.Console.Write(".");
-                        WeatherOS.Kernel.CustomNIC?.HackPoll();
-                        timeout2++;
+                    WeatherOS.Kernel.CustomNIC?.HackPoll();
+                    dataTimeout++;
+                    if (!WeatherOS.Graphics.TuiDesktop.IsGuiActive && (dataTimeout % 1000000 == 0))
+                    {
+                        System.Console.Write(".");
+                    }
+
+                    if (_rxLength > lastRxLen)
+                    {
+                        lastRxLen = _rxLength;
+                        quietLoops = 0;
+                    }
+                    else if (_rxLength > 0)
+                    {
+                        quietLoops++;
+                        if (quietLoops > 1000000) break; // Silence after receiving data
+                    }
                 }
 
-                // 7. Descodificar a string
+                // Decode UTF-8 to ASCII
                 byte[] validData = new byte[_rxLength];
                 Array.Copy(_rxBuffer, 0, validData, 0, _rxLength);
-                string responseStr = System.Text.Encoding.ASCII.GetString(validData);
+                string responseStr = DecodeUtf8ToAscii(validData, _rxLength);
 
-                // Extrair apenas o body
+                // Extract HTTP body
                 int bodyIdx = CustomIndexOf(responseStr, "\r\n\r\n");
                 if (bodyIdx != -1)
                 {
-                    nic.DataReceived = _oldHandler; return responseStr.Substring(bodyIdx + 4);
+                    return responseStr.Substring(bodyIdx + 4);
                 }
-                nic.DataReceived = _oldHandler; return responseStr;
+                return responseStr;
             }
             finally
             {
+                // Send TCP RST to cleanly close socket and free router/server state
+                SendTcpPacket(nic, 0x04, new byte[0]);
                 nic.DataReceived = _oldHandler;
                 _sourcePort++;
             }
         }
 
-        private static int CustomIndexOf(string source, string search, int startIndex = 0)
+        private static string DecodeUtf8ToAscii(byte[] data, int length)
+        {
+            if (data == null || length <= 0) return "";
+            var sb = new System.Text.StringBuilder();
+            for (int i = 0; i < length; i++)
+            {
+                byte b = data[i];
+                if (b < 128)
+                {
+                    sb.Append((char)b);
+                }
+                else if (b == 0xC3 && i + 1 < length)
+                {
+                    byte b2 = data[i + 1];
+                    i++;
+                    switch (b2)
+                    {
+                        case 0xA1: case 0xA0: case 0xA3: case 0xA2: sb.Append('a'); break;
+                        case 0x81: case 0x80: case 0x83: case 0x82: sb.Append('A'); break;
+                        case 0xA9: case 0xAA: sb.Append('e'); break;
+                        case 0x89: case 0x8A: sb.Append('E'); break;
+                        case 0xAD: sb.Append('i'); break;
+                        case 0x8D: sb.Append('I'); break;
+                        case 0xB3: case 0xB4: case 0xB5: sb.Append('o'); break;
+                        case 0x93: case 0x94: case 0x95: sb.Append('O'); break;
+                        case 0xBA: sb.Append('u'); break;
+                        case 0x9A: sb.Append('U'); break;
+                        case 0xA7: sb.Append('c'); break;
+                        case 0x87: sb.Append('C'); break;
+                        default: sb.Append('?'); break;
+                    }
+                }
+                else
+                {
+                    // Ignora outros bytes multibyte nao mapeados
+                }
+            }
+            return sb.ToString();
+        }
+
+        public static int CustomIndexOf(string source, string search, int startIndex = 0)
         {
             if (string.IsNullOrEmpty(source) || string.IsNullOrEmpty(search)) return -1;
             if (startIndex < 0 || startIndex >= source.Length) return -1;
@@ -210,27 +514,10 @@ namespace WeatherOS.Services
             return -1;
         }
 
-                private static void SendArpWakeup(Cosmos.HAL.NetworkDevice nic)
-        {
-            byte[] arp = new byte[42];
-            for(int i=0; i<6; i++) arp[i] = 0xFF;
-            Array.Copy(_macSource, 0, arp, 6, 6);
-            arp[12] = 0x08; arp[13] = 0x06;
-            arp[14] = 0x00; arp[15] = 0x01;
-            arp[16] = 0x08; arp[17] = 0x00;
-            arp[18] = 0x06; arp[19] = 0x04;
-            arp[20] = 0x00; arp[21] = 0x01;
-            Array.Copy(_macSource, 0, arp, 22, 6);
-            Array.Copy(_ipSource, 0, arp, 28, 4);
-            for(int i=0; i<6; i++) arp[32+i] = 0x00;
-            arp[38] = 192; arp[39] = 168; arp[40] = 31; arp[41] = 1;
-            nic.QueueBytes(arp);
-        }
-
         private static void SendTcpPacket(Cosmos.HAL.NetworkDevice nic, byte tcpFlags, byte[] payload)
         {
             bool isSyn = (tcpFlags & 0x02) != 0;
-            int tcpOptionsLen = isSyn ? 12 : 0;
+            int tcpOptionsLen = isSyn ? 4 : 0;
             int tcpLen = 20 + tcpOptionsLen + payload.Length;
             int ipLen = 20 + tcpLen;
             int frameLen = 14 + ipLen;
@@ -244,9 +531,9 @@ namespace WeatherOS.Services
             // IPV4
             frame[14] = 0x45; frame[15] = 0x00;
             frame[16] = (byte)(ipLen >> 8); frame[17] = (byte)(ipLen & 0xFF);
-            frame[18] = 0x12; frame[19] = 0x34;
+            frame[18] = (byte)(_ipId >> 8); frame[19] = (byte)(_ipId & 0xFF); _ipId++;
             frame[20] = 0x40; frame[21] = 0x00;
-            frame[22] = 0x40; frame[23] = 0x06;
+            frame[22] = 0x80; frame[23] = 0x06;
             Array.Copy(_ipSource, 0, frame, 26, 4);
             Array.Copy(_ipDest, 0, frame, 30, 4);
 
@@ -256,40 +543,29 @@ namespace WeatherOS.Services
             // TCP
             int tcpOffset = 34;
             frame[tcpOffset] = (byte)(_sourcePort >> 8); frame[tcpOffset + 1] = (byte)(_sourcePort & 0xFF);
-            frame[tcpOffset + 2] = 0x00; frame[tcpOffset + 3] = 0x50;
+            frame[tcpOffset + 2] = 0x00; frame[tcpOffset + 3] = 0x50; // Port 80
             
             frame[tcpOffset + 4] = (byte)(_sequence >> 24); frame[tcpOffset + 5] = (byte)(_sequence >> 16);
             frame[tcpOffset + 6] = (byte)(_sequence >> 8); frame[tcpOffset + 7] = (byte)(_sequence & 0xFF);
             
-            uint ackToSend = isSyn ? 0 : _acknowledgment; frame[tcpOffset + 8] = (byte)(ackToSend >> 24); frame[tcpOffset + 9] = (byte)(ackToSend >> 16);
+            uint ackToSend = isSyn ? 0 : _acknowledgment;
+            frame[tcpOffset + 8] = (byte)(ackToSend >> 24); frame[tcpOffset + 9] = (byte)(ackToSend >> 16);
             frame[tcpOffset + 10] = (byte)(ackToSend >> 8); frame[tcpOffset + 11] = (byte)(ackToSend & 0xFF);
 
             int dataOffset = 5 + (tcpOptionsLen / 4);
             frame[tcpOffset + 12] = (byte)(dataOffset << 4);
             frame[tcpOffset + 13] = tcpFlags;
-            frame[tcpOffset + 14] = 0xFA; frame[tcpOffset + 15] = 0xF0;
+            frame[tcpOffset + 14] = 0x20; frame[tcpOffset + 15] = 0x00; // Window Size 8192
 
             int currentOffset = tcpOffset + 20;
 
             if (isSyn)
             {
-                // MSS
-                frame[currentOffset++] = 0x02; 
-                frame[currentOffset++] = 0x04; 
-                frame[currentOffset++] = 0x05; 
-                frame[currentOffset++] = 0xB4;
-                // NOP
-                frame[currentOffset++] = 0x01;
-                // Window Scale (8)
-                frame[currentOffset++] = 0x03;
-                frame[currentOffset++] = 0x03;
-                frame[currentOffset++] = 0x08;
-                // NOP, NOP
-                frame[currentOffset++] = 0x01;
-                frame[currentOffset++] = 0x01;
-                // SACK Permitted
-                frame[currentOffset++] = 0x04;
+                // MSS = 1460 (0x05B4)
                 frame[currentOffset++] = 0x02;
+                frame[currentOffset++] = 0x04;
+                frame[currentOffset++] = 0x05;
+                frame[currentOffset++] = 0xB4;
             }
 
             if (payload.Length > 0)
@@ -310,7 +586,7 @@ namespace WeatherOS.Services
             TotalTxBytes += (uint)frame.Length;
             if (!nic.QueueBytes(frame))
             {
-                System.Console.WriteLine("\n[net] ERROR: Tx Ring Full!");
+                if (!WeatherOS.Graphics.TuiDesktop.IsGuiActive) System.Console.WriteLine("\n[net] ERROR: Tx Ring Full!");
                 WeatherOS.Kernel.CustomNIC?.HackPoll();
             }
         }
@@ -325,30 +601,60 @@ namespace WeatherOS.Services
             return (ushort)(~sum);
         }
 
-                private static void CustomDataReceived(byte[] packet)
+        private static void CustomDataReceived(byte[] packet)
         {
-            if (_oldHandler == CustomDataReceived) _oldHandler = null; // STOP RECURSION FATAL BUG
+            if (_oldHandler == CustomDataReceived) _oldHandler = null; // Previne recursividade
             if (packet != null) TotalRxBytes += (uint)packet.Length;
-            if (packet == null || packet.Length < 42) { _oldHandler?.Invoke(packet); return; }
+            if (packet == null || packet.Length < 42) return;
 
-            // Is ARP?
+            // 1. Is ARP?
             if (packet[12] == 0x08 && packet[13] == 0x06)
             {
-                if (packet[20] == 0x00 && packet[21] == 0x02)
+                ushort op = (ushort)((packet[20] << 8) | packet[21]);
+                if (op == 0x0002) // ARP Reply
                 {
-                    if (packet[28] == _gatewayIp[0] && packet[29] == _gatewayIp[1] &&
+                    if (_gatewayIp[0] != 0 && packet[28] == _gatewayIp[0] && packet[29] == _gatewayIp[1] &&
                         packet[30] == _gatewayIp[2] && packet[31] == _gatewayIp[3])
                     {
                         Array.Copy(packet, 22, _macDest, 0, 6);
                         _arpReplyReceived = true;
                     }
                 }
+                else if (op == 0x0001) // ARP Request: Who has _ipSource?
+                {
+                    if (_ipSource[0] != 0 && packet[38] == _ipSource[0] && packet[39] == _ipSource[1] &&
+                        packet[40] == _ipSource[2] && packet[41] == _ipSource[3])
+                    {
+                        SendArpReply(packet);
+                    }
+                }
                 return;
             }
 
-            if (packet[12] != 0x08 || packet[13] != 0x00) { _oldHandler?.Invoke(packet); return; } // Not IPv4
+            if (packet[12] != 0x08 || packet[13] != 0x00) return; // Not IPv4
 
-            // Is UDP?
+            // 2. Is ICMP?
+            if (packet[23] == 0x01)
+            {
+                int ipHdrLen = (packet[14] & 0x0F) * 4;
+                int icmpOff = 14 + ipHdrLen;
+                if (packet.Length >= icmpOff + 8)
+                {
+                    byte icmpType = packet[icmpOff];
+                    byte icmpCode = packet[icmpOff + 1];
+                    if (icmpType == 0 && icmpCode == 0) // Echo Reply
+                    {
+                        ushort id = (ushort)((packet[icmpOff + 4] << 8) | packet[icmpOff + 5]);
+                        if (id == _pingIdentifier)
+                        {
+                            _pingReplyReceived = true;
+                        }
+                    }
+                }
+                return;
+            }
+
+            // 3. Is UDP?
             if (packet[23] == 17)
             {
                 int ipHdrLen = (packet[14] & 0x0F) * 4;
@@ -358,34 +664,45 @@ namespace WeatherOS.Services
                     int dhcpOff = udpOff + 8;
                     if (packet.Length >= dhcpOff + 240 && packet[dhcpOff + 236] == 0x63 && packet[dhcpOff + 237] == 0x82)
                     {
-                        Array.Copy(packet, dhcpOff + 16, _ipSource, 0, 4);
+                        byte dhcpMsgType = 0;
                         int optIdx = dhcpOff + 240;
                         while (optIdx < packet.Length && packet[optIdx] != 255)
                         {
                             byte opt = packet[optIdx];
                             if (opt == 0) { optIdx++; continue; }
                             byte len = packet[optIdx + 1];
+                            if (opt == 53 && len >= 1) dhcpMsgType = packet[optIdx + 2];
                             if (opt == 3 && len >= 4) Array.Copy(packet, optIdx + 2, _gatewayIp, 0, 4);
+                            if (opt == 54 && len >= 4) Array.Copy(packet, optIdx + 2, _dhcpServerIp, 0, 4);
                             optIdx += 2 + len;
                         }
-                        if (_gatewayIp[0] == 0) { Array.Copy(_ipSource, 0, _gatewayIp, 0, 4); _gatewayIp[3] = 1; }
-                        _dhcpOfferReceived = true;
+
+                        if (dhcpMsgType == 2) // DHCP Offer
+                        {
+                            Array.Copy(packet, dhcpOff + 16, _ipSource, 0, 4);
+                            if (_gatewayIp[0] == 0) { Array.Copy(_ipSource, 0, _gatewayIp, 0, 4); _gatewayIp[3] = 1; }
+                            _dhcpOfferReceived = true;
+                        }
+                        else if (dhcpMsgType == 5) // DHCP ACK
+                        {
+                            _dhcpAckReceived = true;
+                        }
                     }
                 }
                 return;
             }
 
-            if (packet[23] != 0x06) { _oldHandler?.Invoke(packet); return; } // Not TCP
-            if (packet.Length < 54) { _oldHandler?.Invoke(packet); return; }
-            if (packet[30] != _ipSource[0] || packet[31] != _ipSource[1] || packet[32] != _ipSource[2] || packet[33] != _ipSource[3]) { _oldHandler?.Invoke(packet); return; }
+            // 4. Is TCP?
+            if (packet[23] != 0x06) return; // Drop any non-TCP
+            if (packet.Length < 54) return;
+            if (packet[30] != _ipSource[0] || packet[31] != _ipSource[1] || packet[32] != _ipSource[2] || packet[33] != _ipSource[3]) return;
 
             int ipHeaderLen = (packet[14] & 0x0F) * 4;
             int ipTotalLen = (packet[16] << 8) | packet[17];
-
             int tcpOffset = 14 + ipHeaderLen;
 
             int destPort = (packet[tcpOffset + 2] << 8) | packet[tcpOffset + 3];
-            if (destPort != _sourcePort) { _oldHandler?.Invoke(packet); return; }
+            if (destPort != _sourcePort) return; // Drop! NEVER forward TCP to Cosmos!
 
             byte flags = packet[tcpOffset + 13];
             uint remoteSeq = (uint)((packet[tcpOffset + 4] << 24) | (packet[tcpOffset + 5] << 16) | (packet[tcpOffset + 6] << 8) | packet[tcpOffset + 7]);
@@ -394,6 +711,9 @@ namespace WeatherOS.Services
             int payloadOffset = tcpOffset + tcpHeaderLen;
             int payloadLen = ipTotalLen - ipHeaderLen - tcpHeaderLen;
 
+            // RST (0x04)
+            if ((flags & 0x04) == 0x04) return;
+
             // SYN-ACK (0x12)
             if ((flags & 0x12) == 0x12 && !_synAckReceived)
             {
@@ -401,21 +721,42 @@ namespace WeatherOS.Services
                 _sequence += 1;
                 _synAckReceived = true;
             }
-            // ACK or PSH-ACK
+            // ACK or PSH-ACK (Data received)
             else if ((flags & 0x10) == 0x10 && _synAckReceived)
             {
-                if (payloadLen > 0)
+                if (payloadLen > 0 && payloadOffset >= 0 && payloadOffset < packet.Length)
                 {
+                    if (payloadOffset + payloadLen > packet.Length)
+                    {
+                        payloadLen = packet.Length - payloadOffset;
+                    }
                     _acknowledgment = remoteSeq + (uint)payloadLen;
                     
-                    if (_rxLength + payloadLen < 65536) // Increased buffer for large JSON
+                    if (_rxLength + payloadLen < _rxBuffer.Length)
                     {
                         Array.Copy(packet, payloadOffset, _rxBuffer, _rxLength, payloadLen);
                         _rxLength += payloadLen;
                     }
                     
+                    // Send ACK
                     var nic = NetworkDevice.Devices[0];
-                    SendTcpPacket(nic, 0x10, new byte[0]); // ACK
+                    SendTcpPacket(nic, 0x10, new byte[0]);
+
+                    // Smart detection of balanced root JSON braces
+                    if (_rxLength > 0)
+                    {
+                        int braces = 0;
+                        bool started = false;
+                        for (int b = 0; b < _rxLength; b++)
+                        {
+                            if (_rxBuffer[b] == '{') { braces++; started = true; }
+                            else if (_rxBuffer[b] == '}') { braces--; }
+                        }
+                        if (started && braces == 0)
+                        {
+                            _finReceived = true;
+                        }
+                    }
                 }
             }
             
@@ -430,17 +771,3 @@ namespace WeatherOS.Services
         }
     }
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
