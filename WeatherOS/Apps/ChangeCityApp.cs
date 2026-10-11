@@ -15,21 +15,22 @@ namespace WeatherOS.Apps
 
         public void Draw(TuiDesktop desktop)
         {
-            desktop.DrawWindow(20, 8, 40, 10, "SYSTEM DIALOG: CHANGE CITY");
+            int winWidth = 48;
+            int winHeight = 9;
+            int left = (80 - winWidth) / 2;
+            int top = (24 - winHeight) / 2;
+
+            desktop.DrawWindow(left, top, winWidth, winHeight, "CHANGE CITY");
             ConsoleColor winBg = desktop.IsDarkMode ? ConsoleColor.Black : ConsoleColor.Blue;
             System.Console.BackgroundColor = winBg;
             System.Console.ForegroundColor = ConsoleColor.White;
 
-            System.Console.SetCursorPosition(23, 11);
+            System.Console.SetCursorPosition(left + 4, top + 2);
             System.Console.Write("Enter new city name:");
 
-            System.Console.SetCursorPosition(23, 13);
+            System.Console.SetCursorPosition(left + 4, top + 4);
             System.Console.Write("> ");
-            _cityEditor.DrawInline(25, 13, 20, winBg, ConsoleColor.White);
-
-            System.Console.SetCursorPosition(23, 15);
-            System.Console.ForegroundColor = ConsoleColor.DarkGray;
-            System.Console.Write("[ENTER: Search | Ctrl+A: All | Ctrl+Arrows: Select]");
+            _cityEditor.DrawInline(left + 6, top + 4, 25, winBg, ConsoleColor.White);
         }
 
         public void HandleInput(TuiDesktop desktop, KeyEvent keyEvent)
@@ -39,7 +40,18 @@ namespace WeatherOS.Apps
                 if (!string.IsNullOrWhiteSpace(_cityEditor.Text))
                 {
                     string target = _cityEditor.Text.Trim();
-                    desktop.DrawStatusMessage("Fetching weather for " + target + "...");
+                    int winWidth = 48;
+                    int left = (80 - winWidth) / 2;
+                    int top = (24 - 9) / 2;
+
+                    ConsoleColor winBg = desktop.IsDarkMode ? ConsoleColor.Black : ConsoleColor.Blue;
+                    System.Console.BackgroundColor = winBg;
+                    System.Console.ForegroundColor = ConsoleColor.Yellow;
+                    System.Console.SetCursorPosition(left + 4, top + 6);
+                    string status = $"Fetching weather for '{target}'...";
+                    if (status.Length > winWidth - 8) status = status.Substring(0, winWidth - 8);
+                    System.Console.Write(status.PadRight(winWidth - 8));
+
                     desktop.WeatherService.FetchOpenWeather(target, desktop.ApiKey);
                     _cityEditor.Text = "";
                     _cityEditor.CursorPos = 0;

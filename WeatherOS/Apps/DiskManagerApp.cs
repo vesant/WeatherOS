@@ -120,11 +120,6 @@ namespace WeatherOS.Apps
                     }
                 }
             }
-
-            System.Console.BackgroundColor = winBg;
-            System.Console.SetCursorPosition(6, 19);
-            System.Console.ForegroundColor = ConsoleColor.DarkGray;
-            System.Console.Write("[D: Disk Diag | F: Format | W: Wipe | R: Refresh | ESC: Exit]");
         }
 
         public void HandleInput(TuiDesktop desktop, KeyEvent keyEvent)

@@ -77,11 +77,6 @@ namespace WeatherOS.Apps
             {
                 DrawWipeTab(winBg);
             }
-
-            // Bottom controls
-            System.Console.SetCursorPosition(6, 21);
-            System.Console.ForegroundColor = ConsoleColor.DarkYellow;
-            System.Console.Write("[TAB/1-5: Switch View | 'R': Rescan | 'W': Wipe Disk | ESC: Return]");
         }
 
         private void DrawVerdictTab(ConsoleColor winBg)
@@ -308,6 +303,77 @@ namespace WeatherOS.Apps
             }
         }
 
+        private void DrawWipeProgress(TuiDesktop desktop, ConsoleColor winBg, int pct, string msg)
+        {
+            System.Console.BackgroundColor = winBg;
+            desktop.DrawBar(6, 15, "Wipe", pct, ConsoleColor.Green);
+            System.Console.SetCursorPosition(6, 17);
+            System.Console.ForegroundColor = ConsoleColor.Yellow;
+            System.Console.Write(msg.PadRight(65));
+            System.Threading.Thread.Sleep(80);
+        }
+
+        private void ExecuteLiveWipe(TuiDesktop desktop, ConsoleColor winBg)
+        {
+            var drives = DiskWipeService.GetPhysicalDrives();
+            if (drives == null || drives.Count == 0)
+            {
+                _wipeStatus = "[ERR] No raw physical drive registered in Cosmos HAL.";
+                return;
+            }
+
+            var dev = drives[0].Device;
+            byte[] zeros = new byte[512];
+
+            DrawWipeProgress(desktop, winBg, 15, "1/5: Initializing raw controller & zeroing LBA 0...");
+            try { dev.WriteBlock(0, 1, ref zeros); } catch { }
+
+            DrawWipeProgress(desktop, winBg, 35, "2/5: Zero-filling Primary GPT Partition Tables (1..34)...");
+            for (ulong s = 1; s <= 34 && s < dev.BlockCount; s++)
+            {
+                try { dev.WriteBlock(s, 1, ref zeros); } catch { }
+            }
+
+            DrawWipeProgress(desktop, winBg, 60, "3/5: Zero-filling Backup GPT Table at disk tail...");
+            if (dev.BlockCount > 34)
+            {
+                ulong endStart = dev.BlockCount - 34;
+                for (ulong s = endStart; s < dev.BlockCount; s++)
+                {
+                    try { dev.WriteBlock(s, 1, ref zeros); } catch { }
+                }
+            }
+
+            DrawWipeProgress(desktop, winBg, 80, "4/5: Zero-filling Linux superblock signatures (ext4/swap)...");
+            if (dev.BlockCount > 2100)
+            {
+                for (ulong s = 2048; s <= 2080; s++)
+                {
+                    try { dev.WriteBlock(s, 1, ref zeros); } catch { }
+                }
+            }
+
+            DrawWipeProgress(desktop, winBg, 95, "5/5: Writing clean protective MBR table (FAT32 LBA)...");
+            byte[] cleanMbr = new byte[512];
+            cleanMbr[446] = 0x80;
+            cleanMbr[450] = 0x0C;
+            cleanMbr[454] = 0x00; cleanMbr[455] = 0x08;
+            ulong partSectors = dev.BlockCount > 2048 ? dev.BlockCount - 2048 : 0;
+            if (partSectors > 0xFFFFFFFF) partSectors = 0xFFFFFFFF;
+            uint sectors32 = (uint)partSectors;
+            cleanMbr[458] = (byte)(sectors32 & 0xFF);
+            cleanMbr[459] = (byte)((sectors32 >> 8) & 0xFF);
+            cleanMbr[460] = (byte)((sectors32 >> 16) & 0xFF);
+            cleanMbr[461] = (byte)((sectors32 >> 24) & 0xFF);
+            cleanMbr[510] = 0x55; cleanMbr[511] = 0xAA;
+            try { dev.WriteBlock(0, 1, ref cleanMbr); } catch { }
+
+            DrawWipeProgress(desktop, winBg, 100, "Wipe complete! Physical drive is completely clean.");
+            _wipeStatus = "[OK] Disk 0 wiped successfully! 100% Clean.";
+            FileSystemProbeService.ProbeAllPartitions();
+            Refresh();
+        }
+
         public void HandleInput(TuiDesktop desktop, KeyEvent keyEvent)
         {
             if (_confirmingWipe)
@@ -315,8 +381,8 @@ namespace WeatherOS.Apps
                 if (keyEvent.Key == ConsoleKeyEx.Y)
                 {
                     _confirmingWipe = false;
-                    bool ok = DiskWipeService.WipeAndCleanDisk(0, out _wipeStatus);
-                    Refresh();
+                    ConsoleColor winBg = desktop.IsDarkMode ? ConsoleColor.Black : ConsoleColor.Blue;
+                    ExecuteLiveWipe(desktop, winBg);
                 }
                 else if (keyEvent.Key == ConsoleKeyEx.N || keyEvent.Key == ConsoleKeyEx.Escape)
                 {

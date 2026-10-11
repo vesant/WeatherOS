@@ -32,7 +32,12 @@ namespace WeatherOS.Apps
 
         public void Draw(TuiDesktop desktop)
         {
-            desktop.DrawWindow(10, 4, 60, 18, "CONTROL PANEL");
+            int winWidth = 56;
+            int winHeight = 16;
+            int left = (80 - winWidth) / 2;
+            int top = (24 - winHeight) / 2;
+
+            desktop.DrawWindow(left, top, winWidth, winHeight, "CONTROL PANEL");
             ConsoleColor winBg = desktop.IsDarkMode ? ConsoleColor.Black : ConsoleColor.Blue;
             System.Console.BackgroundColor = winBg;
 
@@ -50,7 +55,7 @@ namespace WeatherOS.Apps
             
             for (int i = 0; i < 6; i++)
             {
-                System.Console.SetCursorPosition(15, 6 + i * 2);
+                System.Console.SetCursorPosition(left + 3, top + 2 + i * 2);
                 if (i == _settingsIndex)
                 {
                     System.Console.ForegroundColor = ConsoleColor.Black;
@@ -61,13 +66,10 @@ namespace WeatherOS.Apps
                     System.Console.ForegroundColor = ConsoleColor.White;
                     System.Console.BackgroundColor = winBg;
                 }
-                System.Console.Write($" {opts[i]} ".PadRight(50));
+                string item = $" {opts[i]} ";
+                if (item.Length > winWidth - 6) item = item.Substring(0, winWidth - 9) + "... ";
+                System.Console.Write(item.PadRight(winWidth - 6));
             }
-
-            System.Console.BackgroundColor = winBg;
-            System.Console.SetCursorPosition(12, 19);
-            System.Console.ForegroundColor = ConsoleColor.DarkGray;
-            System.Console.Write("[UP/DN: Nav | ENTER: Toggle | Ctrl+A/Arrows: Edit]");
         }
 
         public void HandleInput(TuiDesktop desktop, KeyEvent keyEvent)

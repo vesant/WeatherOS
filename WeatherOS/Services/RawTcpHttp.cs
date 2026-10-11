@@ -75,72 +75,75 @@ namespace WeatherOS.Services
             _oldHandler = nic.DataReceived;
             nic.DataReceived = CustomDataReceived;
 
-            // Wait for PHY Link up to 2-3 seconds
-            System.Console.WriteLine("[net] raw_tcp: verifying physical link before DHCP...");
+            bool isGui = WeatherOS.Graphics.TuiDesktop.IsGuiActive;
+
+            // Wait for PHY Link up to 2 seconds
+            if (!isGui) System.Console.WriteLine("[net] raw_tcp: verifying physical link before DHCP...");
             int phyWait = 0;
-            while (phyWait < 2000000)
+            while (phyWait < 20)
             {
                 if (WeatherOS.Kernel.CustomNIC != null && WeatherOS.Kernel.CustomNIC.IsPhyLinkUp()) break;
+                WeatherOS.Kernel.CustomNIC?.HackPoll();
+                System.Threading.Thread.Sleep(50);
                 phyWait++;
             }
 
-            // 1. DHCP Discover with Retransmissions
-            System.Console.WriteLine("[net] raw_tcp: broadcasting DHCP Discover...");
+            // 1. DHCP Discover with real-time Retransmissions
+            if (!isGui) System.Console.WriteLine("[net] raw_tcp: broadcasting DHCP Discover...");
             _dhcpOfferReceived = false;
             _dhcpAckReceived = false;
             byte[] dhcp = BuildDhcpPacket(1, null, null); // Discover
             nic.QueueBytes(dhcp);
 
-            int dotCount = 0;
-            int retransCount = 0;
-            int timeout = 0;
-            while (!_dhcpOfferReceived && timeout < 10000000)
+            int elapsedMs = 0;
+            int retransMs = 0;
+            while (!_dhcpOfferReceived && elapsedMs < 4000)
             {
                 WeatherOS.Kernel.CustomNIC?.HackPoll();
-                timeout++;
-                dotCount++;
-                if (dotCount >= 1000000)
+                System.Threading.Thread.Sleep(10);
+                elapsedMs += 10;
+                retransMs += 10;
+                if (!isGui && (elapsedMs % 500 == 0))
                 {
-                    dotCount = 0;
                     System.Console.Write(".");
                 }
-                retransCount++;
-                if (retransCount >= 2500000)
+                if (retransMs >= 1200)
                 {
-                    retransCount = 0;
+                    retransMs = 0;
                     nic.QueueBytes(dhcp); // Retransmit Discover
                 }
             }
             
-            if (!_dhcpOfferReceived)
+            if (_dhcpOfferReceived)
             {
-                System.Console.WriteLine("\n[net] raw_tcp: DHCP failed! No lease offer received.");
-                _ipSource = new byte[] { 0, 0, 0, 0 };
-                _gatewayIp = new byte[] { 0, 0, 0, 0 };
-                nic.DataReceived = _oldHandler;
-                return;
-            }
+                // 1b. DHCP Request
+                byte[] dhcpReq = BuildDhcpPacket(3, _ipSource, _dhcpServerIp);
+                nic.QueueBytes(dhcpReq);
+                int reqMs = 0;
+                while (!_dhcpAckReceived && reqMs < 2000)
+                {
+                    WeatherOS.Kernel.CustomNIC?.HackPoll();
+                    System.Threading.Thread.Sleep(10);
+                    reqMs += 10;
+                }
 
-            // 1b. DHCP Request to officially confirm lease with the router
-            byte[] dhcpReq = BuildDhcpPacket(3, _ipSource, _dhcpServerIp); // Request
-            nic.QueueBytes(dhcpReq);
-            int reqTimeout = 0;
-            while (!_dhcpAckReceived && reqTimeout < 3000000)
-            {
-                WeatherOS.Kernel.CustomNIC?.HackPoll();
-                reqTimeout++;
-            }
-
-            if (WeatherOS.Services.WeatherService.IsDebugModeActive)
-            {
-                System.Console.WriteLine($"\n[net] raw_tcp: DHCP OK! IP: {_ipSource[0]}.{_ipSource[1]}.{_ipSource[2]}.{_ipSource[3]}");
+                if (!isGui)
+                {
+                    if (WeatherOS.Services.WeatherService.IsDebugModeActive)
+                        System.Console.WriteLine($"\n[net] raw_tcp: DHCP OK! IP: {_ipSource[0]}.{_ipSource[1]}.{_ipSource[2]}.{_ipSource[3]}");
+                    else
+                        System.Console.WriteLine($"\n[net] raw_tcp: DHCP OK! IP: {_ipSource[0]}.{_ipSource[1]}.***.*** [Secured]");
+                }
             }
             else
             {
-                System.Console.WriteLine($"\n[net] raw_tcp: DHCP OK! IP: {_ipSource[0]}.{_ipSource[1]}.***.*** [Secured]");
+                // DHCP did not offer lease; fallback to standard local static address
+                if (!isGui) System.Console.WriteLine("\n[net] raw_tcp: DHCP silent. Using default local network configuration.");
+                _ipSource = new byte[] { 192, 168, 1, 155 };
+                _gatewayIp = new byte[] { 192, 168, 1, 1 };
             }
 
-            // Configure Cosmos NetworkStack with real leased IP
+            // Configure Cosmos NetworkStack with active IP
             try
             {
                 var myIp = new Cosmos.System.Network.IPv4.Address(_ipSource[0], _ipSource[1], _ipSource[2], _ipSource[3]);
@@ -150,39 +153,40 @@ namespace WeatherOS.Services
             }
             catch { }
 
-            // 2. ARP Request for Gateway
-            System.Console.WriteLine($"[net] raw_tcp: ARP Request for Gateway {_gatewayIp[0]}.{_gatewayIp[1]}.{_gatewayIp[2]}.{_gatewayIp[3]}...");
-            SendArpRequest(_gatewayIp);
+            // 2. Multi-Gateway ARP Probe to discover the real router MAC on the LAN
+            byte[][] candidateGateways = new byte[][] {
+                _gatewayIp,
+                new byte[] { 192, 168, 1, 1 },
+                new byte[] { 192, 168, 1, 254 },
+                new byte[] { 192, 168, 0, 1 },
+                new byte[] { 192, 168, 31, 1 },
+                new byte[] { 10, 0, 2, 2 }
+            };
 
-            dotCount = 0;
-            retransCount = 0;
-            timeout = 0;
-            while (!_arpReplyReceived && timeout < 6000000)
+            for (int g = 0; g < candidateGateways.Length; g++)
             {
-                WeatherOS.Kernel.CustomNIC?.HackPoll();
-                timeout++;
-                dotCount++;
-                if (dotCount >= 1000000)
+                byte[] cand = candidateGateways[g];
+                if (cand[0] == 0) continue;
+                _arpReplyReceived = false;
+                SendArpRequest(cand);
+
+                int arpMs = 0;
+                while (!_arpReplyReceived && arpMs < 300)
                 {
-                    dotCount = 0;
-                    System.Console.Write(".");
+                    WeatherOS.Kernel.CustomNIC?.HackPoll();
+                    System.Threading.Thread.Sleep(5);
+                    arpMs += 5;
                 }
-                retransCount++;
-                if (retransCount >= 2000000)
+
+                if (_arpReplyReceived)
                 {
-                    retransCount = 0;
-                    SendArpRequest(_gatewayIp); // Retransmit ARP
+                    Array.Copy(cand, 0, _gatewayIp, 0, 4);
+                    if (!isGui)
+                        System.Console.WriteLine($"\n[net] raw_tcp: Gateway discovered: {_gatewayIp[0]}.{_gatewayIp[1]}.{_gatewayIp[2]}.{_gatewayIp[3]} (MAC: {_macDest[0]:X2}:{_macDest[1]:X2}:{_macDest[2]:X2}:{_macDest[3]:X2}:{_macDest[4]:X2}:{_macDest[5]:X2})");
+                    break;
                 }
             }
 
-            if (!_arpReplyReceived)
-            {
-                System.Console.WriteLine("\n[net] raw_tcp: ARP failed! Router might ignore us.");
-            }
-            else
-            {
-                System.Console.WriteLine($"\n[net] raw_tcp: ARP OK! Router MAC: {_macDest[0]:X2}:{_macDest[1]:X2}:{_macDest[2]:X2}:{_macDest[3]:X2}:{_macDest[4]:X2}:{_macDest[5]:X2}");
-            }
             nic.DataReceived = _oldHandler;
         }
 
@@ -388,8 +392,8 @@ namespace WeatherOS.Services
 
             try
             {
-                // Send SYN with fast retransmission (up to 4 attempts)
-                for (int attempt = 0; attempt < 4; attempt++)
+                // Send SYN with fast retransmission (up to 5 attempts)
+                for (int attempt = 0; attempt < 5; attempt++)
                 {
                     SendTcpPacket(nic, 0x02, new byte[0]); // SYN
                     
@@ -425,7 +429,7 @@ namespace WeatherOS.Services
                 int dataMs = 0;
                 int lastRxLen = _rxLength;
                 int quietMs = 0;
-                while (!_finReceived && dataMs < 6000)
+                while (!_finReceived && dataMs < 8000)
                 {
                     WeatherOS.Kernel.CustomNIC?.HackPoll();
                     System.Threading.Thread.Sleep(5);

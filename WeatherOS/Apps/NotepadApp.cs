@@ -52,10 +52,6 @@ namespace WeatherOS.Apps
                 System.Console.SetCursorPosition(10, 15);
                 System.Console.ForegroundColor = ConsoleColor.Cyan;
                 System.Console.Write("Status: " + _lastStatus);
-
-                System.Console.SetCursorPosition(10, 18);
-                System.Console.ForegroundColor = ConsoleColor.DarkGray;
-                System.Console.Write("[Press 1-6 or type to navigate | Files persist in RAM & Disk]");
             }
             else if (_notepadState == 1) // Editor Mode
             {
@@ -102,11 +98,11 @@ namespace WeatherOS.Apps
                     System.Console.Write("_");
                 }
 
-                // Bottom help bar
+                // Size indicator
                 System.Console.SetCursorPosition(7, 18);
                 System.Console.BackgroundColor = winBg;
-                System.Console.ForegroundColor = ConsoleColor.DarkGray;
-                System.Console.Write($"[ESC:Menu | F2:Save | Ctrl+A:All | Ctrl+Arrows:Select | Chars:{_editorState.Text.Length}]");
+                System.Console.ForegroundColor = ConsoleColor.Cyan;
+                System.Console.Write($"Characters: {_editorState.Text.Length}");
 
                 // Live status message
                 if (!string.IsNullOrEmpty(_lastStatus))
@@ -138,10 +134,6 @@ namespace WeatherOS.Apps
                         System.Console.Write($"• {files[i]}");
                     }
                 }
-
-                System.Console.SetCursorPosition(10, 18);
-                System.Console.ForegroundColor = ConsoleColor.DarkGray;
-                System.Console.Write("[Press any key or ESC to return to Menu]");
             }
             else if (_notepadState == 6) // Select Storage Destination & FileSystem Mini-Menu
             {
@@ -175,11 +167,6 @@ namespace WeatherOS.Apps
                     if (opt.Length > 62) opt = opt.Substring(0, 59) + "... ";
                     System.Console.Write(opt.PadRight(62));
                 }
-
-                System.Console.BackgroundColor = winBg;
-                System.Console.SetCursorPosition(8, 18);
-                System.Console.ForegroundColor = ConsoleColor.DarkGray;
-                System.Console.Write("[UP/DN/1-4: Select Target | ENTER: Save | ESC: Cancel]".PadRight(62));
             }
             else // Prompts (2=Open, 3=Save Filename, 4=Delete)
             {
@@ -196,10 +183,6 @@ namespace WeatherOS.Apps
                 System.Console.ForegroundColor = ConsoleColor.White;
                 System.Console.Write("> ");
                 _promptEditor.DrawInline(12, 10, 35, winBg, ConsoleColor.White);
-
-                System.Console.SetCursorPosition(10, 14);
-                System.Console.ForegroundColor = ConsoleColor.DarkGray;
-                System.Console.Write("[ENTER: Confirm | ESC: Cancel | Ctrl+A: All | Ctrl+Arrows: Select]");
             }
         }
 

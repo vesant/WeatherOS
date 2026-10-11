@@ -13,7 +13,7 @@ namespace WeatherOS.Apps
 
         private int _selectedIndex = 0;
         private string[] _options = {
-            "1. Disk Diagnostics & Hardware Analyzer [First Program]",
+            "1. Disk Diagnostics & Hardware Analyzer",
             "2. Live System Resources & Power Monitor",
             "3. Network Card Hardware & Direct Sockets",
             "4. ACPI Power & Battery Live Telemetry",
@@ -22,17 +22,22 @@ namespace WeatherOS.Apps
 
         public void Draw(TuiDesktop desktop)
         {
-            desktop.DrawWindow(10, 4, 60, 16, "DEBUG TOOLS & HARDWARE DIAGNOSTICS");
+            int winWidth = 56;
+            int winHeight = 13;
+            int left = (80 - winWidth) / 2;
+            int top = (24 - winHeight) / 2;
+
+            desktop.DrawWindow(left, top, winWidth, winHeight, "DEBUG TOOLS & HARDWARE DIAGNOSTICS");
             ConsoleColor winBg = desktop.IsDarkMode ? ConsoleColor.Black : ConsoleColor.Blue;
             System.Console.BackgroundColor = winBg;
 
-            System.Console.SetCursorPosition(13, 6);
+            System.Console.SetCursorPosition(left + 3, top + 2);
             System.Console.ForegroundColor = ConsoleColor.Cyan;
             System.Console.Write("Advanced System Telemetry & Hardware Inspector:");
 
             for (int i = 0; i < _options.Length; i++)
             {
-                System.Console.SetCursorPosition(13, 8 + i);
+                System.Console.SetCursorPosition(left + 3, top + 4 + i);
                 if (i == _selectedIndex)
                 {
                     System.Console.ForegroundColor = ConsoleColor.Black;
@@ -45,14 +50,9 @@ namespace WeatherOS.Apps
                 }
 
                 string opt = $" > {_options[i]} ";
-                if (opt.Length > 53) opt = opt.Substring(0, 50) + "... ";
-                System.Console.Write(opt.PadRight(53));
+                if (opt.Length > winWidth - 6) opt = opt.Substring(0, winWidth - 9) + "... ";
+                System.Console.Write(opt.PadRight(winWidth - 6));
             }
-
-            System.Console.BackgroundColor = winBg;
-            System.Console.SetCursorPosition(13, 16);
-            System.Console.ForegroundColor = ConsoleColor.DarkGray;
-            System.Console.Write("[UP/DOWN: Navigate | ENTER: Select | ESC: Return]");
         }
 
         public void HandleInput(TuiDesktop desktop, KeyEvent keyEvent)
