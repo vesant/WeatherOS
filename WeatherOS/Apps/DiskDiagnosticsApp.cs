@@ -276,7 +276,19 @@ namespace WeatherOS.Apps
                 var d = drives[0];
                 System.Console.Write($"Target: {d.Name} ({d.SizeDisplay})");
                 System.Console.SetCursorPosition(6, 11);
-                string fsList = d.ContainedFilesystems.Count > 0 ? string.Join(", ", d.ContainedFilesystems) : "None detected";
+                string fsList = "";
+                if (d.ContainedFilesystems != null && d.ContainedFilesystems.Count > 0)
+                {
+                    for (int fi = 0; fi < d.ContainedFilesystems.Count; fi++)
+                    {
+                        if (fi > 0) fsList += ", ";
+                        fsList += d.ContainedFilesystems[fi];
+                    }
+                }
+                else
+                {
+                    fsList = "None detected";
+                }
                 if (fsList.Length > 40) fsList = fsList.Substring(0, 37) + "...";
                 System.Console.Write($"Detected Partitions / FS: {fsList}");
             }
@@ -334,12 +346,14 @@ namespace WeatherOS.Apps
             DrawWipeProgress(desktop, winBg, 2, "1/34: Initializing controller & zeroing LBA 0 (MBR)...");
             try { dev.WriteBlock(0, 1, ref zeros); } catch { }
 
+            ulong totalSec = (dev.BlockCount > 0 && dev.BlockCount <= 0x000FFFFFFFFFFFFFUL) ? dev.BlockCount : 2048;
+
             // Wipe sectors 1 to 2048 in 32 progressive steps of 64 sectors
             for (int step = 0; step < 32; step++)
             {
                 ulong startSec = (ulong)step * 64 + 1;
                 ulong endSec = startSec + 64;
-                if (endSec > dev.BlockCount) endSec = dev.BlockCount;
+                if (endSec > totalSec) endSec = totalSec;
 
                 for (ulong s = startSec; s < endSec; s++)
                 {

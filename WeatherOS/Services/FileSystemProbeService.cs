@@ -28,16 +28,15 @@ namespace WeatherOS.Services
         {
             get
             {
-                if (SizeBytes >= 1024UL * 1024 * 1024)
-                {
-                    ulong gb = SizeBytes / (1024UL * 1024 * 1024);
+                if (SectorCount == 0 || SectorCount > 0x000FFFFFFFFFFFFFUL)
+                    return "Raw / Unmeasured";
+                ulong gb = SizeBytes / (1024UL * 1024 * 1024);
+                if (gb > 20000)
+                    return "Raw / Unmeasured";
+                if (gb >= 1)
                     return $"{gb} GB";
-                }
                 if (SizeBytes >= 1024UL * 1024)
-                {
-                    ulong mb = SizeBytes / (1024UL * 1024);
-                    return $"{mb} MB";
-                }
+                    return $"{SizeBytes / (1024UL * 1024)} MB";
                 return $"{SizeBytes / 1024} KB";
             }
         }

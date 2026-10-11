@@ -20,8 +20,8 @@ namespace WeatherOS.Graphics
 
         // Launcher State
         private int _selectedAppIndex = 0;
-        private string[] _apps = { "Weather Dashboard", "Change City", "Digital Clock", "Calculator", "Notepad", "Disk & Storage Explorer", "System Information", "Network Config", "Settings", "Reboot System", "Poweroff System" };
-        private string[] _appIds = { "weather", "change_city", "clock", "calculator", "notepad", "diskmgr", "about", "ipconfig", "settings", "reboot", "poweroff" };
+        private string[] _apps = { "Weather Dashboard", "7-Day Weather Forecast", "Change City", "Digital Clock", "Calculator", "Notepad", "Disk & Storage Explorer", "System Information", "Network Config", "Settings", "Reboot System", "Poweroff System" };
+        private string[] _appIds = { "weather", "forecast_7d", "change_city", "clock", "calculator", "notepad", "diskmgr", "about", "ipconfig", "settings", "reboot", "poweroff" };
 
         // Configuration State
         private bool _isDarkMode = false;
@@ -49,6 +49,7 @@ namespace WeatherOS.Graphics
         private void RegisterApps()
         {
             RegisterApp(new WeatherDashboardApp());
+            RegisterApp(new WeatherForecastApp());
             RegisterApp(new ChangeCityApp());
             RegisterApp(new ClockApp());
             RegisterApp(new CalculatorApp());
@@ -144,13 +145,13 @@ namespace WeatherOS.Graphics
             if (_showDebugLogs)
             {
                 return new string[] {
-                    "Weather Dashboard", "Change City", "Digital Clock", "Calculator",
+                    "Weather Dashboard", "7-Day Weather Forecast", "Change City", "Digital Clock", "Calculator",
                     "Notepad", "Disk & Storage Explorer", "System Information", "Network Config",
                     "Debug Menu [Diagnostics]", "Settings", "Reboot System", "Poweroff System"
                 };
             }
             return new string[] {
-                "Weather Dashboard", "Change City", "Digital Clock", "Calculator",
+                "Weather Dashboard", "7-Day Weather Forecast", "Change City", "Digital Clock", "Calculator",
                 "Notepad", "Disk & Storage Explorer", "System Information", "Network Config",
                 "Settings", "Reboot System", "Poweroff System"
             };
@@ -161,13 +162,13 @@ namespace WeatherOS.Graphics
             if (_showDebugLogs)
             {
                 return new string[] {
-                    "weather", "change_city", "clock", "calculator",
+                    "weather", "forecast_7d", "change_city", "clock", "calculator",
                     "notepad", "diskmgr", "about", "ipconfig",
                     "debug_menu", "settings", "reboot", "poweroff"
                 };
             }
             return new string[] {
-                "weather", "change_city", "clock", "calculator",
+                "weather", "forecast_7d", "change_city", "clock", "calculator",
                 "notepad", "diskmgr", "about", "ipconfig",
                 "settings", "reboot", "poweroff"
             };
@@ -520,28 +521,10 @@ namespace WeatherOS.Graphics
                 System.Console.SetCursorPosition(left, top + 2); System.Console.Write("  .-(    ).  )  ");
                 System.Console.SetCursorPosition(left, top + 3); System.Console.Write(" (___.__)__)_)  ");
             }
-            // 7. Night - Clear / Moon (Lua de Noite)
+            // 7. Night - Clear / Moon (Lua de Noite de acordo com a fase lunar exata)
             else if (isNight || cond.Contains("moon") || cond.Contains("night") || cond.Contains("noite"))
             {
-                System.Console.ForegroundColor = ConsoleColor.Cyan;
-                if (phase.Contains("full") || phase.Contains("cheia"))
-                {
-                    // Full Moon
-                    System.Console.SetCursorPosition(left, top);     System.Console.Write("     .-----.    ");
-                    System.Console.SetCursorPosition(left, top + 1); System.Console.Write("    /  O O  \\   ");
-                    System.Console.SetCursorPosition(left, top + 2); System.Console.Write("   |    O    |  ");
-                    System.Console.SetCursorPosition(left, top + 3); System.Console.Write("    \\       /   ");
-                    System.Console.SetCursorPosition(left, top + 4); System.Console.Write("     `-----'  * ");
-                }
-                else
-                {
-                    // Crescent Moon with twinkling stars
-                    System.Console.SetCursorPosition(left, top);     System.Console.Write("     .---.  *   ");
-                    System.Console.SetCursorPosition(left, top + 1); System.Console.Write("    /   /       ");
-                    System.Console.SetCursorPosition(left, top + 2); System.Console.Write("   |   |     *  ");
-                    System.Console.SetCursorPosition(left, top + 3); System.Console.Write("    \\   \\       ");
-                    System.Console.SetCursorPosition(left, top + 4); System.Console.Write("  *  `---'   .  ");
-                }
+                DrawMoonPhaseIcon(moonPhase, left, top);
             }
             // 8. Day - Partly Cloudy (Sol com Nuvens)
             else if (cond.Contains("part") || (cond.Contains("sun") && cond.Contains("cloud")))
@@ -571,6 +554,92 @@ namespace WeatherOS.Graphics
                 System.Console.SetCursorPosition(left, top + 2); System.Console.Write("   --(   )--    ");
                 System.Console.SetCursorPosition(left, top + 3); System.Console.Write("      `-'       ");
                 System.Console.SetCursorPosition(left, top + 4); System.Console.Write("    /   |   \\   ");
+            }
+        }
+
+        public void DrawMoonPhaseIcon(string moonPhase, int left, int top)
+        {
+            string p = (moonPhase ?? "").ToLower();
+
+            // 1. New Moon (Lua Nova)
+            if (p.Contains("new") || p.Contains("nova"))
+            {
+                System.Console.ForegroundColor = ConsoleColor.DarkGray;
+                System.Console.SetCursorPosition(left, top);     System.Console.Write("    .-----.  *  ");
+                System.Console.SetCursorPosition(left, top + 1); System.Console.Write("   / . . . \\    ");
+                System.Console.SetCursorPosition(left, top + 2); System.Console.Write("  | . . . . |   ");
+                System.Console.SetCursorPosition(left, top + 3); System.Console.Write("   \\ . . . /  * ");
+                System.Console.SetCursorPosition(left, top + 4); System.Console.Write(" *  `-----'     ");
+            }
+            // 2. Waxing Crescent (Lua Crescente)
+            else if (p.Contains("waxing crescent") || (p.Contains("crescent") && !p.Contains("waning")) || p.Contains("crescente"))
+            {
+                System.Console.ForegroundColor = ConsoleColor.Cyan;
+                System.Console.SetCursorPosition(left, top);     System.Console.Write("     .---)  *   ");
+                System.Console.SetCursorPosition(left, top + 1); System.Console.Write("    /   /       ");
+                System.Console.SetCursorPosition(left, top + 2); System.Console.Write("   |   |     *  ");
+                System.Console.SetCursorPosition(left, top + 3); System.Console.Write("    \\   \\       ");
+                System.Console.SetCursorPosition(left, top + 4); System.Console.Write("  *  `---)   .  ");
+            }
+            // 3. First Quarter (Quarto Crescente)
+            else if (p.Contains("first quarter") || p.Contains("first") || p.Contains("1st"))
+            {
+                System.Console.ForegroundColor = ConsoleColor.Cyan;
+                System.Console.SetCursorPosition(left, top);     System.Console.Write("     .---|      ");
+                System.Console.SetCursorPosition(left, top + 1); System.Console.Write("    / . .|##  * ");
+                System.Console.SetCursorPosition(left, top + 2); System.Console.Write(" * | . . |##    ");
+                System.Console.SetCursorPosition(left, top + 3); System.Console.Write("    \\ . .|##    ");
+                System.Console.SetCursorPosition(left, top + 4); System.Console.Write("     `---|   .  ");
+            }
+            // 4. Waxing Gibbous (Gibosa Crescente)
+            else if (p.Contains("waxing gibbous") || (p.Contains("gibbous") && !p.Contains("waning")))
+            {
+                System.Console.ForegroundColor = ConsoleColor.Yellow;
+                System.Console.SetCursorPosition(left, top);     System.Console.Write("    .-----.     ");
+                System.Console.SetCursorPosition(left, top + 1); System.Console.Write("   / (#####\\  * ");
+                System.Console.SetCursorPosition(left, top + 2); System.Console.Write("  | (#######|   ");
+                System.Console.SetCursorPosition(left, top + 3); System.Console.Write("   \\ (#####/  * ");
+                System.Console.SetCursorPosition(left, top + 4); System.Console.Write(" *  `-----'     ");
+            }
+            // 5. Full Moon (Lua Cheia)
+            else if (p.Contains("full") || p.Contains("cheia"))
+            {
+                System.Console.ForegroundColor = ConsoleColor.Yellow;
+                System.Console.SetCursorPosition(left, top);     System.Console.Write("    .-----.  *  ");
+                System.Console.SetCursorPosition(left, top + 1); System.Console.Write("   /  O O  \\    ");
+                System.Console.SetCursorPosition(left, top + 2); System.Console.Write(" * |    O    |  ");
+                System.Console.SetCursorPosition(left, top + 3); System.Console.Write("    \\       / * ");
+                System.Console.SetCursorPosition(left, top + 4); System.Console.Write("     `-----'    ");
+            }
+            // 6. Waning Gibbous (Gibosa Minguante)
+            else if (p.Contains("waning gibbous"))
+            {
+                System.Console.ForegroundColor = ConsoleColor.Yellow;
+                System.Console.SetCursorPosition(left, top);     System.Console.Write("    .-----.  *  ");
+                System.Console.SetCursorPosition(left, top + 1); System.Console.Write(" * /#####) \\    ");
+                System.Console.SetCursorPosition(left, top + 2); System.Console.Write("  |#######) |   ");
+                System.Console.SetCursorPosition(left, top + 3); System.Console.Write("   \\#####) /  * ");
+                System.Console.SetCursorPosition(left, top + 4); System.Console.Write("    `-----'     ");
+            }
+            // 7. Last Quarter / Third Quarter (Quarto Minguante)
+            else if (p.Contains("last quarter") || p.Contains("third quarter") || p.Contains("last") || p.Contains("third"))
+            {
+                System.Console.ForegroundColor = ConsoleColor.Cyan;
+                System.Console.SetCursorPosition(left, top);     System.Console.Write("      .---.     ");
+                System.Console.SetCursorPosition(left, top + 1); System.Console.Write("  *  /###|. \\   ");
+                System.Console.SetCursorPosition(left, top + 2); System.Console.Write("    |####|.  | *");
+                System.Console.SetCursorPosition(left, top + 3); System.Console.Write("     \\###|. /   ");
+                System.Console.SetCursorPosition(left, top + 4); System.Console.Write("      `---'     ");
+            }
+            // 8. Waning Crescent (Lua Minguante)
+            else
+            {
+                System.Console.ForegroundColor = ConsoleColor.Cyan;
+                System.Console.SetCursorPosition(left, top);     System.Console.Write("  *  (---.      ");
+                System.Console.SetCursorPosition(left, top + 1); System.Console.Write("      \\   \\     ");
+                System.Console.SetCursorPosition(left, top + 2); System.Console.Write("   *   |   |    ");
+                System.Console.SetCursorPosition(left, top + 3); System.Console.Write("      /   /   * ");
+                System.Console.SetCursorPosition(left, top + 4); System.Console.Write("     (---'   .  ");
             }
         }
 

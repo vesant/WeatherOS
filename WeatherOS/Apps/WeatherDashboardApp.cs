@@ -44,23 +44,27 @@ namespace WeatherOS.Apps
             System.Console.SetCursorPosition(50, 13);
             System.Console.Write("Wind Dir : " + data.WindDirection);
 
-            desktop.DrawWeatherIcon(data.Condition, data.IsNight, data.MoonPhase, 8, 7);
+            desktop.DrawWeatherIcon(data.Condition, data.IsNight, data.MoonPhase, 8, 6);
 
-            // Astronomy telemetry under icon
-            System.Console.SetCursorPosition(8, 12);
+            // Astronomy and Moon phase details under icon
+            System.Console.SetCursorPosition(8, 11);
             System.Console.ForegroundColor = data.IsNight ? ConsoleColor.Cyan : ConsoleColor.Yellow;
             System.Console.Write(data.IsNight ? "  [NIGHT TIME]  " : "   [DAYLIGHT]   ");
 
-            System.Console.SetCursorPosition(8, 13);
+            System.Console.SetCursorPosition(8, 12);
             System.Console.ForegroundColor = ConsoleColor.White;
-            string moonTxt = !string.IsNullOrEmpty(data.MoonPhase) ? $"Moon: {data.MoonPhase}" : "Sky: Clear";
+            string moonTxt = !string.IsNullOrEmpty(data.MoonPhase) ? $"{data.MoonPhase}" : "Sky: Clear";
             if (moonTxt.Length > 18) moonTxt = moonTxt.Substring(0, 18);
             System.Console.Write(moonTxt.PadRight(18));
 
-            System.Console.SetCursorPosition(8, 14);
+            System.Console.SetCursorPosition(8, 13);
             System.Console.ForegroundColor = ConsoleColor.Cyan;
             string illumTxt = !string.IsNullOrEmpty(data.MoonIllumination) ? $"Illum: {data.MoonIllumination}" : "";
             System.Console.Write(illumTxt.PadRight(18));
+
+            System.Console.SetCursorPosition(30, 15);
+            System.Console.ForegroundColor = ConsoleColor.Yellow;
+            System.Console.Write("Press [F] or [7] to view 7-Day Extended Forecast ->");
 
             // Alert Banner
             if (data.AlertLevel == "RED")
@@ -118,7 +122,10 @@ namespace WeatherOS.Apps
 
         public void HandleInput(TuiDesktop desktop, KeyEvent keyEvent)
         {
-            // Escape to return is handled by desktop window manager
+            if (keyEvent.Key == ConsoleKeyEx.F || keyEvent.Key == ConsoleKeyEx.D7 || keyEvent.Key == ConsoleKeyEx.Num7)
+            {
+                desktop.SetCurrentApp("forecast_7d");
+            }
         }
     }
 }

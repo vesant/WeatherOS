@@ -2,6 +2,18 @@ using System;
 
 namespace WeatherOS.Services
 {
+    public struct ForecastDayData
+    {
+        public string Date;
+        public string DayOfWeek;
+        public float MaxTempC;
+        public float MinTempC;
+        public int ChanceOfRain;
+        public string Condition;
+        public string MoonPhase;
+        public string MoonIllumination;
+    }
+
     /// <summary>
     /// Represents structured meteorological observation data.
     /// Uses value-type semantics or reusable structures to prevent Garbage Collector overhead in Cosmos.
@@ -23,6 +35,7 @@ namespace WeatherOS.Services
         public string MoonIllumination;
         public bool IsNight;
         public DateTime Timestamp;
+        public ForecastDayData[] ForecastDays;
 
         public WeatherData(float temp, float humidity, float pressure, float windSpeed, string windDir, string condition, string loc)
         {
@@ -42,6 +55,22 @@ namespace WeatherOS.Services
             int hour = DateTime.UtcNow.Hour;
             IsNight = (hour < 6 || hour >= 20);
             Timestamp = DateTime.UtcNow;
+
+            ForecastDays = new ForecastDayData[7];
+            for (int i = 0; i < 7; i++)
+            {
+                ForecastDays[i] = new ForecastDayData
+                {
+                    Date = "",
+                    DayOfWeek = i == 0 ? "HOJE (Today)" : (i == 1 ? "AMANHA (Tomorrow)" : $"DIA +{i}"),
+                    MaxTempC = temp + i,
+                    MinTempC = (temp - 6) + (i % 2),
+                    ChanceOfRain = 10,
+                    Condition = condition,
+                    MoonPhase = "Waxing Crescent",
+                    MoonIllumination = "15%"
+                };
+            }
         }
     }
 
@@ -110,8 +139,10 @@ namespace WeatherOS.Services
                 if (!WeatherOS.Graphics.TuiDesktop.IsGuiActive)
                     System.Console.WriteLine("[net] raw_tcp: initializing bare-metal TCP handshake sequence...");
                 
-                // IP for wttr.in (Hetzner European Server)
-                var destIp = new Cosmos.System.Network.IPv4.Address(5, 9, 243, 187);
+                // Destination IPs: BunnyCDN Anycast for WeatherAPI.com + Hetzner fallback for wttr.in
+                var primaryIp = new Cosmos.System.Network.IPv4.Address(143, 244, 56, 52);    // WeatherAPI Anycast Edge
+                var secondaryIp = new Cosmos.System.Network.IPv4.Address(79, 127, 134, 132);  // WeatherAPI Alternate Edge
+                var wttrIp = new Cosmos.System.Network.IPv4.Address(5, 9, 243, 187);          // Fallback wttr.in
                 var gatewayIp = new Cosmos.System.Network.IPv4.Address(10, 0, 2, 2);
 
                 if (!string.IsNullOrEmpty(city))
@@ -123,38 +154,41 @@ namespace WeatherOS.Services
                     }
                 }
                 cleanCity = cleanCity.Trim();
+                if (string.IsNullOrWhiteSpace(cleanCity)) cleanCity = "Setubal";
 
                 // Immediately register query city so UI displays it immediately instead of reverting
-                if (!string.IsNullOrWhiteSpace(cleanCity))
-                {
-                    _cachedReading.Location = cleanCity.ToUpper();
-                    _cachedReading.Condition = "Awaiting Telemetry...";
-                }
+                _cachedReading.Location = cleanCity.ToUpper();
+                _cachedReading.Condition = "Awaiting Telemetry...";
 
-                string queryCity = cleanCity;
-                // Only qualify Setubal specifically to avoid Laguna Setubal in Argentina
-                if (cleanCity.ToLower() == "setubal")
-                {
-                    queryCity = "Setubal,Portugal";
-                }
+                string safeCity = cleanCity.Replace(" ", "%20");
+                string effectiveKey = !string.IsNullOrWhiteSpace(apiKey) ? apiKey : "bc0cfac1c3144fc3bf0145134260810";
 
-                string request;
-                if (string.IsNullOrWhiteSpace(queryCity))
-                {
-                    // Auto-locate via IP if city is empty
-                    request = "GET /?format=j2 HTTP/1.1\r\nHost: wttr.in\r\nUser-Agent: curl/7.68.0\r\nConnection: close\r\n\r\n";
-                }
-                else
-                {
-                    string safeCity = queryCity.Replace(" ", "%20");
-                    request = "GET /" + safeCity + "?format=j2 HTTP/1.1\r\nHost: wttr.in\r\nUser-Agent: curl/7.68.0\r\nConnection: close\r\n\r\n";
-                }
-                                 
+                string weatherApiRequest = "GET /v1/forecast.json?key=" + effectiveKey + "&q=" + safeCity + "&days=7 HTTP/1.1\r\nHost: api.weatherapi.com\r\nUser-Agent: WeatherOS/3.0\r\nConnection: close\r\n\r\n";
+
                 if (_debugMode && !WeatherOS.Graphics.TuiDesktop.IsGuiActive)
-                    System.Console.WriteLine($"[net] raw_tcp: sending SYN to {destIp.ToString()} via Bare-Metal DHCP Gateway");
-                
-                string response = RawTcpHttp.FetchGet(destIp, gatewayIp, request);
-                
+                    System.Console.WriteLine($"[net] raw_tcp: querying WeatherAPI via {primaryIp.ToString()} (7-day forecast)...");
+
+                // 1. Primary WeatherAPI Anycast CDN (143.244.56.52)
+                string response = RawTcpHttp.FetchGet(primaryIp, gatewayIp, weatherApiRequest);
+
+                // 2. Secondary WeatherAPI CDN (79.127.134.132)
+                if (string.IsNullOrWhiteSpace(response))
+                {
+                    if (_debugMode && !WeatherOS.Graphics.TuiDesktop.IsGuiActive)
+                        System.Console.WriteLine($"[net] raw_tcp: trying secondary WeatherAPI IP {secondaryIp.ToString()}...");
+                    response = RawTcpHttp.FetchGet(secondaryIp, gatewayIp, weatherApiRequest);
+                }
+
+                // 3. Fallback to wttr.in if WeatherAPI endpoints were unreachable
+                if (string.IsNullOrWhiteSpace(response))
+                {
+                    if (_debugMode && !WeatherOS.Graphics.TuiDesktop.IsGuiActive)
+                        System.Console.WriteLine($"[net] raw_tcp: falling back to wttr.in ({wttrIp.ToString()})...");
+                    string wttrCity = cleanCity.ToLower() == "setubal" ? "Setubal,Portugal" : safeCity;
+                    string wttrRequest = "GET /" + wttrCity + "?format=j2 HTTP/1.1\r\nHost: wttr.in\r\nUser-Agent: curl/7.68.0\r\nConnection: close\r\n\r\n";
+                    response = RawTcpHttp.FetchGet(wttrIp, gatewayIp, wttrRequest);
+                }
+
                 if (!string.IsNullOrWhiteSpace(response))
                 {
                     if (response.Contains("400 Bad Request") || response.Contains("ERR00") || response.Contains("location not found"))
@@ -247,7 +281,17 @@ namespace WeatherOS.Services
                 if (!string.IsNullOrWhiteSpace(windDir)) _cachedReading.WindDirection = windDir.Trim();
                 
                 // Condition text is inside "weatherDesc": [{"value": "..."}] or "condition": {"text": "..."}
-                string weatherCondition = ParseSectionValue(json, "\"weatherDesc\"");
+                string weatherCondition = "";
+                int curBlockIdx = CustomIndexOf(json, "\"current\":", 0);
+                if (curBlockIdx != -1)
+                {
+                    int condBlockIdx = CustomIndexOf(json, "\"condition\":", curBlockIdx);
+                    if (condBlockIdx != -1 && condBlockIdx < curBlockIdx + 500)
+                    {
+                        weatherCondition = ParseJsonStringFromIndex(json, "text", condBlockIdx);
+                    }
+                }
+                if (string.IsNullOrWhiteSpace(weatherCondition)) weatherCondition = ParseSectionValue(json, "\"weatherDesc\"");
                 if (string.IsNullOrWhiteSpace(weatherCondition)) weatherCondition = ParseJsonString(json, "value");
                 if (string.IsNullOrWhiteSpace(weatherCondition)) weatherCondition = ParseJsonString(json, "text");
 
@@ -272,56 +316,89 @@ namespace WeatherOS.Services
                 string illum = ParseJsonString(json, "moon_illumination");
                 if (!string.IsNullOrWhiteSpace(illum)) _cachedReading.MoonIllumination = illum.Trim() + "%";
 
-                int curHour = DateTime.UtcNow.Hour;
-                _cachedReading.IsNight = (curHour < 7 || curHour >= 20) || 
-                    (_cachedReading.Condition != null && (_cachedReading.Condition.ToLower().Contains("night") || _cachedReading.Condition.ToLower().Contains("noite")));
-                
-                // Extract nearest area and country from JSON
-                string area = ParseSectionValue(json, "\"nearest_area\"");
-                string country = "";
-                int nearIdx = CustomIndexOf(json, "\"nearest_area\"", 0);
-                if (nearIdx != -1)
+                float isDay = ParseJsonFloat(json, "is_day");
+                if (CustomIndexOf(json, "\"is_day\":", 0) != -1)
                 {
-                    int ctryIdx = CustomIndexOf(json, "\"country\":", nearIdx);
-                    if (ctryIdx != -1 && ctryIdx < nearIdx + 500)
-                    {
-                        country = ParseSectionValue(SafeSubstring(json, ctryIdx, json.Length - ctryIdx), "\"country\"");
-                        if (string.IsNullOrEmpty(country))
-                        {
-                            int valIdx = CustomIndexOf(json, "\"value\":", ctryIdx);
-                            if (valIdx != -1 && valIdx < ctryIdx + 100)
-                            {
-                                valIdx += 8;
-                                while (valIdx < json.Length && (json[valIdx] == ' ' || json[valIdx] == '\"')) valIdx++;
-                                int valEnd = valIdx;
-                                while (valEnd < json.Length && json[valEnd] != '\"' && json[valEnd] != '\r' && json[valEnd] != '\n') valEnd++;
-                                if (valEnd > valIdx && valEnd <= json.Length) country = SafeSubstring(json, valIdx, valEnd - valIdx).Trim();
-                            }
-                        }
-                    }
-                }
-
-                if (!string.IsNullOrWhiteSpace(area) && !area.ToUpper().Contains("LAT "))
-                {
-                    string countrySuffix = "";
-                    if (!string.IsNullOrEmpty(country))
-                    {
-                        string cLower = country.ToLower();
-                        if (cLower == "portugal") countrySuffix = ", PT";
-                        else if (cLower == "spain") countrySuffix = ", ES";
-                        else if (cLower == "estonia") countrySuffix = ", EE";
-                        else countrySuffix = ", " + country;
-                    }
-                    _cachedReading.Location = (area + countrySuffix).ToUpper();
-                }
-                else if (!string.IsNullOrWhiteSpace(fallbackCity))
-                {
-                    string suf = fallbackCity.ToLower().Contains("setubal") ? ", PT" : "";
-                    _cachedReading.Location = (fallbackCity + suf).ToUpper();
+                    _cachedReading.IsNight = (isDay == 0f);
                 }
                 else
                 {
-                    _cachedReading.Location = "SETUBAL, PT";
+                    int curHour = DateTime.UtcNow.Hour;
+                    _cachedReading.IsNight = (curHour < 7 || curHour >= 20) || 
+                        (_cachedReading.Condition != null && (_cachedReading.Condition.ToLower().Contains("night") || _cachedReading.Condition.ToLower().Contains("noite")));
+                }
+                
+                // Parse 7-day forecast array
+                Parse7DayForecast(json);
+                if (_cachedReading.ForecastDays != null && _cachedReading.ForecastDays.Length > 0)
+                {
+                    if (string.IsNullOrWhiteSpace(_cachedReading.MoonPhase) || _cachedReading.MoonPhase == "Waxing Crescent")
+                    {
+                        if (!string.IsNullOrWhiteSpace(_cachedReading.ForecastDays[0].MoonPhase))
+                            _cachedReading.MoonPhase = _cachedReading.ForecastDays[0].MoonPhase;
+                    }
+                    if (string.IsNullOrWhiteSpace(_cachedReading.MoonIllumination) || _cachedReading.MoonIllumination == "15%")
+                    {
+                        if (!string.IsNullOrWhiteSpace(_cachedReading.ForecastDays[0].MoonIllumination))
+                            _cachedReading.MoonIllumination = _cachedReading.ForecastDays[0].MoonIllumination;
+                    }
+                }
+
+                // Extract location: WeatherAPI uses location.name & location.country
+                int locIdx = CustomIndexOf(json, "\"location\":", 0);
+                if (locIdx != -1)
+                {
+                    string locName = ParseJsonStringFromIndex(json, "name", locIdx);
+                    string locCountry = ParseJsonStringFromIndex(json, "country", locIdx);
+                    if (!string.IsNullOrWhiteSpace(locName))
+                    {
+                        string cSuffix = "";
+                        if (!string.IsNullOrWhiteSpace(locCountry))
+                        {
+                            string cLow = locCountry.ToLower();
+                            if (cLow == "portugal") cSuffix = ", PT";
+                            else if (cLow == "spain") cSuffix = ", ES";
+                            else cSuffix = ", " + locCountry;
+                        }
+                        _cachedReading.Location = (locName + cSuffix).ToUpper();
+                    }
+                }
+                else
+                {
+                    // Fallback to wttr nearest_area
+                    string area = ParseSectionValue(json, "\"nearest_area\"");
+                    string country = "";
+                    int nearIdx = CustomIndexOf(json, "\"nearest_area\"", 0);
+                    if (nearIdx != -1)
+                    {
+                        int ctryIdx = CustomIndexOf(json, "\"country\":", nearIdx);
+                        if (ctryIdx != -1 && ctryIdx < nearIdx + 500)
+                        {
+                            country = ParseSectionValue(SafeSubstring(json, ctryIdx, json.Length - ctryIdx), "\"country\"");
+                        }
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(area) && !area.ToUpper().Contains("LAT "))
+                    {
+                        string countrySuffix = "";
+                        if (!string.IsNullOrEmpty(country))
+                        {
+                            string cLower = country.ToLower();
+                            if (cLower == "portugal") countrySuffix = ", PT";
+                            else if (cLower == "spain") countrySuffix = ", ES";
+                            else countrySuffix = ", " + country;
+                        }
+                        _cachedReading.Location = (area + countrySuffix).ToUpper();
+                    }
+                    else if (!string.IsNullOrWhiteSpace(fallbackCity))
+                    {
+                        string suf = fallbackCity.ToLower().Contains("setubal") ? ", PT" : "";
+                        _cachedReading.Location = (fallbackCity + suf).ToUpper();
+                    }
+                    else
+                    {
+                        _cachedReading.Location = "SETUBAL, PT";
+                    }
                 }
 
                 // Comprehensive Meteorological Weather Warnings & Hazard Detection
@@ -558,6 +635,148 @@ namespace WeatherOS.Services
             if (endIdx <= idx || endIdx > json.Length) return "";
             
             return SafeSubstring(json, idx, endIdx - idx).Trim();
+        }
+
+        private float ParseJsonFloatFromIndex(string json, string key, int startIndex)
+        {
+            if (string.IsNullOrEmpty(json) || startIndex < 0 || startIndex >= json.Length) return 0f;
+            string search = "\"" + key + "\":";
+            int idx = CustomIndexOf(json, search, startIndex);
+            if (idx == -1) return 0f;
+            idx += search.Length;
+            int endIdx = idx;
+            while (endIdx < json.Length)
+            {
+                char c = json[endIdx];
+                if (c == ',' || c == '}' || c == ']' || c == '\r' || c == '\n') break;
+                endIdx++;
+            }
+            string valStr = SafeSubstring(json, idx, endIdx - idx).Trim();
+            float result = 0f;
+            float fraction = 0f;
+            float divisor = 10f;
+            bool isNegative = false;
+            bool inFraction = false;
+            for (int i = 0; i < valStr.Length; i++)
+            {
+                char c = valStr[i];
+                if (c == '-') isNegative = true;
+                else if (c == '.') inFraction = true;
+                else if (c >= '0' && c <= '9')
+                {
+                    int digit = c - '0';
+                    if (!inFraction) result = (result * 10f) + digit;
+                    else { fraction += digit / divisor; divisor *= 10f; }
+                }
+            }
+            result += fraction;
+            return isNegative ? -result : result;
+        }
+
+        private string ParseJsonStringFromIndex(string json, string key, int startIndex)
+        {
+            if (string.IsNullOrEmpty(json) || startIndex < 0 || startIndex >= json.Length) return "";
+            string search = "\"" + key + "\":";
+            int idx = CustomIndexOf(json, search, startIndex);
+            if (idx == -1) return "";
+            idx += search.Length;
+            while (idx < json.Length && (json[idx] == ' ' || json[idx] == '\"' || json[idx] == '[' || json[idx] == '{' || json[idx] == '\r' || json[idx] == '\n')) idx++;
+            int endIdx = idx;
+            while (endIdx < json.Length && json[endIdx] != '\"' && json[endIdx] != ',' && json[endIdx] != '}' && json[endIdx] != ']' && json[endIdx] != '\r' && json[endIdx] != '\n') endIdx++;
+            if (endIdx <= idx || endIdx > json.Length) return "";
+            return SafeSubstring(json, idx, endIdx - idx).Trim();
+        }
+
+        private static string GetDayOfWeekName(string dateStr, int dayIndex)
+        {
+            if (dayIndex == 0) return "HOJE (Today)";
+            if (dayIndex == 1) return "AMANHA (Tomorrow)";
+            if (!string.IsNullOrEmpty(dateStr) && dateStr.Length >= 10)
+            {
+                try
+                {
+                    int year = int.Parse(dateStr.Substring(0, 4));
+                    int month = int.Parse(dateStr.Substring(5, 2));
+                    int day = int.Parse(dateStr.Substring(8, 2));
+                    var dt = new DateTime(year, month, day);
+                    switch (dt.DayOfWeek)
+                    {
+                        case DayOfWeek.Sunday: return "DOMINGO (Sun)";
+                        case DayOfWeek.Monday: return "SEGUNDA (Mon)";
+                        case DayOfWeek.Tuesday: return "TERCA (Tue)";
+                        case DayOfWeek.Wednesday: return "QUARTA (Wed)";
+                        case DayOfWeek.Thursday: return "QUINTA (Thu)";
+                        case DayOfWeek.Friday: return "SEXTA (Fri)";
+                        case DayOfWeek.Saturday: return "SABADO (Sat)";
+                    }
+                }
+                catch { }
+            }
+            return $"DIA +{dayIndex}";
+        }
+
+        private void Parse7DayForecast(string json)
+        {
+            try
+            {
+                if (_cachedReading.ForecastDays == null || _cachedReading.ForecastDays.Length != 7)
+                {
+                    _cachedReading.ForecastDays = new ForecastDayData[7];
+                }
+
+                int fcIdx = CustomIndexOf(json, "\"forecastday\":", 0);
+                if (fcIdx == -1) return;
+
+                int searchFrom = fcIdx;
+                for (int day = 0; day < 7; day++)
+                {
+                    int dateIdx = CustomIndexOf(json, "\"date\":\"", searchFrom);
+                    if (dateIdx == -1) break;
+
+                    string dateStr = ParseJsonStringFromIndex(json, "date", dateIdx - 1);
+                    float maxT = ParseJsonFloatFromIndex(json, "maxtemp_c", dateIdx);
+                    float minT = ParseJsonFloatFromIndex(json, "mintemp_c", dateIdx);
+                    float rainChance = ParseJsonFloatFromIndex(json, "daily_chance_of_rain", dateIdx);
+
+                    // condition inside day
+                    int dayBlockIdx = CustomIndexOf(json, "\"day\":", dateIdx);
+                    string condText = "";
+                    if (dayBlockIdx != -1)
+                    {
+                        condText = ParseJsonStringFromIndex(json, "text", dayBlockIdx);
+                    }
+                    if (string.IsNullOrEmpty(condText)) condText = "Clear";
+
+                    // astronomy inside day
+                    int astroBlockIdx = CustomIndexOf(json, "\"astro\":", dateIdx);
+                    string moonPhase = "";
+                    string moonIllum = "";
+                    if (astroBlockIdx != -1)
+                    {
+                        moonPhase = ParseJsonStringFromIndex(json, "moon_phase", astroBlockIdx);
+                        moonIllum = ParseJsonStringFromIndex(json, "moon_illumination", astroBlockIdx);
+                        if (!string.IsNullOrEmpty(moonIllum)) moonIllum += "%";
+                    }
+                    if (string.IsNullOrEmpty(moonPhase)) moonPhase = "Waxing Crescent";
+
+                    string dayOfWeek = GetDayOfWeekName(dateStr, day);
+
+                    _cachedReading.ForecastDays[day] = new ForecastDayData
+                    {
+                        Date = dateStr,
+                        DayOfWeek = dayOfWeek,
+                        MaxTempC = maxT,
+                        MinTempC = minT,
+                        ChanceOfRain = (int)rainChance,
+                        Condition = condText,
+                        MoonPhase = moonPhase,
+                        MoonIllumination = moonIllum
+                    };
+
+                    searchFrom = dateIdx + 20;
+                }
+            }
+            catch { }
         }
 
         private void ParseTelemetryPacket(string packet)

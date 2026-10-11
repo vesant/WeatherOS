@@ -17,9 +17,11 @@ namespace WeatherOS.Services
         private static bool _synAckReceived = false;
         private static bool _finReceived = false;
         
-        // Static buffer to avoid memory allocation inside IRQ!
-        private static byte[] _rxBuffer = new byte[131072]; // 128 KB
+        // Static buffer to avoid memory allocation inside IRQ! (256 KB to handle full 7-day payloads)
+        private static byte[] _rxBuffer = new byte[262144]; // 256 KB
         private static int _rxLength = 0;
+        private static int _jsonBraceCount = 0;
+        private static bool _jsonStarted = false;
 
         private static Cosmos.HAL.DataReceivedHandler _oldHandler;
 
@@ -401,6 +403,8 @@ namespace WeatherOS.Services
             _synAckReceived = false;
             _finReceived = false;
             _rxLength = 0;
+            _jsonBraceCount = 0;
+            _jsonStarted = false;
             Array.Clear(_rxBuffer, 0, _rxBuffer.Length);
             _sequence = 0x4F9B2C11 + (uint)(_sourcePort * 101);
             _acknowledgment = 0;
@@ -788,20 +792,16 @@ namespace WeatherOS.Services
                     var nic = NetworkDevice.Devices[0];
                     SendTcpPacket(nic, 0x10, new byte[0]);
 
-                    // Smart detection of balanced root JSON braces
-                    if (_rxLength > 0)
+                    // Fast incremental detection of balanced root JSON braces
+                    for (int bi = 0; bi < payloadLen; bi++)
                     {
-                        int braces = 0;
-                        bool started = false;
-                        for (int b = 0; b < _rxLength; b++)
-                        {
-                            if (_rxBuffer[b] == '{') { braces++; started = true; }
-                            else if (_rxBuffer[b] == '}') { braces--; }
-                        }
-                        if (started && braces == 0)
-                        {
-                            _finReceived = true;
-                        }
+                        byte ch = packet[payloadOffset + bi];
+                        if (ch == '{') { _jsonBraceCount++; _jsonStarted = true; }
+                        else if (ch == '}') { _jsonBraceCount--; }
+                    }
+                    if (_jsonStarted && _jsonBraceCount == 0 && _rxLength > 200)
+                    {
+                        _finReceived = true;
                     }
                 }
             }
