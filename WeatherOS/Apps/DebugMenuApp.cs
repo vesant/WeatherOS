@@ -16,7 +16,7 @@ namespace WeatherOS.Apps
             "1. Disk Diagnostics & Hardware Analyzer [First Program]",
             "2. Live System Resources & Power Monitor",
             "3. Network Card Hardware & Direct Sockets",
-            "4. Toggle AC Power Adapter (Plug / Unplug)",
+            "4. ACPI Power & Battery Live Telemetry",
             "5. Return to Main Menu"
         };
 
@@ -83,9 +83,9 @@ namespace WeatherOS.Apps
                 }
                 else if (_selectedIndex == 3)
                 {
-                    BatteryService.ToggleAcConnected();
                     var b = BatteryService.GetBatteryInfo();
-                    desktop.DrawStatusMessage(b.IsAcConnected ? "Power: AC Plugged (Charging)" : "Power: Running on Battery");
+                    string ac = b.IsAcConnected ? "AC Plugged (Charging)" : "Running on Battery";
+                    desktop.DrawStatusMessage($"Power: {ac} | Level: {b.Percentage}% [{b.Status}]");
                 }
                 else if (_selectedIndex == 4)
                 {

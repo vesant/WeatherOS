@@ -1,5 +1,6 @@
 using System;
 using Cosmos.Core;
+using Cosmos.HAL;
 
 namespace WeatherOS.Services
 {
@@ -20,32 +21,8 @@ namespace WeatherOS.Services
         private static bool _initialized = false;
         private static BatteryInfo _cachedInfo;
         private static int _tickCounter = 0;
-
-        public static void ToggleAcConnected()
-        {
-            _cachedInfo.IsAcConnected = !_cachedInfo.IsAcConnected;
-            if (_cachedInfo.IsAcConnected)
-            {
-                _cachedInfo.Status = "AC Connected (Charging)";
-            }
-            else
-            {
-                _cachedInfo.Status = "Discharging (Battery Mode)";
-            }
-        }
-
-        public static void SetAcConnected(bool connected)
-        {
-            _cachedInfo.IsAcConnected = connected;
-            if (connected)
-            {
-                _cachedInfo.Status = "AC Connected (Charging)";
-            }
-            else
-            {
-                _cachedInfo.Status = "Discharging (Battery Mode)";
-            }
-        }
+        private static ushort _smbusBase = 0;
+        private static bool _smbusProbed = false;
 
         public static BatteryInfo GetBatteryInfo()
         {
@@ -57,22 +34,28 @@ namespace WeatherOS.Services
 
             _tickCounter++;
 
-            // Update live telemetry
+            // Perform automatic live hardware sensing every 5 ticks
+            if (_tickCounter % 5 == 0)
+            {
+                DetectHardwarePowerState();
+            }
+
+            // Update live telemetry display
             if (_cachedInfo.HasBattery || _cachedInfo.IsLaptop)
             {
                 if (_cachedInfo.IsAcConnected)
                 {
-                    int chargeOffset = (_tickCounter / 60) % 5;
-                    _cachedInfo.Percentage = 95 + chargeOffset;
-                    if (_cachedInfo.Percentage > 100) _cachedInfo.Percentage = 100;
+                    // Charging mode
+                    if (_cachedInfo.Percentage <= 0) _cachedInfo.Percentage = 85;
                     _cachedInfo.Status = "AC Connected (Charging)";
                 }
                 else
                 {
-                    // Steady realistic discharge over uptime
-                    int drainOffset = (_tickCounter / 180) % 20;
-                    _cachedInfo.Percentage = 82 - drainOffset;
-                    if (_cachedInfo.Percentage < 5) _cachedInfo.Percentage = 5;
+                    // Discharging on battery
+                    if (_cachedInfo.Percentage <= 0 || _cachedInfo.Percentage > 100)
+                    {
+                        _cachedInfo.Percentage = 80;
+                    }
                     _cachedInfo.Status = "Discharging (Battery Mode)";
                 }
             }
@@ -83,6 +66,203 @@ namespace WeatherOS.Services
             }
 
             return _cachedInfo;
+        }
+
+        private static void DetectHardwarePowerState()
+        {
+            if (!_cachedInfo.IsLaptop) return;
+
+            bool stateDetermined = false;
+
+            // 1. Authoritative: Intel SMBus Smart Battery System (SBS v1.1)
+            try
+            {
+                InitSmbus();
+                if (_smbusBase > 0)
+                {
+                    // Query Smart Battery at slave address 0x0B
+                    // Command 0x16: BatteryStatus
+                    if (TrySmbusReadWord(0x0B, 0x16, out ushort bst))
+                    {
+                        // Bit 7 (0x0080): DISCHARGING
+                        bool discharging = (bst & 0x0080) != 0;
+                        _cachedInfo.IsAcConnected = !discharging;
+                        stateDetermined = true;
+
+                        // Command 0x0D: RelativeStateOfCharge (%)
+                        if (TrySmbusReadWord(0x0B, 0x0D, out ushort pct) && pct <= 100)
+                        {
+                            _cachedInfo.Percentage = (int)pct;
+                        }
+
+                        // Command 0x09: Voltage (mV)
+                        if (TrySmbusReadWord(0x0B, 0x09, out ushort mv) && mv > 1000 && mv < 25000)
+                        {
+                            _cachedInfo.Voltage = $"{mv / 1000}.{(mv % 1000) / 100}V";
+                        }
+                    }
+                }
+            }
+            catch { }
+
+            // 2. Authoritative: ACPI Embedded Controller (EC) Battery Status
+            if (!stateDetermined)
+            {
+                try
+                {
+                    var ecStatusPort = new IOPort(0x66);
+                    byte currentEcStatus = ecStatusPort.Byte;
+                    if (currentEcStatus != 0xFF)
+                    {
+                        // Check standard Compal / Quanta battery status byte at offset 0xB0
+                        if (TryReadEcByte(0xB0, out byte bstByte))
+                        {
+                            if ((bstByte & 0x01) == 0x01) // Discharging bit
+                            {
+                                _cachedInfo.IsAcConnected = false;
+                                stateDetermined = true;
+                            }
+                            else if ((bstByte & 0x02) == 0x02) // Charging bit
+                            {
+                                _cachedInfo.IsAcConnected = true;
+                                stateDetermined = true;
+                            }
+                        }
+
+                        // Read fuel gauge percentage if available
+                        if (TryReadEcByte(0xB2, out byte pctByte) && pctByte >= 5 && pctByte <= 100)
+                        {
+                            _cachedInfo.Percentage = pctByte;
+                        }
+                        else if (TryReadEcByte(0xD0, out byte d0Byte) && d0Byte >= 5 && d0Byte <= 100)
+                        {
+                            _cachedInfo.Percentage = d0Byte;
+                        }
+                    }
+                }
+                catch { }
+            }
+
+            // 3. Fallback: If AC is not authoritatively detected on a laptop, default to Discharging on Battery!
+            if (!stateDetermined)
+            {
+                _cachedInfo.IsAcConnected = false;
+            }
+
+            _cachedInfo.Status = _cachedInfo.IsAcConnected ? "AC Connected (Charging)" : "Discharging (Battery Mode)";
+        }
+
+        private static void InitSmbus()
+        {
+            if (_smbusProbed) return;
+            _smbusProbed = true;
+            try
+            {
+                // Intel ICH7-M SMBus Controller at PCI 00:1F.3
+                var pci = new PCIDeviceNormal(0, 0x1F, 3);
+                if (pci != null && pci.VendorID == 0x8086)
+                {
+                    ushort cmd = pci.ReadRegister16(0x04);
+                    if ((cmd & 1) == 0)
+                    {
+                        pci.WriteRegister16(0x04, (ushort)(cmd | 1));
+                    }
+
+                    uint bar4 = pci.ReadRegister32(0x20);
+                    if ((bar4 & 1) == 1)
+                    {
+                        _smbusBase = (ushort)(bar4 & 0xFFE0);
+                    }
+                }
+            }
+            catch { }
+        }
+
+        private static bool TrySmbusReadWord(byte slave7Bit, byte cmd, out ushort result)
+        {
+            result = 0;
+            if (_smbusBase == 0) return false;
+
+            try
+            {
+                var stsPort = new IOPort((ushort)(_smbusBase + 0x00));
+                var ctlPort = new IOPort((ushort)(_smbusBase + 0x02));
+                var cmdPort = new IOPort((ushort)(_smbusBase + 0x03));
+                var addrPort = new IOPort((ushort)(_smbusBase + 0x04));
+                var d0Port = new IOPort((ushort)(_smbusBase + 0x05));
+                var d1Port = new IOPort((ushort)(_smbusBase + 0x06));
+
+                // Clear status
+                stsPort.Byte = 0xFE;
+
+                int wait = 1000;
+                while ((stsPort.Byte & 0x01) != 0 && --wait > 0) ;
+                if (wait == 0) return false;
+
+                // Read Word protocol: 0x4C (START bit 6, bits 4:2 = 011 Read Word)
+                addrPort.Byte = (byte)((slave7Bit << 1) | 0x01);
+                cmdPort.Byte = cmd;
+                ctlPort.Byte = 0x4C;
+
+                wait = 5000;
+                while ((stsPort.Byte & 0x01) != 0 && --wait > 0) ;
+                if (wait == 0) return false;
+
+                byte sts = stsPort.Byte;
+                if ((sts & 0x1C) != 0)
+                {
+                    stsPort.Byte = sts;
+                    return false;
+                }
+
+                if ((sts & 0x02) != 0)
+                {
+                    result = (ushort)(d0Port.Byte | (d1Port.Byte << 8));
+                    stsPort.Byte = 0x02;
+                    return true;
+                }
+            }
+            catch { }
+            return false;
+        }
+
+
+        public static bool TryReadEcByte(byte addr, out byte val)
+        {
+            val = 0;
+            try
+            {
+                var cmdPort = new IOPort(0x66);
+                var dataPort = new IOPort(0x62);
+
+                // Wait for IBF (Input Buffer Full, bit 1) to clear
+                int timeout = 500;
+                while ((cmdPort.Byte & 0x02) != 0 && --timeout > 0) ;
+                if (timeout == 0) return false;
+
+                // Send Read command 0x80
+                cmdPort.Byte = 0x80;
+
+                // Wait for IBF to clear
+                timeout = 500;
+                while ((cmdPort.Byte & 0x02) != 0 && --timeout > 0) ;
+                if (timeout == 0) return false;
+
+                // Send address to read
+                dataPort.Byte = addr;
+
+                // Wait for OBF (Output Buffer Full, bit 0) to be set
+                timeout = 500;
+                while ((cmdPort.Byte & 0x01) == 0 && --timeout > 0) ;
+                if (timeout == 0) return false;
+
+                val = dataPort.Byte;
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         private static void ProbeHardware()
@@ -145,7 +325,7 @@ namespace WeatherOS.Services
                                     {
                                         _cachedInfo.IsLaptop = true;
                                         _cachedInfo.HasBattery = true;
-                                        _cachedInfo.IsAcConnected = false; // Laptop defaults to battery power!
+                                        _cachedInfo.IsAcConnected = false;
                                         _cachedInfo.Percentage = 82;
                                         _cachedInfo.Status = "Discharging (Battery Mode)";
                                         _cachedInfo.ChassisType = "Laptop / Notebook";
@@ -191,16 +371,19 @@ namespace WeatherOS.Services
                 // 2. Probe ACPI Embedded Controller (Port 0x66 status)
                 var ecStatusPort = new IOPort(0x66);
                 byte ecStatus = ecStatusPort.Byte;
-                if (ecStatus != 0xFF) // Valid EC response -> definitely a laptop
+                if (ecStatus != 0xFF)
                 {
                     _cachedInfo.IsLaptop = true;
                     _cachedInfo.HasBattery = true;
-                    _cachedInfo.IsAcConnected = false; // Default to battery discharging
+                    _cachedInfo.IsAcConnected = false;
                     _cachedInfo.Percentage = 82;
                     _cachedInfo.Status = "Discharging (Battery Mode)";
                 }
             }
             catch { }
+
+            // Initial hardware power state detection
+            DetectHardwarePowerState();
         }
     }
 }

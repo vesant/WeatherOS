@@ -70,7 +70,7 @@ namespace WeatherOS.Apps
                 System.Console.SetCursorPosition(11, 11);
                 System.Console.ForegroundColor = ConsoleColor.White;
                 string acText = battery.IsAcConnected ? "AC Plugged (Charging)" : "AC Unplugged (On Battery)";
-                System.Console.Write($"PWR : {battery.Percentage}% | {acText} ['A' Toggle]   ");
+                System.Console.Write($"PWR : {battery.Percentage}% | {acText} [{battery.Status}]   ");
             }
             else
             {
@@ -115,15 +115,11 @@ namespace WeatherOS.Apps
 
             System.Console.SetCursorPosition(11, 19);
             System.Console.ForegroundColor = ConsoleColor.DarkGray;
-            System.Console.Write("Updating in real-time... ['A' Toggle AC | ESC to Return]");
+            System.Console.Write("Updating in real-time (Hardware Auto-Sense) | [ESC to Return]");
         }
 
         public void HandleInput(TuiDesktop desktop, KeyEvent keyEvent)
         {
-            if (keyEvent.Key == ConsoleKeyEx.A)
-            {
-                BatteryService.ToggleAcConnected();
-            }
         }
     }
 }

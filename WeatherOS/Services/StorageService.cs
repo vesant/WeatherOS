@@ -54,14 +54,33 @@ namespace WeatherOS.Services
                 var disks = VFSManager.GetDisks();
                 if (disks != null && disks.Count > 0)
                 {
+                    int diskIdx = 0;
                     int partIdx = 0;
-                    if (drive.Length > 0 && char.IsDigit(drive[0]))
+
+                    if (drive.Contains("Disk ") && drive.Contains("Part "))
+                    {
+                        int dPos = drive.IndexOf("Disk ") + 5;
+                        int pPos = drive.IndexOf("Part ") + 5;
+                        if (dPos < drive.Length && char.IsDigit(drive[dPos]))
+                        {
+                            diskIdx = drive[dPos] - '0';
+                        }
+                        if (pPos < drive.Length && char.IsDigit(drive[pPos]))
+                        {
+                            partIdx = drive[pPos] - '0' - 1;
+                            if (partIdx < 0) partIdx = 0;
+                        }
+                    }
+                    else if (drive.Length > 0 && char.IsDigit(drive[0]))
                     {
                         partIdx = drive[0] - '0';
                     }
 
-                    disks[0].FormatPartition(partIdx, "Fat32", true);
-                    status = $"[OK] Formatted volume {drive} as FAT32 successfully!";
+                    if (diskIdx >= disks.Count) diskIdx = 0;
+                    if (partIdx >= disks[diskIdx].Partitions.Count) partIdx = 0;
+
+                    disks[diskIdx].FormatPartition(partIdx, "Fat32", true);
+                    status = $"[OK] Formatted Disk {diskIdx} Partition {partIdx + 1} as FAT32 successfully!";
                     return true;
                 }
                 status = $"[ERR] No physical disks registered in VFS.";

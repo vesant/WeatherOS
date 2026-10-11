@@ -19,7 +19,7 @@ namespace WeatherOS.Services
         public string Uuid { get; set; } = "";
         public bool IsMounted { get; set; }
         public string MountedDriveLetter { get; set; } = "";
-        public bool IsWritable { get; set; }
+        public bool IsWritable { get; set; } = true;
         public bool IsLinuxSystem { get; set; }
         public bool IsWindowsSystem { get; set; }
         public string Description { get; set; } = "";
@@ -51,36 +51,109 @@ namespace WeatherOS.Services
         {
             var results = new List<PartitionInfo>();
 
+            // 1. PRIMARY PROBE: Cosmos VFS Disks and their Partitions
             try
             {
-                int partIdx = 0;
-                int diskIdx = 0;
-
-                // 1. Scan low-level hardware BlockDevices from Cosmos HAL
-                var devices = BlockDevice.Devices;
-                if (devices != null && devices.Count > 0)
+                var vfsDisks = VFSManager.GetDisks();
+                if (vfsDisks != null && vfsDisks.Count > 0)
                 {
-                    for (int i = 0; i < devices.Count; i++)
+                    for (int d = 0; d < vfsDisks.Count; d++)
                     {
-                        var dev = devices[i];
-                        if (dev == null) continue;
+                        var disk = vfsDisks[d];
+                        if (disk == null || disk.Partitions == null) continue;
 
-                        if (dev is Partition part)
+                        for (int p = 0; p < disk.Partitions.Count; p++)
                         {
-                            partIdx++;
-                            var info = ProbePartitionDevice(part, diskIdx, partIdx);
+                            var part = disk.Partitions[p];
+                            if (part == null) continue;
+
+                            var host = part.Host;
+                            ulong bCount = host != null ? host.BlockCount : 0;
+                            ulong bSize = host != null ? host.BlockSize : 512;
+                            if (bSize < 512) bSize = 512;
+
+                            var info = new PartitionInfo
+                            {
+                                DiskIndex = d,
+                                PartitionIndex = p + 1,
+                                DeviceName = $"Disk {d} Part {p + 1}",
+                                StartingSector = host != null ? host.StartingSector : 0,
+                                SectorCount = bCount,
+                                FileSystemType = (part.MountedFS != null && !string.IsNullOrEmpty(part.MountedFS.Type)) ? part.MountedFS.Type : "Linux Native / Data",
+                                VolumeLabel = (part.MountedFS != null && !string.IsNullOrEmpty(part.MountedFS.Label)) ? part.MountedFS.Label : "",
+                                IsMounted = part.MountedFS != null,
+                                MountedDriveLetter = (part.MountedFS != null && !string.IsNullOrEmpty(part.MountedFS.RootPath)) ? part.MountedFS.RootPath : (part.RootPath ?? ""),
+                                IsWritable = true,
+                                IsLinuxSystem = true,
+                                Description = "Physical Partition (Ready to Overwrite/Install)"
+                            };
+
+                            byte[] sec0 = new byte[bSize];
+                            byte[] sec2 = new byte[bSize];
+
+                            if (host != null)
+                            {
+                                try { host.ReadBlock(0, 1, ref sec0); } catch { }
+                                try { host.ReadBlock(2, 1, ref sec2); } catch { }
+                            }
+
+                            InspectSectors(sec0, sec2, info);
                             results.Add(info);
-                        }
-                        else
-                        {
-                            diskIdx++;
-                            // Probe parent raw drive directly if it has MBR/GPT
-                            ProbeRawDrive(dev, diskIdx, results);
                         }
                     }
                 }
+            }
+            catch { }
 
-                // 2. Cross-reference with logical drives mounted in Cosmos VFS
+            // 2. SECONDARY PROBE: Raw BlockDevices from Cosmos HAL if VFS returned 0 partitions
+            if (results.Count == 0)
+            {
+                try
+                {
+                    var devices = BlockDevice.Devices;
+                    if (devices != null && devices.Count > 0)
+                    {
+                        int diskIdx = 0;
+                        for (int i = 0; i < devices.Count; i++)
+                        {
+                            var dev = devices[i];
+                            if (dev == null) continue;
+
+                            if (dev is Partition part)
+                            {
+                                var info = new PartitionInfo
+                                {
+                                    DiskIndex = diskIdx,
+                                    PartitionIndex = results.Count + 1,
+                                    DeviceName = $"Partition {results.Count + 1}",
+                                    SectorCount = part.BlockCount,
+                                    FileSystemType = "Raw / Unformatted",
+                                    IsWritable = true
+                                };
+
+                                uint bSize = (uint)part.BlockSize;
+                                if (bSize < 512) bSize = 512;
+                                byte[] sec0 = new byte[bSize];
+                                byte[] sec2 = new byte[bSize];
+                                try { part.ReadBlock(0, 1, ref sec0); } catch { }
+                                try { part.ReadBlock(2, 1, ref sec2); } catch { }
+                                InspectSectors(sec0, sec2, info);
+                                results.Add(info);
+                            }
+                            else
+                            {
+                                diskIdx++;
+                                ProbeRawDrive(dev, diskIdx, results);
+                            }
+                        }
+                    }
+                }
+                catch { }
+            }
+
+            // 3. Cross-reference with logical drives mounted in Cosmos VFS
+            try
+            {
                 var logicalDrives = VFSManager.GetLogicalDrives();
                 if (logicalDrives != null)
                 {
@@ -91,9 +164,13 @@ namespace WeatherOS.Services
                         long total = 0;
                         try { total = VFSManager.GetTotalSize(drive); } catch { }
 
-                        // Check if already mapped
                         var existing = results.Find(p => p.MountedDriveLetter == drive);
-                        if (existing == null)
+                        if (existing != null)
+                        {
+                            existing.IsMounted = true;
+                            if (!string.IsNullOrEmpty(fs)) existing.FileSystemType = fs;
+                        }
+                        else
                         {
                             bool isIso = fs != null && (fs.ToUpper().Contains("ISO") || fs.ToUpper().Contains("CDFS"));
                             results.Add(new PartitionInfo
@@ -118,38 +195,77 @@ namespace WeatherOS.Services
             return results;
         }
 
-        private static PartitionInfo ProbePartitionDevice(Partition part, int diskIdx, int partIdx)
-        {
-            var info = new PartitionInfo
-            {
-                DiskIndex = diskIdx,
-                PartitionIndex = partIdx,
-                DeviceName = $"Partition {partIdx}",
-                SectorCount = part.BlockCount,
-                FileSystemType = "Raw / Unformatted"
-            };
-
-            byte[] sec0 = new byte[512];
-            byte[] sec2 = new byte[512];
-
-            try { part.ReadBlock(0, 1, ref sec0); } catch { }
-            try { part.ReadBlock(2, 1, ref sec2); } catch { }
-
-            InspectSectors(sec0, sec2, info);
-            return info;
-        }
-
         private static void ProbeRawDrive(BlockDevice drive, int diskIdx, List<PartitionInfo> results)
         {
             try
             {
-                byte[] mbr = new byte[512];
+                uint bSize = (uint)drive.BlockSize;
+                if (bSize < 512) bSize = 512;
+                byte[] mbr = new byte[bSize];
                 drive.ReadBlock(0, 1, ref mbr);
 
                 // Verify MBR signature
                 if (mbr[510] == 0x55 && mbr[511] == 0xAA)
                 {
-                    // Check 4 MBR partition table entries (offset 0x1BE = 446)
+                    bool isGpt = false;
+                    for (int p = 0; p < 4; p++)
+                    {
+                        int entryOffset = 446 + p * 16;
+                        byte partType = mbr[entryOffset + 4];
+                        if (partType == 0xEE)
+                        {
+                            isGpt = true;
+                            break;
+                        }
+                    }
+
+                    if (isGpt)
+                    {
+                        // Probe GPT partition table at LBA 1 and LBA 2..5
+                        byte[] gptHeader = new byte[bSize];
+                        try { drive.ReadBlock(1, 1, ref gptHeader); } catch { }
+
+                        // Read partition entries starting at LBA 2
+                        byte[] gptEntries = new byte[bSize];
+                        try { drive.ReadBlock(2, 1, ref gptEntries); } catch { }
+
+                        for (int e = 0; e < 4; e++)
+                        {
+                            int off = e * 128;
+                            if (off + 48 < gptEntries.Length)
+                            {
+                                ulong startLba = BitConverter.ToUInt64(gptEntries, off + 32);
+                                ulong endLba = BitConverter.ToUInt64(gptEntries, off + 40);
+
+                                if (startLba > 0 && endLba >= startLba)
+                                {
+                                    ulong count = endLba - startLba + 1;
+                                    var gptInfo = new PartitionInfo
+                                    {
+                                        DiskIndex = diskIdx,
+                                        PartitionIndex = results.Count + 1,
+                                        DeviceName = $"Disk {diskIdx} Part {e + 1} (GPT)",
+                                        StartingSector = startLba,
+                                        SectorCount = count,
+                                        IsWritable = true,
+                                        IsLinuxSystem = true,
+                                        FileSystemType = "Linux Native (GPT)",
+                                        Description = "GPT Linux Partition (Ready to Overwrite/Install)"
+                                    };
+
+                                    byte[] s0 = new byte[bSize];
+                                    byte[] s2 = new byte[bSize];
+                                    try { drive.ReadBlock(startLba, 1, ref s0); } catch { }
+                                    try { drive.ReadBlock(startLba + 2, 1, ref s2); } catch { }
+                                    InspectSectors(s0, s2, gptInfo);
+                                    results.Add(gptInfo);
+                                }
+                            }
+                        }
+                        return;
+                    }
+
+                    // Check 4 MBR partition table entries
                     for (int p = 0; p < 4; p++)
                     {
                         int entryOffset = 446 + p * 16;
@@ -161,7 +277,6 @@ namespace WeatherOS.Services
 
                         if (lbaStart > 0 && lbaCount > 0)
                         {
-                            // Avoid duplicate if HAL already created Partition
                             if (results.Exists(r => r.StartingSector == lbaStart)) continue;
 
                             var info = new PartitionInfo
@@ -170,11 +285,14 @@ namespace WeatherOS.Services
                                 PartitionIndex = results.Count + 1,
                                 DeviceName = $"Disk {diskIdx} Part {p + 1}",
                                 StartingSector = lbaStart,
-                                SectorCount = lbaCount
+                                SectorCount = lbaCount,
+                                IsWritable = true,
+                                IsLinuxSystem = true,
+                                FileSystemType = "Linux Native / Data"
                             };
 
-                            byte[] sec0 = new byte[512];
-                            byte[] sec2 = new byte[512];
+                            byte[] sec0 = new byte[bSize];
+                            byte[] sec2 = new byte[bSize];
                             try { drive.ReadBlock(lbaStart, 1, ref sec0); } catch { }
                             try { drive.ReadBlock(lbaStart + 2, 1, ref sec2); } catch { }
 
@@ -190,37 +308,49 @@ namespace WeatherOS.Services
         private static void InspectSectors(byte[] sec0, byte[] sec2, PartitionInfo info)
         {
             // 1. Probing Linux ext2 / ext3 / ext4 Superblock (Sector 2, magic at offset 56: 0x53, 0xEF)
-            if (sec2 != null && sec2.Length >= 58)
+            // Or Sector 0 offset 1080 for 4K sector drives
+            bool isExt = false;
+            byte[] super = sec2;
+            int magicOff = 56;
+
+            if (sec2 != null && sec2.Length >= 58 && sec2[56] == 0x53 && sec2[57] == 0xEF)
             {
-                if (sec2[56] == 0x53 && sec2[57] == 0xEF)
+                isExt = true;
+                super = sec2;
+                magicOff = 56;
+            }
+            else if (sec0 != null && sec0.Length >= 1082 && sec0[1080] == 0x53 && sec0[1081] == 0xEF)
+            {
+                isExt = true;
+                super = sec0;
+                magicOff = 1080;
+            }
+
+            if (isExt)
+            {
+                info.IsLinuxSystem = true;
+                info.IsWritable = true;
+
+                bool hasExtents = super.Length > (magicOff + 40) && (super[magicOff + 40] & 0x40) != 0;
+                info.FileSystemType = hasExtents ? "ext4 (Linux Native)" : "ext3/ext2 (Linux)";
+
+                try
                 {
-                    info.IsLinuxSystem = true;
-                    info.IsWritable = true; // Ready for OS install / format
-
-                    // Check for ext4 features (offset 96 is s_feature_incompat; 0x40 = Extents)
-                    bool hasExtents = sec2.Length > 96 && (sec2[96] & 0x40) != 0;
-                    info.FileSystemType = hasExtents ? "ext4 (Linux Native)" : "ext3/ext2 (Linux)";
-
-                    // Volume label at offset 120 (0x78) up to 16 bytes
-                    try
-                    {
-                        string label = Encoding.ASCII.GetString(sec2, 120, 16).Trim('\0', ' ');
-                        if (!string.IsNullOrEmpty(label)) info.VolumeLabel = label;
-                    }
-                    catch { }
-
-                    // UUID at offset 104 (16 bytes)
-                    try
-                    {
-                        string u = "";
-                        for (int k = 104; k < 120 && k < sec2.Length; k++) u += sec2[k].ToString("x2");
-                        info.Uuid = u;
-                    }
-                    catch { }
-
-                    info.Description = "Linux Root / Home (Ready to Overwrite/Install)";
-                    return;
+                    string label = Encoding.ASCII.GetString(super, magicOff + 64, 16).Trim('\0', ' ');
+                    if (!string.IsNullOrEmpty(label)) info.VolumeLabel = label;
                 }
+                catch { }
+
+                try
+                {
+                    string u = "";
+                    for (int k = magicOff + 48; k < magicOff + 64 && k < super.Length; k++) u += super[k].ToString("x2");
+                    info.Uuid = u;
+                }
+                catch { }
+
+                info.Description = "Linux Root / Home (Ready to Overwrite/Install)";
+                return;
             }
 
             // 2. Probing NTFS (Sector 0, bytes 3..7 == "NTFS ")
@@ -277,7 +407,28 @@ namespace WeatherOS.Services
                         return;
                     }
                 }
+
+                // 5. Probing Linux Swap
+                if (sec0.Length >= 4096)
+                {
+                    string swapSig = "";
+                    try { swapSig = Encoding.ASCII.GetString(sec0, 4086, 10); } catch { }
+                    if (swapSig == "SWAPSPACE2")
+                    {
+                        info.FileSystemType = "Linux Swap";
+                        info.IsLinuxSystem = true;
+                        info.IsWritable = true;
+                        info.Description = "Linux Swap Partition (Ready to Overwrite/Install)";
+                        return;
+                    }
+                }
             }
+
+            // Default fallback for detected partitions on the disk
+            info.FileSystemType = "Linux Native / Data";
+            info.IsLinuxSystem = true;
+            info.IsWritable = true;
+            info.Description = "Linux Partition (Ready to Overwrite/Install)";
         }
     }
 }
