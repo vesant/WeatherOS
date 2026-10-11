@@ -144,6 +144,7 @@ namespace WeatherOS
             _commandManager.Register(new DebugCommand(_weatherService));
             _commandManager.Register(new GuiCommand(() => SwitchToGuiMode()));
             _commandManager.Register(new DisksCommand());
+            _commandManager.Register(new DiskDiagCommand());
             _commandManager.Register(new FormatCommand());
             _commandManager.Register(new WipeCommand());
             _commandManager.Register(new PoweroffCommand());
@@ -189,6 +190,10 @@ namespace WeatherOS
             if (command == "lsblk" || command == "diskpart")
             {
                 input = "disks";
+            }
+            if (command == "storagediag" || command == "diag")
+            {
+                input = "diskdiag";
             }
             if (command == "clean")
             {

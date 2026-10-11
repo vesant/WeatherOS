@@ -62,6 +62,8 @@ namespace WeatherOS.Graphics
             RegisterApp(settingsApp);
 
             RegisterApp(new SystemResourcesApp());
+            RegisterApp(new DebugMenuApp());
+            RegisterApp(new DiskDiagnosticsApp());
         }
 
         private void RegisterApp(IApp app)
@@ -137,8 +139,39 @@ namespace WeatherOS.Graphics
             return "bc0cfac1c3144fc3bf0145134260810";
         }
 
-        public string[] GetAppNames() { return _apps; }
-        public string[] GetAppIds() { return _appIds; }
+        public string[] GetAppNames()
+        {
+            if (_showDebugLogs)
+            {
+                return new string[] {
+                    "Weather Dashboard", "Change City", "Digital Clock", "Calculator",
+                    "Notepad", "Disk & Storage Explorer", "System Information", "Network Config",
+                    "Debug Menu [Diagnostics]", "Settings", "Reboot System", "Poweroff System"
+                };
+            }
+            return new string[] {
+                "Weather Dashboard", "Change City", "Digital Clock", "Calculator",
+                "Notepad", "Disk & Storage Explorer", "System Information", "Network Config",
+                "Settings", "Reboot System", "Poweroff System"
+            };
+        }
+
+        public string[] GetAppIds()
+        {
+            if (_showDebugLogs)
+            {
+                return new string[] {
+                    "weather", "change_city", "clock", "calculator",
+                    "notepad", "diskmgr", "about", "ipconfig",
+                    "debug_menu", "settings", "reboot", "poweroff"
+                };
+            }
+            return new string[] {
+                "weather", "change_city", "clock", "calculator",
+                "notepad", "diskmgr", "about", "ipconfig",
+                "settings", "reboot", "poweroff"
+            };
+        }
 
         public void SetCurrentApp(string appId)
         {
@@ -252,19 +285,23 @@ namespace WeatherOS.Graphics
 
         private void HandleLauncherInput(KeyEvent keyEvent)
         {
+            var apps = GetAppNames();
+            var appIds = GetAppIds();
+
             if (keyEvent.Key == ConsoleKeyEx.Tab || keyEvent.Key == ConsoleKeyEx.DownArrow)
             {
                 _selectedAppIndex++;
-                if (_selectedAppIndex >= _apps.Length) _selectedAppIndex = 0;
+                if (_selectedAppIndex >= apps.Length) _selectedAppIndex = 0;
             }
             else if (keyEvent.Key == ConsoleKeyEx.UpArrow)
             {
                 _selectedAppIndex--;
-                if (_selectedAppIndex < 0) _selectedAppIndex = _apps.Length - 1;
+                if (_selectedAppIndex < 0) _selectedAppIndex = apps.Length - 1;
             }
             else if (keyEvent.Key == ConsoleKeyEx.Enter)
             {
-                string selected = _appIds[_selectedAppIndex];
+                if (_selectedAppIndex >= appIds.Length) _selectedAppIndex = 0;
+                string selected = appIds[_selectedAppIndex];
                 if (selected == "reboot") Cosmos.System.Power.Reboot();
                 else if (selected == "poweroff" || selected == "halt") Cosmos.System.Power.Shutdown();
                 else _currentApp = selected;
@@ -319,13 +356,18 @@ namespace WeatherOS.Graphics
 
         private void DrawLauncher()
         {
-            DrawWindow(20, 4, 40, 16, "MAIN MENU");
+            var apps = GetAppNames();
+            if (_selectedAppIndex >= apps.Length) _selectedAppIndex = 0;
+
+            int boxHeight = apps.Length + 4;
+            int topY = 2;
+            DrawWindow(18, topY, 44, boxHeight, "MAIN MENU");
             ConsoleColor winBg = _isDarkMode ? ConsoleColor.Black : ConsoleColor.Blue;
             System.Console.BackgroundColor = winBg;
 
-            for (int i = 0; i < _apps.Length; i++)
+            for (int i = 0; i < apps.Length; i++)
             {
-                System.Console.SetCursorPosition(25, 7 + i);
+                System.Console.SetCursorPosition(21, topY + 2 + i);
                 if (i == _selectedAppIndex)
                 {
                     System.Console.ForegroundColor = ConsoleColor.Black;
@@ -333,10 +375,10 @@ namespace WeatherOS.Graphics
                 }
                 else
                 {
-                    System.Console.ForegroundColor = ConsoleColor.White;
+                    System.Console.ForegroundColor = apps[i].Contains("Debug") ? ConsoleColor.Yellow : ConsoleColor.White;
                     System.Console.BackgroundColor = winBg;
                 }
-                System.Console.Write($" {(_apps[i].Length > 0 ? "> " : "")}{_apps[i]} ".PadRight(30));
+                System.Console.Write($" {(apps[i].Length > 0 ? "> " : "")}{apps[i]} ".PadRight(38));
             }
         }
 

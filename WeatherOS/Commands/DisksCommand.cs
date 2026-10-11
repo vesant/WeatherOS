@@ -21,6 +21,10 @@ namespace WeatherOS.Commands
             {
                 System.Console.ForegroundColor = ConsoleColor.Yellow;
                 System.Console.WriteLine("No block storage partitions detected via Cosmos HAL.");
+                System.Console.ForegroundColor = ConsoleColor.Cyan;
+                System.Console.WriteLine("\n[!] To diagnose why internal disks are not showing up (AHCI / SATA / IDE), run:");
+                System.Console.ForegroundColor = ConsoleColor.White;
+                System.Console.WriteLine("    diskdiag   - Hardware storage controller & port diagnostic report");
                 System.Console.ResetColor();
                 return;
             }

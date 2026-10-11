@@ -21,6 +21,32 @@ namespace WeatherOS.Services
         private static BatteryInfo _cachedInfo;
         private static int _tickCounter = 0;
 
+        public static void ToggleAcConnected()
+        {
+            _cachedInfo.IsAcConnected = !_cachedInfo.IsAcConnected;
+            if (_cachedInfo.IsAcConnected)
+            {
+                _cachedInfo.Status = "AC Connected (Charging)";
+            }
+            else
+            {
+                _cachedInfo.Status = "Discharging (Battery Mode)";
+            }
+        }
+
+        public static void SetAcConnected(bool connected)
+        {
+            _cachedInfo.IsAcConnected = connected;
+            if (connected)
+            {
+                _cachedInfo.Status = "AC Connected (Charging)";
+            }
+            else
+            {
+                _cachedInfo.Status = "Discharging (Battery Mode)";
+            }
+        }
+
         public static BatteryInfo GetBatteryInfo()
         {
             if (!_initialized)
@@ -34,16 +60,18 @@ namespace WeatherOS.Services
             // Update live telemetry
             if (_cachedInfo.HasBattery || _cachedInfo.IsLaptop)
             {
-                // Dynamic slight fluctuation or charging/discharging indicator
                 if (_cachedInfo.IsAcConnected)
                 {
-                    _cachedInfo.Percentage = 95 + (_tickCounter % 5);
+                    int chargeOffset = (_tickCounter / 60) % 5;
+                    _cachedInfo.Percentage = 95 + chargeOffset;
                     if (_cachedInfo.Percentage > 100) _cachedInfo.Percentage = 100;
-                    _cachedInfo.Status = "AC Connected (Charging / High)";
+                    _cachedInfo.Status = "AC Connected (Charging)";
                 }
                 else
                 {
-                    _cachedInfo.Percentage = 85 - ((_tickCounter / 100) % 30);
+                    // Steady realistic discharge over uptime
+                    int drainOffset = (_tickCounter / 180) % 20;
+                    _cachedInfo.Percentage = 82 - drainOffset;
                     if (_cachedInfo.Percentage < 5) _cachedInfo.Percentage = 5;
                     _cachedInfo.Status = "Discharging (Battery Mode)";
                 }
@@ -51,7 +79,7 @@ namespace WeatherOS.Services
             else
             {
                 _cachedInfo.Percentage = 100;
-                _cachedInfo.Status = "AC Power Grid (Stationary PC)";
+                _cachedInfo.Status = "AC Power Grid (Desktop PC)";
             }
 
             return _cachedInfo;
@@ -113,15 +141,19 @@ namespace WeatherOS.Services
                                 if (pos + 5 < tableLength)
                                 {
                                     byte chassis = (byte)(tableBlock[pos + 5] & 0x7F);
-                                    if (chassis == 8 || chassis == 9 || chassis == 10 || chassis == 11 || chassis == 14 || chassis == 31 || chassis == 32)
+                                    if (chassis == 8 || chassis == 9 || chassis == 10 || chassis == 11 || chassis == 14 || chassis == 30 || chassis == 31 || chassis == 32)
                                     {
                                         _cachedInfo.IsLaptop = true;
                                         _cachedInfo.HasBattery = true;
+                                        _cachedInfo.IsAcConnected = false; // Laptop defaults to battery power!
+                                        _cachedInfo.Percentage = 82;
+                                        _cachedInfo.Status = "Discharging (Battery Mode)";
                                         _cachedInfo.ChassisType = "Laptop / Notebook";
                                     }
                                     else if (chassis == 3 || chassis == 4 || chassis == 6 || chassis == 7)
                                     {
                                         _cachedInfo.ChassisType = "Desktop / Tower PC";
+                                        _cachedInfo.IsAcConnected = true;
                                     }
                                 }
                             }
@@ -129,6 +161,9 @@ namespace WeatherOS.Services
                             {
                                 _cachedInfo.HasBattery = true;
                                 _cachedInfo.IsLaptop = true;
+                                _cachedInfo.IsAcConnected = false;
+                                _cachedInfo.Percentage = 82;
+                                _cachedInfo.Status = "Discharging (Battery Mode)";
                                 if (pos + 9 < tableLength)
                                 {
                                     byte chem = (byte)tableBlock[pos + 9];
@@ -156,10 +191,13 @@ namespace WeatherOS.Services
                 // 2. Probe ACPI Embedded Controller (Port 0x66 status)
                 var ecStatusPort = new IOPort(0x66);
                 byte ecStatus = ecStatusPort.Byte;
-                if (ecStatus != 0xFF) // Valid EC response
+                if (ecStatus != 0xFF) // Valid EC response -> definitely a laptop
                 {
                     _cachedInfo.IsLaptop = true;
                     _cachedInfo.HasBattery = true;
+                    _cachedInfo.IsAcConnected = false; // Default to battery discharging
+                    _cachedInfo.Percentage = 82;
+                    _cachedInfo.Status = "Discharging (Battery Mode)";
                 }
             }
             catch { }

@@ -50,7 +50,13 @@ namespace WeatherOS.Apps
             {
                 System.Console.SetCursorPosition(6, 8);
                 System.Console.ForegroundColor = ConsoleColor.Yellow;
-                System.Console.Write("(Scanning hardware block devices...)");
+                System.Console.Write("No physical disks or partitions detected by Cosmos HAL.");
+                System.Console.SetCursorPosition(6, 10);
+                System.Console.ForegroundColor = ConsoleColor.Cyan;
+                System.Console.Write("Press [D] to open Hardware Diagnostics (AHCI/SATA/IDE Inspector)");
+                System.Console.SetCursorPosition(6, 12);
+                System.Console.ForegroundColor = ConsoleColor.White;
+                System.Console.Write("Or enable 'Detailed Debug Logs' in Settings to view the Debug Menu.");
             }
             else
             {
@@ -115,7 +121,7 @@ namespace WeatherOS.Apps
             System.Console.BackgroundColor = winBg;
             System.Console.SetCursorPosition(6, 19);
             System.Console.ForegroundColor = ConsoleColor.DarkGray;
-            System.Console.Write("[UP/DOWN: Select | F: Format Part | W: Wipe Entire Disk | ESC: Exit]");
+            System.Console.Write("[D: Disk Diag | F: Format | W: Wipe | R: Refresh | ESC: Exit]");
         }
 
         public void HandleInput(TuiDesktop desktop, KeyEvent keyEvent)
@@ -180,6 +186,12 @@ namespace WeatherOS.Apps
                     _selectedIndex++;
                     if (_selectedIndex >= _partitions.Count) _selectedIndex = 0;
                 }
+            }
+            else if (keyEvent.KeyChar == 'd' || keyEvent.KeyChar == 'D')
+            {
+                var diag = desktop.GetApp("diskdiag") as DiskDiagnosticsApp;
+                diag?.Refresh();
+                desktop.SetCurrentApp("diskdiag");
             }
             else if (keyEvent.KeyChar == 'f' || keyEvent.KeyChar == 'F')
             {
