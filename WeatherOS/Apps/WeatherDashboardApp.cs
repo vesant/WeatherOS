@@ -20,7 +20,7 @@ namespace WeatherOS.Apps
 
             System.Console.ForegroundColor = ConsoleColor.Yellow;
             System.Console.SetCursorPosition(30, 5);
-            System.Console.Write("LOCAL: " + data.Location);
+            System.Console.Write("LOCATION: " + data.Location);
 
             System.Console.ForegroundColor = ConsoleColor.White;
             System.Console.SetCursorPosition(30, 7);
@@ -61,10 +61,6 @@ namespace WeatherOS.Apps
             System.Console.ForegroundColor = ConsoleColor.Cyan;
             string illumTxt = !string.IsNullOrEmpty(data.MoonIllumination) ? $"Illum: {data.MoonIllumination}" : "";
             System.Console.Write(illumTxt.PadRight(18));
-
-            System.Console.SetCursorPosition(30, 15);
-            System.Console.ForegroundColor = ConsoleColor.Yellow;
-            System.Console.Write("Press [F] or [7] to view 7-Day Extended Forecast ->");
 
             // Alert Banner
             if (data.AlertLevel == "RED")

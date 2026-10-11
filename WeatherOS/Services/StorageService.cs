@@ -405,5 +405,10 @@ namespace WeatherOS.Services
 
             return files;
         }
+
+        public static Dictionary<string, string> GetMemoryStore()
+        {
+            return _memoryStore;
+        }
     }
 }

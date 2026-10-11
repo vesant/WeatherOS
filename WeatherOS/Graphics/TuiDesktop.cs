@@ -20,12 +20,12 @@ namespace WeatherOS.Graphics
 
         // Launcher State
         private int _selectedAppIndex = 0;
-        private string[] _apps = { "Weather Dashboard", "7-Day Weather Forecast", "Change City", "Digital Clock", "Calculator", "Notepad", "Disk & Storage Explorer", "System Information", "Network Config", "Settings", "Reboot System", "Poweroff System" };
-        private string[] _appIds = { "weather", "forecast_7d", "change_city", "clock", "calculator", "notepad", "diskmgr", "about", "ipconfig", "settings", "reboot", "poweroff" };
+        private string[] _apps = { "Weather Dashboard", "7-Day Weather Forecast", "Lunar Observatory", "Change City", "Digital Clock", "Calculator", "Notepad", "File & Storage Explorer", "System Information", "Network Config", "Settings", "Reboot System", "Poweroff System" };
+        private string[] _appIds = { "weather", "forecast_7d", "lunar_forecast", "change_city", "clock", "calculator", "notepad", "diskmgr", "about", "ipconfig", "settings", "reboot", "poweroff" };
 
         // Configuration State
         private bool _isDarkMode = false;
-        private bool _autoLocation = true;
+        private bool _autoLocation = false;
         private string _defaultCity = "Setubal";
         private bool _showDebugLogs = false;
         private string _customApiKey = "";
@@ -50,6 +50,7 @@ namespace WeatherOS.Graphics
         {
             RegisterApp(new WeatherDashboardApp());
             RegisterApp(new WeatherForecastApp());
+            RegisterApp(new LunarForecastApp());
             RegisterApp(new ChangeCityApp());
             RegisterApp(new ClockApp());
             RegisterApp(new CalculatorApp());
@@ -145,14 +146,14 @@ namespace WeatherOS.Graphics
             if (_showDebugLogs)
             {
                 return new string[] {
-                    "Weather Dashboard", "7-Day Weather Forecast", "Change City", "Digital Clock", "Calculator",
-                    "Notepad", "Disk & Storage Explorer", "System Information", "Network Config",
+                    "Weather Dashboard", "7-Day Weather Forecast", "Lunar Observatory", "Change City", "Digital Clock", "Calculator",
+                    "Notepad", "File & Storage Explorer", "System Information", "Network Config",
                     "Debug Menu [Diagnostics]", "Settings", "Reboot System", "Poweroff System"
                 };
             }
             return new string[] {
-                "Weather Dashboard", "7-Day Weather Forecast", "Change City", "Digital Clock", "Calculator",
-                "Notepad", "Disk & Storage Explorer", "System Information", "Network Config",
+                "Weather Dashboard", "7-Day Weather Forecast", "Lunar Observatory", "Change City", "Digital Clock", "Calculator",
+                "Notepad", "File & Storage Explorer", "System Information", "Network Config",
                 "Settings", "Reboot System", "Poweroff System"
             };
         }
@@ -162,13 +163,13 @@ namespace WeatherOS.Graphics
             if (_showDebugLogs)
             {
                 return new string[] {
-                    "weather", "forecast_7d", "change_city", "clock", "calculator",
+                    "weather", "forecast_7d", "lunar_forecast", "change_city", "clock", "calculator",
                     "notepad", "diskmgr", "about", "ipconfig",
                     "debug_menu", "settings", "reboot", "poweroff"
                 };
             }
             return new string[] {
-                "weather", "forecast_7d", "change_city", "clock", "calculator",
+                "weather", "forecast_7d", "lunar_forecast", "change_city", "clock", "calculator",
                 "notepad", "diskmgr", "about", "ipconfig",
                 "settings", "reboot", "poweroff"
             };

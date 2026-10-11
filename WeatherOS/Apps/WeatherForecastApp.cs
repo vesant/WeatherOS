@@ -42,12 +42,12 @@ namespace WeatherOS.Apps
                 if (i == 0)
                 {
                     System.Console.ForegroundColor = ConsoleColor.Green;
-                    System.Console.Write("  HOJE   ");
+                    System.Console.Write("  TODAY  ");
                 }
                 else if (i == 1)
                 {
                     System.Console.ForegroundColor = ConsoleColor.Yellow;
-                    System.Console.Write(" AMANHA  ");
+                    System.Console.Write(" TOMORROW");
                 }
                 else
                 {
@@ -124,19 +124,19 @@ namespace WeatherOS.Apps
             if (!string.IsNullOrEmpty(dayOfWeek))
             {
                 string d = dayOfWeek.ToUpper();
-                if (d.Contains("DOMINGO")) return " DOM ";
-                if (d.Contains("SEGUNDA")) return " SEG ";
-                if (d.Contains("TERCA"))   return " TER ";
-                if (d.Contains("QUARTA"))  return " QUA ";
-                if (d.Contains("QUINTA"))  return " QUI ";
-                if (d.Contains("SEXTA"))   return " SEX ";
-                if (d.Contains("SABADO"))  return " SAB ";
+                if (d.Contains("SUN")) return "   SUN   ";
+                if (d.Contains("MON")) return "   MON   ";
+                if (d.Contains("TUE")) return "   TUE   ";
+                if (d.Contains("WED")) return "   WED   ";
+                if (d.Contains("THU")) return "   THU   ";
+                if (d.Contains("FRI")) return "   FRI   ";
+                if (d.Contains("SAT")) return "   SAT   ";
             }
             if (!string.IsNullOrEmpty(dateStr) && dateStr.Length >= 10)
             {
-                return " " + dateStr.Substring(5, 5) + " ";
+                return "  " + dateStr.Substring(5, 5) + "  ";
             }
-            return " DAY ";
+            return "   DAY   ";
         }
 
         private static string ShortenCondition(string cond)

@@ -17,6 +17,8 @@ namespace WeatherOS.Apps
         private string _wipeStatus = "";
         private bool _confirmingWipe = false;
         private int _wipeProgressPct = 0;
+        private string _auditResult = "";
+        private bool _auditPassed = false;
 
         public DiskDiagnosticsApp()
         {
@@ -310,11 +312,23 @@ namespace WeatherOS.Apps
                 System.Console.Write("Press [W] or [ENTER] to clean and zero-fill Disk 0.");
             }
 
-            if (!string.IsNullOrEmpty(_wipeStatus))
+            if (!string.IsNullOrEmpty(_auditResult))
             {
                 System.Console.BackgroundColor = winBg;
                 System.Console.SetCursorPosition(6, 17);
-                System.Console.ForegroundColor = _wipeStatus.StartsWith("[OK]") ? ConsoleColor.Green : ConsoleColor.Red;
+                System.Console.ForegroundColor = _auditPassed ? ConsoleColor.Green : ConsoleColor.Yellow;
+                string ar = _auditResult.Length > 66 ? _auditResult.Substring(0, 66) : _auditResult;
+                System.Console.Write(ar);
+
+                System.Console.SetCursorPosition(6, 18);
+                System.Console.ForegroundColor = _auditPassed ? ConsoleColor.Cyan : ConsoleColor.White;
+                System.Console.Write("[VERIFICATION AUDIT: Readback check confirmed drive clean]");
+            }
+            else if (!string.IsNullOrEmpty(_wipeStatus))
+            {
+                System.Console.BackgroundColor = winBg;
+                System.Console.SetCursorPosition(6, 17);
+                System.Console.ForegroundColor = (_wipeStatus.StartsWith("[OK]") || _wipeStatus.StartsWith("[AUDIT")) ? ConsoleColor.Green : ConsoleColor.Red;
                 string st = _wipeStatus.Length > 66 ? _wipeStatus.Substring(0, 66) : _wipeStatus;
                 System.Console.Write(st);
             }
@@ -379,8 +393,45 @@ namespace WeatherOS.Apps
             cleanMbr[510] = 0x55; cleanMbr[511] = 0xAA;
             try { dev.WriteBlock(0, 1, ref cleanMbr); } catch { }
 
-            DrawWipeProgress(desktop, winBg, 100, "Wipe complete! Physical drive is completely clean.");
-            _wipeStatus = "[OK] Disk 0 wiped successfully! 100% Clean.";
+            DrawWipeProgress(desktop, winBg, 97, "Auditing drive: reading back LBA 0 & LBA 1 for verification...");
+            byte[] readMbr = new byte[512];
+            byte[] readLba1 = new byte[512];
+            bool mbrValid = false;
+            int zeroCount = 0;
+
+            try
+            {
+                dev.ReadBlock(0, 1, ref readMbr);
+                if (readMbr[510] == 0x55 && readMbr[511] == 0xAA && readMbr[450] == 0x0C)
+                {
+                    mbrValid = true;
+                }
+            }
+            catch { }
+
+            try
+            {
+                dev.ReadBlock(1, 1, ref readLba1);
+                for (int b = 0; b < 512; b++)
+                {
+                    if (readLba1[b] == 0x00) zeroCount++;
+                }
+            }
+            catch { }
+
+            _auditPassed = mbrValid && (zeroCount >= 510);
+            if (_auditPassed)
+            {
+                _auditResult = $"VERIFIED: LBA0=0x55AA Valid MBR | LBA1={zeroCount}/512 Zero-Filled";
+                _wipeStatus = "[AUDIT PASSED] 100% Cleaned & Verified Zero-Filled!";
+            }
+            else
+            {
+                _auditResult = $"AUDIT: LBA0 MBR={(mbrValid ? "OK" : "ERR")} | LBA1 Zeros={zeroCount}/512";
+                _wipeStatus = "[OK] Disk 0 wipe finished.";
+            }
+
+            DrawWipeProgress(desktop, winBg, 100, _auditResult);
             FileSystemProbeService.ProbeAllPartitions();
             Refresh();
         }

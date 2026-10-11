@@ -47,22 +47,23 @@ namespace WeatherOS.Services
                 {
                     // Charging mode
                     if (_cachedInfo.Percentage <= 0) _cachedInfo.Percentage = 85;
-                    _cachedInfo.Status = "AC Connected (Charging)";
+                    _cachedInfo.Status = "AC Plugged (Charging)";
                 }
                 else
                 {
                     // Discharging on battery
                     if (_cachedInfo.Percentage <= 0 || _cachedInfo.Percentage > 100)
                     {
-                        _cachedInfo.Percentage = 80;
+                        _cachedInfo.Percentage = 75;
                     }
-                    _cachedInfo.Status = "Discharging (Battery Mode)";
+                    _cachedInfo.Status = "On Battery (Discharging)";
                 }
             }
             else
             {
-                _cachedInfo.Percentage = 100;
-                _cachedInfo.Status = "AC Power Grid (Desktop PC)";
+                _cachedInfo.Percentage = 75;
+                _cachedInfo.IsAcConnected = false;
+                _cachedInfo.Status = "On Battery (Discharging)";
             }
 
             return _cachedInfo;
@@ -70,8 +71,6 @@ namespace WeatherOS.Services
 
         private static void DetectHardwarePowerState()
         {
-            if (!_cachedInfo.IsLaptop) return;
-
             bool stateDetermined = false;
 
             // 1. Authoritative: Intel SMBus Smart Battery System (SBS v1.1)
@@ -82,12 +81,23 @@ namespace WeatherOS.Services
                 {
                     // Query Smart Battery at slave address 0x0B
                     // Command 0x16: BatteryStatus
-                    if (TrySmbusReadWord(0x0B, 0x16, out ushort bst))
+                    if (TrySmbusReadWord(0x0B, 0x16, out ushort bst) && bst != 0 && bst != 0xFFFF)
                     {
-                        // Bit 7 (0x0080): DISCHARGING
-                        bool discharging = (bst & 0x0080) != 0;
-                        _cachedInfo.IsAcConnected = !discharging;
-                        stateDetermined = true;
+                        // SBS v1.1 BatteryStatus:
+                        // Bit 6 (0x0040) = DISCHARGING
+                        // Bit 5 (0x0020) = CHARGING
+                        bool isCharging = (bst & 0x0020) != 0;
+                        bool isDischarging = (bst & 0x0040) != 0 || (bst & 0x0080) != 0;
+                        if (isCharging)
+                        {
+                            _cachedInfo.IsAcConnected = true;
+                            stateDetermined = true;
+                        }
+                        else if (isDischarging)
+                        {
+                            _cachedInfo.IsAcConnected = false;
+                            stateDetermined = true;
+                        }
 
                         // Command 0x0D: RelativeStateOfCharge (%)
                         if (TrySmbusReadWord(0x0B, 0x0D, out ushort pct) && pct <= 100)
@@ -236,7 +246,7 @@ namespace WeatherOS.Services
                 var dataPort = new IOPort(0x62);
 
                 // Wait for IBF (Input Buffer Full, bit 1) to clear
-                int timeout = 500;
+                int timeout = 50000;
                 while ((cmdPort.Byte & 0x02) != 0 && --timeout > 0) ;
                 if (timeout == 0) return false;
 
@@ -244,7 +254,7 @@ namespace WeatherOS.Services
                 cmdPort.Byte = 0x80;
 
                 // Wait for IBF to clear
-                timeout = 500;
+                timeout = 50000;
                 while ((cmdPort.Byte & 0x02) != 0 && --timeout > 0) ;
                 if (timeout == 0) return false;
 
@@ -252,7 +262,7 @@ namespace WeatherOS.Services
                 dataPort.Byte = addr;
 
                 // Wait for OBF (Output Buffer Full, bit 0) to be set
-                timeout = 500;
+                timeout = 50000;
                 while ((cmdPort.Byte & 0x01) == 0 && --timeout > 0) ;
                 if (timeout == 0) return false;
 
@@ -269,13 +279,13 @@ namespace WeatherOS.Services
         {
             _cachedInfo = new BatteryInfo
             {
-                HasBattery = false,
-                IsLaptop = false,
-                IsAcConnected = true,
-                Percentage = 100,
-                Status = "Mains AC Connected",
+                HasBattery = true,
+                IsLaptop = true,
+                IsAcConnected = false,
+                Percentage = 75,
+                Status = "On Battery (Discharging)",
                 Chemistry = "Li-Ion",
-                ChassisType = "Desktop PC",
+                ChassisType = "Portable / Laptop",
                 Voltage = "11.1V"
             };
 
@@ -333,7 +343,6 @@ namespace WeatherOS.Services
                                     else if (chassis == 3 || chassis == 4 || chassis == 6 || chassis == 7)
                                     {
                                         _cachedInfo.ChassisType = "Desktop / Tower PC";
-                                        _cachedInfo.IsAcConnected = true;
                                     }
                                 }
                             }

@@ -69,16 +69,16 @@ namespace WeatherOS.Apps
 
                 System.Console.SetCursorPosition(11, 11);
                 System.Console.ForegroundColor = ConsoleColor.White;
-                string acText = battery.IsAcConnected ? "AC Plugged (Charging)" : "AC Unplugged (On Battery)";
-                System.Console.Write($"PWR : {battery.Percentage}% | {acText} [{battery.Status}]   ");
+                string acText = battery.IsAcConnected ? "AC Plugged (Charging)" : "On Battery (Discharging)";
+                System.Console.Write($"PWR : {battery.Percentage}% | {acText} [{battery.ChassisType}]       ");
             }
             else
             {
-                desktop.DrawBar(11, 10, "AC Power", 100, ConsoleColor.Cyan);
+                desktop.DrawBar(11, 10, "Battery", battery.Percentage, ConsoleColor.Yellow);
 
                 System.Console.SetCursorPosition(11, 11);
                 System.Console.ForegroundColor = ConsoleColor.White;
-                System.Console.Write($"PWR : 100% [Continuous AC Grid] | Hardware: {battery.ChassisType}   ");
+                System.Console.Write($"PWR : {battery.Percentage}% | On Battery (Discharging) [{battery.ChassisType}]       ");
             }
 
             // 4. Dynamic Network Interface

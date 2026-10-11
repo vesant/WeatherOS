@@ -62,7 +62,7 @@ namespace WeatherOS.Services
                 ForecastDays[i] = new ForecastDayData
                 {
                     Date = "",
-                    DayOfWeek = i == 0 ? "HOJE (Today)" : (i == 1 ? "AMANHA (Tomorrow)" : $"DIA +{i}"),
+                    DayOfWeek = i == 0 ? "TODAY" : (i == 1 ? "TOMORROW" : $"DAY +{i}"),
                     MaxTempC = temp + i,
                     MinTempC = (temp - 6) + (i % 2),
                     ChanceOfRain = 10,
@@ -350,7 +350,8 @@ namespace WeatherOS.Services
                 {
                     string locName = ParseJsonStringFromIndex(json, "name", locIdx);
                     string locCountry = ParseJsonStringFromIndex(json, "country", locIdx);
-                    if (!string.IsNullOrWhiteSpace(locName))
+                    string displayCity = !string.IsNullOrWhiteSpace(fallbackCity) ? fallbackCity : locName;
+                    if (!string.IsNullOrWhiteSpace(displayCity))
                     {
                         string cSuffix = "";
                         if (!string.IsNullOrWhiteSpace(locCountry))
@@ -360,7 +361,7 @@ namespace WeatherOS.Services
                             else if (cLow == "spain") cSuffix = ", ES";
                             else cSuffix = ", " + locCountry;
                         }
-                        _cachedReading.Location = (locName + cSuffix).ToUpper();
+                        _cachedReading.Location = (displayCity + cSuffix).ToUpper();
                     }
                 }
                 else
@@ -689,8 +690,8 @@ namespace WeatherOS.Services
 
         private static string GetDayOfWeekName(string dateStr, int dayIndex)
         {
-            if (dayIndex == 0) return "HOJE (Today)";
-            if (dayIndex == 1) return "AMANHA (Tomorrow)";
+            if (dayIndex == 0) return "TODAY";
+            if (dayIndex == 1) return "TOMORROW";
             if (!string.IsNullOrEmpty(dateStr) && dateStr.Length >= 10)
             {
                 try
@@ -701,18 +702,18 @@ namespace WeatherOS.Services
                     var dt = new DateTime(year, month, day);
                     switch (dt.DayOfWeek)
                     {
-                        case DayOfWeek.Sunday: return "DOMINGO (Sun)";
-                        case DayOfWeek.Monday: return "SEGUNDA (Mon)";
-                        case DayOfWeek.Tuesday: return "TERCA (Tue)";
-                        case DayOfWeek.Wednesday: return "QUARTA (Wed)";
-                        case DayOfWeek.Thursday: return "QUINTA (Thu)";
-                        case DayOfWeek.Friday: return "SEXTA (Fri)";
-                        case DayOfWeek.Saturday: return "SABADO (Sat)";
+                        case DayOfWeek.Sunday: return "SUNDAY";
+                        case DayOfWeek.Monday: return "MONDAY";
+                        case DayOfWeek.Tuesday: return "TUESDAY";
+                        case DayOfWeek.Wednesday: return "WEDNESDAY";
+                        case DayOfWeek.Thursday: return "THURSDAY";
+                        case DayOfWeek.Friday: return "FRIDAY";
+                        case DayOfWeek.Saturday: return "SATURDAY";
                     }
                 }
                 catch { }
             }
-            return $"DIA +{dayIndex}";
+            return $"DAY +{dayIndex}";
         }
 
         private void Parse7DayForecast(string json)

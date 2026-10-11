@@ -85,7 +85,7 @@ namespace WeatherOS
             if (_isNetworkConfigured)
             {
                 string targetCity = "Setubal";
-                bool autoLocEnabled = true;
+                bool autoLocEnabled = false;
 
                 try
                 {
