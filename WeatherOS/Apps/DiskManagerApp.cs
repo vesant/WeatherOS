@@ -128,6 +128,7 @@ namespace WeatherOS.Apps
             {
                 if (keyEvent.Key == ConsoleKeyEx.Enter)
                 {
+                    desktop.DrawStatusMessage("Wiping physical disk 0 and creating clean MBR partition table...");
                     string status;
                     DiskWipeService.WipeAndCleanDisk(0, out status);
                     _statusMessage = status;

@@ -453,38 +453,124 @@ namespace WeatherOS.Graphics
 
         public void DrawWeatherIcon(string condition, int left, int top)
         {
+            int hour = DateTime.UtcNow.Hour;
+            bool isNight = (hour < 7 || hour >= 20) || (condition != null && condition.ToLower().Contains("night"));
+            DrawWeatherIcon(condition, isNight, "", left, top);
+        }
+
+        public void DrawWeatherIcon(string condition, bool isNight, string moonPhase, int left, int top)
+        {
             string cond = (condition ?? "").ToLower();
-            if (cond.Contains("cloud"))
+            string phase = (moonPhase ?? "").ToLower();
+
+            // 1. Thunderstorm / Tempestade
+            if (cond.Contains("thunder") || cond.Contains("storm") || cond.Contains("lightning"))
+            {
+                System.Console.ForegroundColor = ConsoleColor.DarkGray;
+                System.Console.SetCursorPosition(left, top);     System.Console.Write("     .-^^---.   ");
+                System.Console.SetCursorPosition(left, top + 1); System.Console.Write("    (________)  ");
+                System.Console.ForegroundColor = ConsoleColor.Yellow;
+                System.Console.SetCursorPosition(left, top + 2); System.Console.Write("       / _/     ");
+                System.Console.SetCursorPosition(left, top + 3); System.Console.Write("        /       ");
+            }
+            // 2. Rain / Aguaceiros
+            else if (cond.Contains("rain") || cond.Contains("drizzle") || cond.Contains("shower"))
+            {
+                System.Console.ForegroundColor = ConsoleColor.DarkGray;
+                System.Console.SetCursorPosition(left, top);     System.Console.Write("     .-^^---.   ");
+                System.Console.SetCursorPosition(left, top + 1); System.Console.Write("    (________)  ");
+                System.Console.ForegroundColor = ConsoleColor.Cyan;
+                System.Console.SetCursorPosition(left, top + 2); System.Console.Write("     /  /  /    ");
+                System.Console.SetCursorPosition(left, top + 3); System.Console.Write("    /  /  /     ");
+            }
+            // 3. Snow / Neve
+            else if (cond.Contains("snow") || cond.Contains("sleet") || cond.Contains("ice") || cond.Contains("blizzard"))
+            {
+                System.Console.ForegroundColor = ConsoleColor.DarkGray;
+                System.Console.SetCursorPosition(left, top);     System.Console.Write("     .-^^---.   ");
+                System.Console.SetCursorPosition(left, top + 1); System.Console.Write("    (________)  ");
+                System.Console.ForegroundColor = ConsoleColor.White;
+                System.Console.SetCursorPosition(left, top + 2); System.Console.Write("     *   *   *  ");
+                System.Console.SetCursorPosition(left, top + 3); System.Console.Write("       *   *    ");
+            }
+            // 4. Fog / Mist / Neblina
+            else if (cond.Contains("fog") || cond.Contains("mist") || cond.Contains("haze"))
+            {
+                System.Console.ForegroundColor = ConsoleColor.Gray;
+                System.Console.SetCursorPosition(left, top);     System.Console.Write("   _ - _ - _ -  ");
+                System.Console.SetCursorPosition(left, top + 1); System.Console.Write("    _ - _ - _   ");
+                System.Console.SetCursorPosition(left, top + 2); System.Console.Write("   - _ - _ - _  ");
+                System.Console.SetCursorPosition(left, top + 3); System.Console.Write("    _ - _ - _   ");
+            }
+            // 5. Wind / Vento
+            else if (cond.Contains("wind") || cond.Contains("breeze") || cond.Contains("gale"))
+            {
+                System.Console.ForegroundColor = ConsoleColor.Cyan;
+                System.Console.SetCursorPosition(left, top);     System.Console.Write("   ~~~~~~  --~  ");
+                System.Console.SetCursorPosition(left, top + 1); System.Console.Write("  ~~~~  -~ --~  ");
+                System.Console.SetCursorPosition(left, top + 2); System.Console.Write("      ~~~~~~    ");
+            }
+            // 6. Night - Cloudy (Lua com Nuvens)
+            else if (isNight && (cond.Contains("cloud") || cond.Contains("overcast") || cond.Contains("part")))
+            {
+                System.Console.ForegroundColor = ConsoleColor.Cyan;
+                System.Console.SetCursorPosition(left, top);     System.Console.Write("     .---.      ");
+                System.Console.SetCursorPosition(left, top + 1); System.Console.Write("    /  /  .--.  ");
+                System.Console.ForegroundColor = ConsoleColor.DarkGray;
+                System.Console.SetCursorPosition(left, top + 2); System.Console.Write("  .-(    ).  )  ");
+                System.Console.SetCursorPosition(left, top + 3); System.Console.Write(" (___.__)__)_)  ");
+            }
+            // 7. Night - Clear / Moon (Lua de Noite)
+            else if (isNight || cond.Contains("moon") || cond.Contains("night") || cond.Contains("noite"))
+            {
+                System.Console.ForegroundColor = ConsoleColor.Cyan;
+                if (phase.Contains("full") || phase.Contains("cheia"))
+                {
+                    // Full Moon
+                    System.Console.SetCursorPosition(left, top);     System.Console.Write("     .-----.    ");
+                    System.Console.SetCursorPosition(left, top + 1); System.Console.Write("    /  O O  \\   ");
+                    System.Console.SetCursorPosition(left, top + 2); System.Console.Write("   |    O    |  ");
+                    System.Console.SetCursorPosition(left, top + 3); System.Console.Write("    \\       /   ");
+                    System.Console.SetCursorPosition(left, top + 4); System.Console.Write("     `-----'  * ");
+                }
+                else
+                {
+                    // Crescent Moon with twinkling stars
+                    System.Console.SetCursorPosition(left, top);     System.Console.Write("     .---.  *   ");
+                    System.Console.SetCursorPosition(left, top + 1); System.Console.Write("    /   /       ");
+                    System.Console.SetCursorPosition(left, top + 2); System.Console.Write("   |   |     *  ");
+                    System.Console.SetCursorPosition(left, top + 3); System.Console.Write("    \\   \\       ");
+                    System.Console.SetCursorPosition(left, top + 4); System.Console.Write("  *  `---'   .  ");
+                }
+            }
+            // 8. Day - Partly Cloudy (Sol com Nuvens)
+            else if (cond.Contains("part") || (cond.Contains("sun") && cond.Contains("cloud")))
+            {
+                System.Console.ForegroundColor = ConsoleColor.Yellow;
+                System.Console.SetCursorPosition(left, top);     System.Console.Write("   \\  /         ");
+                System.Console.SetCursorPosition(left, top + 1); System.Console.Write(" _-(  )  .--.   ");
+                System.Console.ForegroundColor = ConsoleColor.DarkGray;
+                System.Console.SetCursorPosition(left, top + 2); System.Console.Write("   .-(   ).  )  ");
+                System.Console.SetCursorPosition(left, top + 3); System.Console.Write("  (___.__)__)_) ");
+            }
+            // 9. Day - Clouds / Overcast (Nublado)
+            else if (cond.Contains("cloud") || cond.Contains("overcast"))
             {
                 System.Console.ForegroundColor = ConsoleColor.DarkGray;
                 System.Console.SetCursorPosition(left, top);     System.Console.Write("      .--.      ");
                 System.Console.SetCursorPosition(left, top + 1); System.Console.Write("   .-(    ).    ");
                 System.Console.SetCursorPosition(left, top + 2); System.Console.Write("  (___.__)__)   ");
+                System.Console.SetCursorPosition(left, top + 3); System.Console.Write("  (__________)  ");
             }
-            else if (cond.Contains("rain") || cond.Contains("drizzle") || cond.Contains("thunder"))
-            {
-                System.Console.ForegroundColor = ConsoleColor.Cyan;
-                System.Console.SetCursorPosition(left, top);     System.Console.Write("   .-^^---.     ");
-                System.Console.SetCursorPosition(left, top + 1); System.Console.Write("  (________)    ");
-                System.Console.SetCursorPosition(left, top + 2); System.Console.Write("   /  /  /      ");
-                System.Console.SetCursorPosition(left, top + 3); System.Console.Write("  /  /  /       ");
-            }
-            else if (cond.Contains("snow"))
-            {
-                System.Console.ForegroundColor = ConsoleColor.White;
-                System.Console.SetCursorPosition(left, top);     System.Console.Write("   .-^^---.     ");
-                System.Console.SetCursorPosition(left, top + 1); System.Console.Write("  (________)    ");
-                System.Console.SetCursorPosition(left, top + 2); System.Console.Write("   *  *  *      ");
-                System.Console.SetCursorPosition(left, top + 3); System.Console.Write("  *  *  *       ");
-            }
+            // 10. Day - Sunny / Clear Sky (Sol Radiante)
             else
             {
                 System.Console.ForegroundColor = ConsoleColor.Yellow;
-                System.Console.SetCursorPosition(left, top);     System.Console.Write("    \\   /      ");
-                System.Console.SetCursorPosition(left, top + 1); System.Console.Write("     .-.        ");
-                System.Console.SetCursorPosition(left, top + 2); System.Console.Write("  --(   )--     ");
-                System.Console.SetCursorPosition(left, top + 3); System.Console.Write("     `-'        ");
-                System.Console.SetCursorPosition(left, top + 4); System.Console.Write("    /   \\      ");
+                System.Console.SetCursorPosition(left, top);     System.Console.Write("    \\   |   /   ");
+                System.Console.SetCursorPosition(left, top + 1); System.Console.Write("      .-.       ");
+                System.Console.SetCursorPosition(left, top + 2); System.Console.Write("   --(   )--    ");
+                System.Console.SetCursorPosition(left, top + 3); System.Console.Write("      `-'       ");
+                System.Console.SetCursorPosition(left, top + 4); System.Console.Write("    /   |   \\   ");
             }
         }
 

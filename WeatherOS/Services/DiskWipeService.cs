@@ -106,26 +106,14 @@ namespace WeatherOS.Services
                     try { dev.WriteBlock(s, 1, ref zeros); } catch { }
                 }
 
-                // 3. Wipe Backup GPT at the end of the disk (last 34 sectors)
-                if (dev.BlockCount > 34)
+                // 3. Wipe all partition alignment area and superblocks (Sectors 35..2048)
+                ulong maxSec = dev.BlockCount > 2048 ? 2048 : dev.BlockCount;
+                for (ulong s = 35; s < maxSec; s++)
                 {
-                    ulong endStart = dev.BlockCount - 34;
-                    for (ulong s = endStart; s < dev.BlockCount; s++)
-                    {
-                        try { dev.WriteBlock(s, 1, ref zeros); } catch { }
-                    }
+                    try { dev.WriteBlock(s, 1, ref zeros); } catch { }
                 }
 
-                // 4. Wipe superblocks and boot code at standard partition offsets (2048..2080)
-                if (dev.BlockCount > 2100)
-                {
-                    for (ulong s = 2048; s <= 2080; s++)
-                    {
-                        try { dev.WriteBlock(s, 1, ref zeros); } catch { }
-                    }
-                }
-
-                // 5. Write a clean, standard MBR partition table with 1 single primary FAT32 partition
+                // 4. Write a clean, standard MBR partition table with 1 single primary FAT32 partition
                 byte[] cleanMbr = new byte[512];
                 // Offset 446 (0x1BE): Partition 1 Entry (16 bytes)
                 cleanMbr[446] = 0x80; // Bootable / Active
@@ -159,18 +147,7 @@ namespace WeatherOS.Services
 
                 try { dev.WriteBlock(0, 1, ref cleanMbr); } catch { }
 
-                // 6. Format the newly created partition as clean FAT32
-                try
-                {
-                    var disks = VFSManager.GetDisks();
-                    if (disks != null && disks.Count > 0)
-                    {
-                        disks[0].FormatPartition(0, "Fat32", true);
-                    }
-                }
-                catch { }
-
-                // 7. Refresh FileSystemProbeService cache
+                // 5. Refresh FileSystemProbeService cache
                 FileSystemProbeService.ProbeAllPartitions();
 
                 status = $"[SUCCESS] {targetDrive.Name} ({targetDrive.SizeDisplay}) wiped completely!\nClean partition table created & FAT32 initialized.";

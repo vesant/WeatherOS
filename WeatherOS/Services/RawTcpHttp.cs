@@ -41,6 +41,7 @@ namespace WeatherOS.Services
         public static bool _dhcpOfferReceived = false;
         public static bool _dhcpAckReceived = false;
         public static bool _arpReplyReceived = false;
+        public static byte[] _pendingArpIp = null;
         public static byte[] _gatewayIp = new byte[4];
         public static byte[] _dhcpServerIp = new byte[4];
         
@@ -77,7 +78,7 @@ namespace WeatherOS.Services
 
             bool isGui = WeatherOS.Graphics.TuiDesktop.IsGuiActive;
 
-            // Wait for PHY Link up to 2 seconds
+            // Wait for PHY Link up to 1 second
             if (!isGui) System.Console.WriteLine("[net] raw_tcp: verifying physical link before DHCP...");
             int phyWait = 0;
             while (phyWait < 20)
@@ -88,7 +89,7 @@ namespace WeatherOS.Services
                 phyWait++;
             }
 
-            // 1. DHCP Discover with real-time Retransmissions
+            // 1. DHCP Discover with real-time Retransmissions (up to 1.8s)
             if (!isGui) System.Console.WriteLine("[net] raw_tcp: broadcasting DHCP Discover...");
             _dhcpOfferReceived = false;
             _dhcpAckReceived = false;
@@ -97,17 +98,17 @@ namespace WeatherOS.Services
 
             int elapsedMs = 0;
             int retransMs = 0;
-            while (!_dhcpOfferReceived && elapsedMs < 4000)
+            while (!_dhcpOfferReceived && elapsedMs < 1800)
             {
                 WeatherOS.Kernel.CustomNIC?.HackPoll();
                 System.Threading.Thread.Sleep(10);
                 elapsedMs += 10;
                 retransMs += 10;
-                if (!isGui && (elapsedMs % 500 == 0))
+                if (!isGui && (elapsedMs % 400 == 0))
                 {
                     System.Console.Write(".");
                 }
-                if (retransMs >= 1200)
+                if (retransMs >= 600)
                 {
                     retransMs = 0;
                     nic.QueueBytes(dhcp); // Retransmit Discover
@@ -120,7 +121,7 @@ namespace WeatherOS.Services
                 byte[] dhcpReq = BuildDhcpPacket(3, _ipSource, _dhcpServerIp);
                 nic.QueueBytes(dhcpReq);
                 int reqMs = 0;
-                while (!_dhcpAckReceived && reqMs < 2000)
+                while (!_dhcpAckReceived && reqMs < 800)
                 {
                     WeatherOS.Kernel.CustomNIC?.HackPoll();
                     System.Threading.Thread.Sleep(10);
@@ -137,10 +138,50 @@ namespace WeatherOS.Services
             }
             else
             {
-                // DHCP did not offer lease; fallback to standard local static address
-                if (!isGui) System.Console.WriteLine("\n[net] raw_tcp: DHCP silent. Using default local network configuration.");
-                _ipSource = new byte[] { 192, 168, 1, 155 };
-                _gatewayIp = new byte[] { 192, 168, 1, 1 };
+                // 2. DHCP silent; probe candidate gateways via fast ARP
+                if (!isGui) System.Console.WriteLine("\n[net] raw_tcp: DHCP silent. Probing router gateways...");
+
+                byte[][] candidateGateways = new byte[][] {
+                    new byte[] { 192, 168, 31, 1 },  // Xiaomi / XiaoQiang
+                    new byte[] { 192, 168, 1, 1 },   // MEO / NOS / Vodafone
+                    new byte[] { 192, 168, 1, 254 }, // Altice FiberGateway
+                    new byte[] { 192, 168, 0, 1 },   // TP-Link / D-Link
+                    new byte[] { 10, 0, 2, 2 }       // QEMU / VirtualBox
+                };
+
+                for (int g = 0; g < candidateGateways.Length; g++)
+                {
+                    byte[] cand = candidateGateways[g];
+                    _pendingArpIp = cand;
+                    _arpReplyReceived = false;
+                    SendArpRequest(cand);
+
+                    int arpMs = 0;
+                    while (!_arpReplyReceived && arpMs < 60)
+                    {
+                        WeatherOS.Kernel.CustomNIC?.HackPoll();
+                        System.Threading.Thread.Sleep(5);
+                        arpMs += 5;
+                    }
+
+                    if (_arpReplyReceived)
+                    {
+                        Array.Copy(cand, 0, _gatewayIp, 0, 4);
+                        if (_ipSource[0] == 0 || _ipSource[2] != _gatewayIp[2])
+                        {
+                            _ipSource = new byte[] { _gatewayIp[0], _gatewayIp[1], _gatewayIp[2], 155 };
+                        }
+                        if (!isGui)
+                            System.Console.WriteLine($"\n[net] raw_tcp: Gateway detected: {_gatewayIp[0]}.{_gatewayIp[1]}.{_gatewayIp[2]}.{_gatewayIp[3]} (MAC: {_macDest[0]:X2}:{_macDest[1]:X2}:{_macDest[2]:X2}:{_macDest[3]:X2}:{_macDest[4]:X2}:{_macDest[5]:X2})");
+                        break;
+                    }
+                }
+
+                if (_ipSource[0] == 0)
+                {
+                    _ipSource = new byte[] { 192, 168, 31, 155 };
+                    _gatewayIp = new byte[] { 192, 168, 31, 1 };
+                }
             }
 
             // Configure Cosmos NetworkStack with active IP
@@ -152,40 +193,6 @@ namespace WeatherOS.Services
                 Cosmos.System.Network.NetworkStack.ConfigIP(nic, new Cosmos.System.Network.Config.IPConfig(myIp, mySubnet, myGw));
             }
             catch { }
-
-            // 2. Multi-Gateway ARP Probe to discover the real router MAC on the LAN
-            byte[][] candidateGateways = new byte[][] {
-                _gatewayIp,
-                new byte[] { 192, 168, 1, 1 },
-                new byte[] { 192, 168, 1, 254 },
-                new byte[] { 192, 168, 0, 1 },
-                new byte[] { 192, 168, 31, 1 },
-                new byte[] { 10, 0, 2, 2 }
-            };
-
-            for (int g = 0; g < candidateGateways.Length; g++)
-            {
-                byte[] cand = candidateGateways[g];
-                if (cand[0] == 0) continue;
-                _arpReplyReceived = false;
-                SendArpRequest(cand);
-
-                int arpMs = 0;
-                while (!_arpReplyReceived && arpMs < 300)
-                {
-                    WeatherOS.Kernel.CustomNIC?.HackPoll();
-                    System.Threading.Thread.Sleep(5);
-                    arpMs += 5;
-                }
-
-                if (_arpReplyReceived)
-                {
-                    Array.Copy(cand, 0, _gatewayIp, 0, 4);
-                    if (!isGui)
-                        System.Console.WriteLine($"\n[net] raw_tcp: Gateway discovered: {_gatewayIp[0]}.{_gatewayIp[1]}.{_gatewayIp[2]}.{_gatewayIp[3]} (MAC: {_macDest[0]:X2}:{_macDest[1]:X2}:{_macDest[2]:X2}:{_macDest[3]:X2}:{_macDest[4]:X2}:{_macDest[5]:X2})");
-                    break;
-                }
-            }
 
             nic.DataReceived = _oldHandler;
         }
@@ -238,6 +245,17 @@ namespace WeatherOS.Services
                     dhcp[opt++] = serverIp[2]; dhcp[opt++] = serverIp[3];
                 }
             }
+
+            // Option 55: Parameter Request List (1=Subnet, 3=Router, 6=DNS, 15=Domain)
+            dhcp[opt++] = 55; dhcp[opt++] = 4;
+            dhcp[opt++] = 1; dhcp[opt++] = 3; dhcp[opt++] = 6; dhcp[opt++] = 15;
+
+            // Option 12: Host Name ("WeatherOS")
+            dhcp[opt++] = 12; dhcp[opt++] = 9;
+            dhcp[opt++] = (byte)'W'; dhcp[opt++] = (byte)'e'; dhcp[opt++] = (byte)'a';
+            dhcp[opt++] = (byte)'t'; dhcp[opt++] = (byte)'h'; dhcp[opt++] = (byte)'e';
+            dhcp[opt++] = (byte)'r'; dhcp[opt++] = (byte)'O'; dhcp[opt++] = (byte)'S';
+
             dhcp[opt] = 255; // End
             return dhcp;
         }
@@ -392,18 +410,18 @@ namespace WeatherOS.Services
 
             try
             {
-                // Send SYN with fast retransmission (up to 5 attempts)
-                for (int attempt = 0; attempt < 5; attempt++)
+                // Send SYN with fast retransmission (up to 3 attempts, 350ms each)
+                for (int attempt = 0; attempt < 3; attempt++)
                 {
                     SendTcpPacket(nic, 0x02, new byte[0]); // SYN
                     
                     int synTimeout = 0;
-                    while (!_synAckReceived && synTimeout < 300)
+                    while (!_synAckReceived && synTimeout < 70) // 70 * 5ms = 350ms
                     {
                         WeatherOS.Kernel.CustomNIC?.HackPoll();
                         System.Threading.Thread.Sleep(5);
                         synTimeout++;
-                        if (!WeatherOS.Graphics.TuiDesktop.IsGuiActive && (synTimeout % 50 == 0))
+                        if (!WeatherOS.Graphics.TuiDesktop.IsGuiActive && (synTimeout % 20 == 0))
                         {
                             System.Console.Write(".");
                         }
@@ -429,13 +447,13 @@ namespace WeatherOS.Services
                 int dataMs = 0;
                 int lastRxLen = _rxLength;
                 int quietMs = 0;
-                while (!_finReceived && dataMs < 8000)
+                while (!_finReceived && dataMs < 3500)
                 {
                     WeatherOS.Kernel.CustomNIC?.HackPoll();
                     System.Threading.Thread.Sleep(5);
                     dataMs += 5;
 
-                    if (!WeatherOS.Graphics.TuiDesktop.IsGuiActive && (dataMs % 500 == 0))
+                    if (!WeatherOS.Graphics.TuiDesktop.IsGuiActive && (dataMs % 300 == 0))
                     {
                         System.Console.Write(".");
                     }
@@ -633,10 +651,16 @@ namespace WeatherOS.Services
                 ushort op = (ushort)((packet[20] << 8) | packet[21]);
                 if (op == 0x0002) // ARP Reply
                 {
+                    bool match = false;
+                    if (_pendingArpIp != null && packet[28] == _pendingArpIp[0] && packet[29] == _pendingArpIp[1] &&
+                        packet[30] == _pendingArpIp[2] && packet[31] == _pendingArpIp[3]) match = true;
                     if (_gatewayIp[0] != 0 && packet[28] == _gatewayIp[0] && packet[29] == _gatewayIp[1] &&
-                        packet[30] == _gatewayIp[2] && packet[31] == _gatewayIp[3])
+                        packet[30] == _gatewayIp[2] && packet[31] == _gatewayIp[3]) match = true;
+
+                    if (match)
                     {
                         Array.Copy(packet, 22, _macDest, 0, 6);
+                        Array.Copy(packet, 28, _gatewayIp, 0, 4);
                         _arpReplyReceived = true;
                     }
                 }
@@ -700,11 +724,13 @@ namespace WeatherOS.Services
                         if (dhcpMsgType == 2) // DHCP Offer
                         {
                             Array.Copy(packet, dhcpOff + 16, _ipSource, 0, 4);
+                            Array.Copy(packet, 6, _macDest, 0, 6); // Grab Router MAC from Ethernet frame!
                             if (_gatewayIp[0] == 0) { Array.Copy(_ipSource, 0, _gatewayIp, 0, 4); _gatewayIp[3] = 1; }
                             _dhcpOfferReceived = true;
                         }
                         else if (dhcpMsgType == 5) // DHCP ACK
                         {
+                            Array.Copy(packet, 6, _macDest, 0, 6); // Grab Router MAC from Ethernet frame!
                             _dhcpAckReceived = true;
                         }
                     }

@@ -19,6 +19,9 @@ namespace WeatherOS.Services
         public string AlertLevel;
         public float PrecipitationMm;
         public int WeatherCode;
+        public string MoonPhase;
+        public string MoonIllumination;
+        public bool IsNight;
         public DateTime Timestamp;
 
         public WeatherData(float temp, float humidity, float pressure, float windSpeed, string windDir, string condition, string loc)
@@ -34,6 +37,10 @@ namespace WeatherOS.Services
             AlertLevel = "NONE";
             PrecipitationMm = 0.0f;
             WeatherCode = 0;
+            MoonPhase = "Waxing Crescent";
+            MoonIllumination = "15%";
+            int hour = DateTime.UtcNow.Hour;
+            IsNight = (hour < 6 || hour >= 20);
             Timestamp = DateTime.UtcNow;
         }
     }
@@ -184,6 +191,11 @@ namespace WeatherOS.Services
                         _cachedReading.Location = cleanCity.ToUpper() + " (TIMEOUT)";
                         _cachedReading.Condition = "Network Timeout / No Signal";
                     }
+                    else
+                    {
+                        _cachedReading.Location = "SETUBAL, PT (TIMEOUT)";
+                        _cachedReading.Condition = "Network Timeout / No Signal";
+                    }
                     if (!WeatherOS.Graphics.TuiDesktop.IsGuiActive)
                         System.Console.WriteLine("[net] Telemetry fetch timed out.");
                 }
@@ -193,6 +205,11 @@ namespace WeatherOS.Services
                 if (!string.IsNullOrWhiteSpace(cleanCity))
                 {
                     _cachedReading.Location = cleanCity.ToUpper() + " (ERROR)";
+                    _cachedReading.Condition = "Network Failure";
+                }
+                else
+                {
+                    _cachedReading.Location = "SETUBAL, PT (ERROR)";
                     _cachedReading.Condition = "Network Failure";
                 }
                 if (_debugMode && !WeatherOS.Graphics.TuiDesktop.IsGuiActive)
@@ -247,6 +264,17 @@ namespace WeatherOS.Services
                 {
                     _cachedReading.Condition = "Telemetry Received";
                 }
+
+                // Astronomy and Moon Phases
+                string phase = ParseJsonString(json, "moon_phase");
+                if (!string.IsNullOrWhiteSpace(phase)) _cachedReading.MoonPhase = phase.Trim();
+
+                string illum = ParseJsonString(json, "moon_illumination");
+                if (!string.IsNullOrWhiteSpace(illum)) _cachedReading.MoonIllumination = illum.Trim() + "%";
+
+                int curHour = DateTime.UtcNow.Hour;
+                _cachedReading.IsNight = (curHour < 7 || curHour >= 20) || 
+                    (_cachedReading.Condition != null && (_cachedReading.Condition.ToLower().Contains("night") || _cachedReading.Condition.ToLower().Contains("noite")));
                 
                 // Extract nearest area and country from JSON
                 string area = ParseSectionValue(json, "\"nearest_area\"");

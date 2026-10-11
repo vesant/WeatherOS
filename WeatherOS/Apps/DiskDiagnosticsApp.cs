@@ -16,6 +16,7 @@ namespace WeatherOS.Apps
         private string[] _tabNames = { "1. VERDICT", "2. AHCI", "3. PCI", "4. VFS", "5. WIPE DISK" };
         private string _wipeStatus = "";
         private bool _confirmingWipe = false;
+        private int _wipeProgressPct = 0;
 
         public DiskDiagnosticsApp()
         {
@@ -75,7 +76,7 @@ namespace WeatherOS.Apps
             }
             else if (_currentTab == 4)
             {
-                DrawWipeTab(winBg);
+                DrawWipeTab(desktop, winBg);
             }
         }
 
@@ -250,7 +251,7 @@ namespace WeatherOS.Apps
             }
         }
 
-        private void DrawWipeTab(ConsoleColor winBg)
+        private void DrawWipeTab(TuiDesktop desktop, ConsoleColor winBg)
         {
             System.Console.SetCursorPosition(6, 6);
             System.Console.ForegroundColor = ConsoleColor.Yellow;
@@ -280,7 +281,10 @@ namespace WeatherOS.Apps
                 System.Console.Write($"Detected Partitions / FS: {fsList}");
             }
 
-            System.Console.SetCursorPosition(6, 14);
+            // Real-time progress bar in Wipe menu
+            desktop.DrawBar(6, 13, "Progress", _wipeProgressPct, ConsoleColor.Green);
+
+            System.Console.SetCursorPosition(6, 15);
             if (_confirmingWipe)
             {
                 System.Console.BackgroundColor = ConsoleColor.Red;
@@ -289,6 +293,7 @@ namespace WeatherOS.Apps
             }
             else
             {
+                System.Console.BackgroundColor = winBg;
                 System.Console.ForegroundColor = ConsoleColor.Yellow;
                 System.Console.Write("Press [W] or [ENTER] to clean and zero-fill Disk 0.");
             }
@@ -305,12 +310,13 @@ namespace WeatherOS.Apps
 
         private void DrawWipeProgress(TuiDesktop desktop, ConsoleColor winBg, int pct, string msg)
         {
+            _wipeProgressPct = pct;
             System.Console.BackgroundColor = winBg;
-            desktop.DrawBar(6, 15, "Wipe", pct, ConsoleColor.Green);
+            desktop.DrawBar(6, 13, "Progress", pct, ConsoleColor.Green);
             System.Console.SetCursorPosition(6, 17);
             System.Console.ForegroundColor = ConsoleColor.Yellow;
             System.Console.Write(msg.PadRight(65));
-            System.Threading.Thread.Sleep(80);
+            System.Threading.Thread.Sleep(25);
         }
 
         private void ExecuteLiveWipe(TuiDesktop desktop, ConsoleColor winBg)
@@ -325,35 +331,26 @@ namespace WeatherOS.Apps
             var dev = drives[0].Device;
             byte[] zeros = new byte[512];
 
-            DrawWipeProgress(desktop, winBg, 15, "1/5: Initializing raw controller & zeroing LBA 0...");
+            DrawWipeProgress(desktop, winBg, 2, "1/34: Initializing controller & zeroing LBA 0 (MBR)...");
             try { dev.WriteBlock(0, 1, ref zeros); } catch { }
 
-            DrawWipeProgress(desktop, winBg, 35, "2/5: Zero-filling Primary GPT Partition Tables (1..34)...");
-            for (ulong s = 1; s <= 34 && s < dev.BlockCount; s++)
+            // Wipe sectors 1 to 2048 in 32 progressive steps of 64 sectors
+            for (int step = 0; step < 32; step++)
             {
-                try { dev.WriteBlock(s, 1, ref zeros); } catch { }
-            }
+                ulong startSec = (ulong)step * 64 + 1;
+                ulong endSec = startSec + 64;
+                if (endSec > dev.BlockCount) endSec = dev.BlockCount;
 
-            DrawWipeProgress(desktop, winBg, 60, "3/5: Zero-filling Backup GPT Table at disk tail...");
-            if (dev.BlockCount > 34)
-            {
-                ulong endStart = dev.BlockCount - 34;
-                for (ulong s = endStart; s < dev.BlockCount; s++)
+                for (ulong s = startSec; s < endSec; s++)
                 {
                     try { dev.WriteBlock(s, 1, ref zeros); } catch { }
                 }
+
+                int pct = 5 + ((step + 1) * 88) / 32;
+                DrawWipeProgress(desktop, winBg, pct, $"Zeroing sector {endSec} / 2048 ({pct}%)...");
             }
 
-            DrawWipeProgress(desktop, winBg, 80, "4/5: Zero-filling Linux superblock signatures (ext4/swap)...");
-            if (dev.BlockCount > 2100)
-            {
-                for (ulong s = 2048; s <= 2080; s++)
-                {
-                    try { dev.WriteBlock(s, 1, ref zeros); } catch { }
-                }
-            }
-
-            DrawWipeProgress(desktop, winBg, 95, "5/5: Writing clean protective MBR table (FAT32 LBA)...");
+            DrawWipeProgress(desktop, winBg, 96, "Writing clean protective MBR table (FAT32 LBA)...");
             byte[] cleanMbr = new byte[512];
             cleanMbr[446] = 0x80;
             cleanMbr[450] = 0x0C;

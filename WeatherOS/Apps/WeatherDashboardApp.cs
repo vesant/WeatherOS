@@ -44,7 +44,23 @@ namespace WeatherOS.Apps
             System.Console.SetCursorPosition(50, 13);
             System.Console.Write("Wind Dir : " + data.WindDirection);
 
-            desktop.DrawWeatherIcon(data.Condition, 8, 7);
+            desktop.DrawWeatherIcon(data.Condition, data.IsNight, data.MoonPhase, 8, 7);
+
+            // Astronomy telemetry under icon
+            System.Console.SetCursorPosition(8, 12);
+            System.Console.ForegroundColor = data.IsNight ? ConsoleColor.Cyan : ConsoleColor.Yellow;
+            System.Console.Write(data.IsNight ? "  [NIGHT TIME]  " : "   [DAYLIGHT]   ");
+
+            System.Console.SetCursorPosition(8, 13);
+            System.Console.ForegroundColor = ConsoleColor.White;
+            string moonTxt = !string.IsNullOrEmpty(data.MoonPhase) ? $"Moon: {data.MoonPhase}" : "Sky: Clear";
+            if (moonTxt.Length > 18) moonTxt = moonTxt.Substring(0, 18);
+            System.Console.Write(moonTxt.PadRight(18));
+
+            System.Console.SetCursorPosition(8, 14);
+            System.Console.ForegroundColor = ConsoleColor.Cyan;
+            string illumTxt = !string.IsNullOrEmpty(data.MoonIllumination) ? $"Illum: {data.MoonIllumination}" : "";
+            System.Console.Write(illumTxt.PadRight(18));
 
             // Alert Banner
             if (data.AlertLevel == "RED")
