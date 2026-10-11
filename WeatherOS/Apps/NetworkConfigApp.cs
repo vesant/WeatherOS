@@ -36,10 +36,18 @@ namespace WeatherOS.Apps
 
             System.Console.SetCursorPosition(20, 13);
             System.Console.Write("Subnet Mask: 255.255.255.0");
+
+            System.Console.SetCursorPosition(20, 14);
+            System.Console.ForegroundColor = ConsoleColor.Yellow;
+            System.Console.Write("[ESC] Return to Desktop");
         }
 
         public void HandleInput(TuiDesktop desktop, KeyEvent keyEvent)
         {
+            if (keyEvent.Key == ConsoleKeyEx.Escape)
+            {
+                desktop.SetCurrentApp("launcher");
+            }
         }
     }
 }

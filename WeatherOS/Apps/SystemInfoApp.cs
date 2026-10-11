@@ -23,10 +23,18 @@ namespace WeatherOS.Apps
             System.Console.Write("Developed by: Ghost");
             System.Console.SetCursorPosition(25, 13);
             System.Console.Write("Architecture: x86 / 32-bit (IL2CPU)");
+
+            System.Console.SetCursorPosition(25, 14);
+            System.Console.ForegroundColor = ConsoleColor.Yellow;
+            System.Console.Write("[ESC] Return to Desktop");
         }
 
         public void HandleInput(TuiDesktop desktop, KeyEvent keyEvent)
         {
+            if (keyEvent.Key == ConsoleKeyEx.Escape)
+            {
+                desktop.SetCurrentApp("launcher");
+            }
         }
     }
 }

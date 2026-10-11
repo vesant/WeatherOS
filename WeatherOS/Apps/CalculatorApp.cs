@@ -16,32 +16,40 @@ namespace WeatherOS.Apps
 
         public void Draw(TuiDesktop desktop)
         {
-            desktop.DrawWindow(24, 4, 32, 17, "CALCULATOR");
+            desktop.DrawWindow(24, 3, 32, 18, "CALCULATOR");
             ConsoleColor winBg = desktop.IsDarkMode ? ConsoleColor.Black : ConsoleColor.Blue;
             System.Console.BackgroundColor = winBg;
             System.Console.ForegroundColor = ConsoleColor.White;
 
-            System.Console.SetCursorPosition(27, 6);
+            System.Console.SetCursorPosition(27, 5);
             System.Console.Write($"[{_calcResult.PadLeft(24)}]");
 
-            System.Console.SetCursorPosition(29, 9);
+            System.Console.SetCursorPosition(29, 8);
             System.Console.Write("[7]  [8]  [9]  [/]");
-            System.Console.SetCursorPosition(29, 11);
+            System.Console.SetCursorPosition(29, 10);
             System.Console.Write("[4]  [5]  [6]  [*]");
-            System.Console.SetCursorPosition(29, 13);
+            System.Console.SetCursorPosition(29, 12);
             System.Console.Write("[1]  [2]  [3]  [-]");
-            System.Console.SetCursorPosition(29, 15);
+            System.Console.SetCursorPosition(29, 14);
             System.Console.Write("[0]  [.]  [C]  [+]");
 
-            System.Console.SetCursorPosition(27, 18);
+            System.Console.SetCursorPosition(27, 16);
             System.Console.ForegroundColor = ConsoleColor.Cyan;
             System.Console.Write("> ");
-            _calcEditor.DrawInline(29, 18, 20, winBg, ConsoleColor.Cyan);
+            _calcEditor.DrawInline(29, 16, 20, winBg, ConsoleColor.Cyan);
+
+            System.Console.SetCursorPosition(26, 19);
+            System.Console.ForegroundColor = ConsoleColor.Yellow;
+            System.Console.Write("[Enter] =  [C] Clr  [ESC] Exit");
         }
 
         public void HandleInput(TuiDesktop desktop, KeyEvent keyEvent)
         {
-            if (keyEvent.KeyChar == 'c' || keyEvent.KeyChar == 'C')
+            if (keyEvent.Key == ConsoleKeyEx.Escape)
+            {
+                desktop.SetCurrentApp("launcher");
+            }
+            else if (keyEvent.KeyChar == 'c' || keyEvent.KeyChar == 'C')
             {
                 _calcEditor.Text = "";
                 _calcEditor.CursorPos = 0;

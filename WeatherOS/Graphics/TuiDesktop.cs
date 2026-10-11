@@ -319,11 +319,21 @@ namespace WeatherOS.Graphics
             System.Console.BackgroundColor = bgDesktop;
             
             // Top Bar
-            System.Console.ForegroundColor = ConsoleColor.White;
             System.Console.SetCursorPosition(0, 0);
             System.Console.BackgroundColor = ConsoleColor.Gray;
             System.Console.ForegroundColor = ConsoleColor.Black;
-            System.Console.Write("  WeatherOS TUI v3.0  |  [ESC] Main Menu / Exit                                 "); // 79 chars
+            if (_currentApp == "launcher")
+            {
+                System.Console.Write("  WeatherOS Desktop  |  Standalone Meteorological System                        ");
+            }
+            else
+            {
+                IApp curAppObj = GetApp(_currentApp);
+                string appTitle = curAppObj != null ? curAppObj.Name : _currentApp;
+                string topBarText = $"  WeatherOS > {appTitle}  |  [ESC] Return to Desktop";
+                if (topBarText.Length > 79) topBarText = topBarText.Substring(0, 79);
+                System.Console.Write(topBarText.PadRight(79));
+            }
 
             System.Console.BackgroundColor = bgDesktop;
             for (int y = 1; y < 24; y++)
@@ -349,10 +359,18 @@ namespace WeatherOS.Graphics
                 }
             }
 
+            // Bottom Bar
             System.Console.SetCursorPosition(0, 24);
             System.Console.BackgroundColor = ConsoleColor.Gray;
             System.Console.ForegroundColor = ConsoleColor.Black;
-            System.Console.Write("  WeatherOS TUI v3.0 (Modular App Architecture)                                "); // 79 chars
+            if (_currentApp == "launcher")
+            {
+                System.Console.Write("  [Up/Down/Tab] Navigate  |  [Enter] Launch Application                         ");
+            }
+            else
+            {
+                System.Console.Write("  WeatherOS v3.0  |  Cosmos x86 Dedicated Meteorological Kernel                ");
+            }
             System.Console.ResetColor();
         }
 

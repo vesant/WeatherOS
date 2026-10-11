@@ -114,13 +114,37 @@ namespace WeatherOS.Apps
                 while (footer.Length < 66) footer += " ";
                 System.Console.Write(footer);
             }
+
+            // Essential shortcut bar
+            System.Console.SetCursorPosition(7, 19);
+            System.Console.BackgroundColor = winBg;
+            System.Console.ForegroundColor = ConsoleColor.Yellow;
+            System.Console.Write("[R] Refresh  |  [C] Change City  |  [F] 7-Day  |  [L] Moon  |  [ESC] Exit");
         }
 
         public void HandleInput(TuiDesktop desktop, KeyEvent keyEvent)
         {
-            if (keyEvent.Key == ConsoleKeyEx.F || keyEvent.Key == ConsoleKeyEx.D7 || keyEvent.Key == ConsoleKeyEx.Num7)
+            if (keyEvent.Key == ConsoleKeyEx.Escape)
+            {
+                desktop.SetCurrentApp("launcher");
+            }
+            else if (keyEvent.Key == ConsoleKeyEx.F || keyEvent.Key == ConsoleKeyEx.D7 || keyEvent.Key == ConsoleKeyEx.Num7)
             {
                 desktop.SetCurrentApp("forecast_7d");
+            }
+            else if (keyEvent.KeyChar == 'l' || keyEvent.KeyChar == 'L')
+            {
+                desktop.SetCurrentApp("lunar_forecast");
+            }
+            else if (keyEvent.KeyChar == 'c' || keyEvent.KeyChar == 'C')
+            {
+                desktop.SetCurrentApp("change_city");
+            }
+            else if (keyEvent.KeyChar == 'r' || keyEvent.KeyChar == 'R')
+            {
+                var cur = desktop.WeatherService.GetLatestReading();
+                string city = cur.Location.Split(',')[0].Trim();
+                desktop.WeatherService.FetchOpenWeather(city, desktop.ApiKey);
             }
         }
     }

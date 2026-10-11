@@ -80,6 +80,11 @@ namespace WeatherOS.Apps
             {
                 DrawWipeTab(desktop, winBg);
             }
+
+            System.Console.SetCursorPosition(6, 21);
+            System.Console.BackgroundColor = winBg;
+            System.Console.ForegroundColor = ConsoleColor.Yellow;
+            System.Console.Write("[1-5 / Tab] Switch Tab  |  [W] Wipe  |  [R] Refresh  |  [ESC] Exit");
         }
 
         private void DrawVerdictTab(ConsoleColor winBg)

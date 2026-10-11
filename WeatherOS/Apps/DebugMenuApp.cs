@@ -53,6 +53,11 @@ namespace WeatherOS.Apps
                 if (opt.Length > winWidth - 6) opt = opt.Substring(0, winWidth - 9) + "... ";
                 System.Console.Write(opt.PadRight(winWidth - 6));
             }
+
+            System.Console.SetCursorPosition(left + 3, top + winHeight - 2);
+            System.Console.BackgroundColor = winBg;
+            System.Console.ForegroundColor = ConsoleColor.Yellow;
+            System.Console.Write("[Up/Down] Select  |  [Enter] Open  |  [ESC] Exit");
         }
 
         public void HandleInput(TuiDesktop desktop, KeyEvent keyEvent)

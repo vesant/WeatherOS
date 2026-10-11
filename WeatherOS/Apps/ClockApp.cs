@@ -26,10 +26,18 @@ namespace WeatherOS.Apps
             System.Console.ForegroundColor = ConsoleColor.White;
             System.Console.SetCursorPosition(33, 13);
             System.Console.Write(dateStr);
+
+            System.Console.SetCursorPosition(28, 14);
+            System.Console.ForegroundColor = ConsoleColor.Yellow;
+            System.Console.Write("[ESC] Return to Desktop");
         }
 
         public void HandleInput(TuiDesktop desktop, KeyEvent keyEvent)
         {
+            if (keyEvent.Key == ConsoleKeyEx.Escape)
+            {
+                desktop.SetCurrentApp("launcher");
+            }
         }
     }
 }

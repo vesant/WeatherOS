@@ -49,7 +49,11 @@ namespace WeatherOS.Apps
                 System.Console.Write("6. Return to Desktop");
 
                 // Status message bar
-                System.Console.SetCursorPosition(10, 15);
+                System.Console.SetCursorPosition(10, 14);
+                System.Console.ForegroundColor = ConsoleColor.Yellow;
+                System.Console.Write("[1-5] Select Option  |  [ESC] Return to Desktop");
+
+                System.Console.SetCursorPosition(10, 16);
                 System.Console.ForegroundColor = ConsoleColor.Cyan;
                 System.Console.Write("Status: " + _lastStatus);
             }
@@ -98,20 +102,20 @@ namespace WeatherOS.Apps
                     System.Console.Write("_");
                 }
 
-                // Size indicator
+                // Essential shortcut bar
                 System.Console.SetCursorPosition(7, 18);
                 System.Console.BackgroundColor = winBg;
-                System.Console.ForegroundColor = ConsoleColor.Cyan;
-                System.Console.Write($"Characters: {_editorState.Text.Length}");
+                System.Console.ForegroundColor = ConsoleColor.Yellow;
+                System.Console.Write("[F2 / Ctrl+S] Save Note  |  [ESC] Menu / Exit");
 
-                // Live status message
-                if (!string.IsNullOrEmpty(_lastStatus))
-                {
-                    System.Console.SetCursorPosition(7, 19);
-                    System.Console.ForegroundColor = ConsoleColor.Cyan;
-                    string st = _lastStatus.Length > 65 ? _lastStatus.Substring(0, 65) : _lastStatus;
-                    System.Console.Write(st);
-                }
+                // File metrics and status
+                System.Console.SetCursorPosition(7, 19);
+                System.Console.BackgroundColor = winBg;
+                System.Console.ForegroundColor = ConsoleColor.Cyan;
+                string stLine = $"File: {_notepadFilename} ({_editorState.Text.Length} chars)";
+                if (!string.IsNullOrEmpty(_lastStatus)) stLine += $" | {_lastStatus}";
+                if (stLine.Length > 65) stLine = stLine.Substring(0, 65);
+                System.Console.Write(stLine.PadRight(65));
             }
             else if (_notepadState == 5) // File List Viewer
             {
@@ -134,6 +138,10 @@ namespace WeatherOS.Apps
                         System.Console.Write($"• {files[i]}");
                     }
                 }
+
+                System.Console.SetCursorPosition(10, 18);
+                System.Console.ForegroundColor = ConsoleColor.Yellow;
+                System.Console.Write("[Any Key / ESC] Return to Menu");
             }
             else if (_notepadState == 6) // Select Storage Destination & FileSystem Mini-Menu
             {
@@ -167,6 +175,10 @@ namespace WeatherOS.Apps
                     if (opt.Length > 62) opt = opt.Substring(0, 59) + "... ";
                     System.Console.Write(opt.PadRight(62));
                 }
+
+                System.Console.SetCursorPosition(8, 18);
+                System.Console.ForegroundColor = ConsoleColor.Yellow;
+                System.Console.Write("[Enter / 1-4] Save to Target  |  [ESC] Return to Editor");
             }
             else // Prompts (2=Open, 3=Save Filename, 4=Delete)
             {
@@ -183,6 +195,10 @@ namespace WeatherOS.Apps
                 System.Console.ForegroundColor = ConsoleColor.White;
                 System.Console.Write("> ");
                 _promptEditor.DrawInline(12, 10, 35, winBg, ConsoleColor.White);
+
+                System.Console.SetCursorPosition(10, 13);
+                System.Console.ForegroundColor = ConsoleColor.Yellow;
+                System.Console.Write("[Enter] Confirm  |  [ESC] Cancel");
             }
         }
 
@@ -230,11 +246,16 @@ namespace WeatherOS.Apps
             }
             else if (_notepadState == 1) // Editor Mode
             {
+                bool isCtrl = (keyEvent.Modifiers & ConsoleModifiers.Control) != 0;
+                bool isSave = keyEvent.Key == ConsoleKeyEx.F2 ||
+                              (isCtrl && (keyEvent.Key == ConsoleKeyEx.S || keyEvent.KeyChar == 's' || keyEvent.KeyChar == 'S')) ||
+                              keyEvent.KeyChar == 19; // ASCII 19 = Ctrl+S
+
                 if (keyEvent.Key == ConsoleKeyEx.Escape)
                 {
                     _notepadState = 0;
                 }
-                else if (keyEvent.Key == ConsoleKeyEx.F2)
+                else if (isSave)
                 {
                     if (_notepadFilename == "untitled.txt")
                     {

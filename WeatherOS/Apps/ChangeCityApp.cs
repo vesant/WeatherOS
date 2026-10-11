@@ -31,10 +31,20 @@ namespace WeatherOS.Apps
             System.Console.SetCursorPosition(left + 4, top + 4);
             System.Console.Write("> ");
             _cityEditor.DrawInline(left + 6, top + 4, 25, winBg, ConsoleColor.White);
+
+            System.Console.SetCursorPosition(left + 4, top + 7);
+            System.Console.ForegroundColor = ConsoleColor.Yellow;
+            System.Console.Write("[Enter] Search  |  [ESC] Cancel");
         }
 
         public void HandleInput(TuiDesktop desktop, KeyEvent keyEvent)
         {
+            if (keyEvent.Key == ConsoleKeyEx.Escape)
+            {
+                desktop.SetCurrentApp("launcher");
+                return;
+            }
+
             if (keyEvent.Key == ConsoleKeyEx.Enter)
             {
                 if (!string.IsNullOrWhiteSpace(_cityEditor.Text))

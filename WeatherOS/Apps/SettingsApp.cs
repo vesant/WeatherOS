@@ -70,10 +70,21 @@ namespace WeatherOS.Apps
                 if (item.Length > winWidth - 6) item = item.Substring(0, winWidth - 9) + "... ";
                 System.Console.Write(item.PadRight(winWidth - 6));
             }
+
+            System.Console.SetCursorPosition(left + 3, top + 14);
+            System.Console.BackgroundColor = winBg;
+            System.Console.ForegroundColor = ConsoleColor.Yellow;
+            System.Console.Write("[Up/Down] Select  |  [Enter] Toggle/Save  |  [ESC] Exit");
         }
 
         public void HandleInput(TuiDesktop desktop, KeyEvent keyEvent)
         {
+            if (keyEvent.Key == ConsoleKeyEx.Escape)
+            {
+                desktop.SetCurrentApp("launcher");
+                return;
+            }
+
             if (keyEvent.Key == ConsoleKeyEx.Tab || keyEvent.Key == ConsoleKeyEx.DownArrow)
             {
                 _settingsIndex++;
