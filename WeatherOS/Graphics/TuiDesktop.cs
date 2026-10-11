@@ -359,15 +359,19 @@ namespace WeatherOS.Graphics
             var apps = GetAppNames();
             if (_selectedAppIndex >= apps.Length) _selectedAppIndex = 0;
 
+            int boxWidth = 48;
             int boxHeight = apps.Length + 4;
-            int topY = 2;
-            DrawWindow(18, topY, 44, boxHeight, "MAIN MENU");
+            int left = (80 - boxWidth) / 2; // 16 (centered on 80 columns)
+            int topY = 1 + (23 - boxHeight) / 2; // Vertically centered
+            if (topY < 2) topY = 2;
+
+            DrawWindow(left, topY, boxWidth, boxHeight, "MAIN MENU");
             ConsoleColor winBg = _isDarkMode ? ConsoleColor.Black : ConsoleColor.Blue;
             System.Console.BackgroundColor = winBg;
 
             for (int i = 0; i < apps.Length; i++)
             {
-                System.Console.SetCursorPosition(21, topY + 2 + i);
+                System.Console.SetCursorPosition(left + 3, topY + 2 + i);
                 if (i == _selectedAppIndex)
                 {
                     System.Console.ForegroundColor = ConsoleColor.Black;
@@ -378,12 +382,20 @@ namespace WeatherOS.Graphics
                     System.Console.ForegroundColor = apps[i].Contains("Debug") ? ConsoleColor.Yellow : ConsoleColor.White;
                     System.Console.BackgroundColor = winBg;
                 }
-                System.Console.Write($" {(apps[i].Length > 0 ? "> " : "")}{apps[i]} ".PadRight(38));
+                string appItem = $" {(apps[i].Length > 0 ? "> " : "")}{apps[i]} ";
+                if (appItem.Length > boxWidth - 6) appItem = appItem.Substring(0, boxWidth - 6);
+                System.Console.Write(appItem.PadRight(boxWidth - 6));
             }
         }
 
         public void DrawWindow(int left, int top, int width, int height, string title)
         {
+            if (left < 0) left = 0;
+            if (top < 1) top = 1;
+            if (left + width > 80) width = 80 - left;
+            if (top + height > 24) height = 24 - top;
+            if (width < 4 || height < 3) return;
+
             ConsoleColor winBg = _isDarkMode ? ConsoleColor.Black : ConsoleColor.Blue;
             System.Console.BackgroundColor = winBg;
             System.Console.ForegroundColor = ConsoleColor.White;
@@ -393,8 +405,10 @@ namespace WeatherOS.Graphics
             for (int i = 0; i < width - 2; i++) System.Console.Write("-");
             System.Console.Write("+");
 
+            string safeTitle = $" {title} ";
+            if (safeTitle.Length > width - 4) safeTitle = safeTitle.Substring(0, width - 4);
             System.Console.SetCursorPosition(left + 2, top);
-            System.Console.Write($" {title} ");
+            System.Console.Write(safeTitle);
 
             for (int y = 1; y < height - 1; y++)
             {
@@ -408,6 +422,15 @@ namespace WeatherOS.Graphics
             System.Console.Write("+");
             for (int i = 0; i < width - 2; i++) System.Console.Write("-");
             System.Console.Write("+");
+        }
+
+        public void DrawCenteredWindow(int width, int height, string title, out int left, out int top)
+        {
+            if (width > 78) width = 78;
+            if (height > 22) height = 22;
+            left = (80 - width) / 2;
+            top = 1 + (23 - height) / 2;
+            DrawWindow(left, top, width, height, title);
         }
 
         public void DrawBar(int x, int y, string label, int percentage, ConsoleColor color)

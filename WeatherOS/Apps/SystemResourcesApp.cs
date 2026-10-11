@@ -111,11 +111,12 @@ namespace WeatherOS.Apps
 
             System.Console.SetCursorPosition(11, 17);
             System.Console.ForegroundColor = ConsoleColor.DarkGray;
-            System.Console.Write($"Hardware: Active Polling | Link: {(NetworkDevice.Devices.Count > 0 ? "ONLINE (100M Full-Duplex)" : "OFFLINE")}");
+            string linkState = NetworkDevice.Devices.Count > 0 ? "ONLINE (100M Full-Duplex)" : "OFFLINE";
+            System.Console.Write($"Network Link: {linkState}".PadRight(50));
 
             System.Console.SetCursorPosition(11, 19);
             System.Console.ForegroundColor = ConsoleColor.DarkGray;
-            System.Console.Write("Updating in real-time (Hardware Auto-Sense) | [ESC to Return]");
+            System.Console.Write("[Real-time Hardware Sense | ESC: Return]".PadRight(50));
         }
 
         public void HandleInput(TuiDesktop desktop, KeyEvent keyEvent)

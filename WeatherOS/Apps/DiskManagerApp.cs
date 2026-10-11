@@ -82,7 +82,8 @@ namespace WeatherOS.Apps
                     else if (p.IsWritable) line += " [Writable]";
                     else line += " [Read-Only]";
 
-                    System.Console.Write(line.PadRight(68));
+                    if (line.Length > 66) line = line.Substring(0, 63) + "...";
+                    System.Console.Write(line.PadRight(66));
                 }
 
                 // Details of selected partition
@@ -95,24 +96,26 @@ namespace WeatherOS.Apps
                     if (_confirmingWipe)
                     {
                         System.Console.ForegroundColor = ConsoleColor.Red;
-                        System.Console.Write("CONFIRM DISK WIPE: Erase ALL data & clean disk? [ENTER: Wipe | ESC: Cancel]");
+                        System.Console.Write("CONFIRM WIPE: Clean disk & erase all parts? [ENTER:Wipe|ESC:Cancel]");
                     }
                     else if (_confirmingFormat)
                     {
                         System.Console.ForegroundColor = ConsoleColor.Red;
-                        System.Console.Write($"CONFIRM FORMAT: Wipe {sel.DeviceName} to FAT32? [ENTER: Yes | ESC: No]");
+                        string cf = $"CONFIRM FORMAT: Wipe {sel.DeviceName} to FAT32? [ENTER:Yes|ESC:No]";
+                        if (cf.Length > 66) cf = cf.Substring(0, 63) + "...";
+                        System.Console.Write(cf);
                     }
                     else if (!string.IsNullOrEmpty(_statusMessage))
                     {
                         System.Console.ForegroundColor = ConsoleColor.Green;
-                        string st = _statusMessage.Length > 68 ? _statusMessage.Substring(0, 68) : _statusMessage;
+                        string st = _statusMessage.Length > 66 ? _statusMessage.Substring(0, 66) : _statusMessage;
                         System.Console.Write(st);
                     }
                     else
                     {
                         System.Console.ForegroundColor = ConsoleColor.Yellow;
                         string desc = $"Target: {sel.DeviceName} | FS: {sel.FileSystemType} | {sel.Description}";
-                        if (desc.Length > 68) desc = desc.Substring(0, 68);
+                        if (desc.Length > 66) desc = desc.Substring(0, 66);
                         System.Console.Write(desc);
                     }
                 }

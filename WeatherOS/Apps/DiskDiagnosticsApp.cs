@@ -12,8 +12,10 @@ namespace WeatherOS.Apps
         public bool IsRealTime => false;
 
         private DiskDiagReport _report;
-        private int _currentTab = 0; // 0: Verdict & Fix, 1: AHCI ABAR, 2: PCI Controllers, 3: Legacy IDE & VFS
-        private string[] _tabNames = { "1. VERDICT & FIX", "2. AHCI PORTS", "3. PCI BUS", "4. LEGACY & VFS" };
+        private int _currentTab = 0; // 0: Verdict & Fix, 1: AHCI ABAR, 2: PCI Controllers, 3: Legacy IDE & VFS, 4: Wipe Disk
+        private string[] _tabNames = { "1. VERDICT", "2. AHCI", "3. PCI", "4. VFS", "5. WIPE DISK" };
+        private string _wipeStatus = "";
+        private bool _confirmingWipe = false;
 
         public DiskDiagnosticsApp()
         {
@@ -71,11 +73,15 @@ namespace WeatherOS.Apps
             {
                 DrawLegacyTab(winBg);
             }
+            else if (_currentTab == 4)
+            {
+                DrawWipeTab(winBg);
+            }
 
             // Bottom controls
             System.Console.SetCursorPosition(6, 21);
             System.Console.ForegroundColor = ConsoleColor.DarkYellow;
-            System.Console.Write("[TAB/1-4: Switch View | 'R': Rescan Hardware | ESC: Return]");
+            System.Console.Write("[TAB/1-5: Switch View | 'R': Rescan | 'W': Wipe Disk | ESC: Return]");
         }
 
         private void DrawVerdictTab(ConsoleColor winBg)
@@ -249,8 +255,77 @@ namespace WeatherOS.Apps
             }
         }
 
+        private void DrawWipeTab(ConsoleColor winBg)
+        {
+            System.Console.SetCursorPosition(6, 6);
+            System.Console.ForegroundColor = ConsoleColor.Yellow;
+            System.Console.Write("PHYSICAL DISK SANITIZATION & COMPLETE WIPE");
+
+            System.Console.SetCursorPosition(6, 8);
+            System.Console.ForegroundColor = ConsoleColor.Red;
+            System.Console.Write("[DANGER] This tool overwrites partition tables and zeros sectors.");
+
+            System.Console.SetCursorPosition(6, 10);
+            System.Console.ForegroundColor = ConsoleColor.White;
+            var drives = DiskWipeService.GetPhysicalDrives();
+            if (drives == null || drives.Count == 0)
+            {
+                System.Console.Write("Target: No raw physical drive registered in Cosmos HAL.");
+                System.Console.SetCursorPosition(6, 12);
+                System.Console.ForegroundColor = ConsoleColor.Cyan;
+                System.Console.Write("Tip: Change SATA Mode in BIOS from AHCI/RAID to IDE / Legacy.");
+            }
+            else
+            {
+                var d = drives[0];
+                System.Console.Write($"Target: {d.Name} ({d.SizeDisplay})");
+                System.Console.SetCursorPosition(6, 11);
+                string fsList = d.ContainedFilesystems.Count > 0 ? string.Join(", ", d.ContainedFilesystems) : "None detected";
+                if (fsList.Length > 40) fsList = fsList.Substring(0, 37) + "...";
+                System.Console.Write($"Detected Partitions / FS: {fsList}");
+            }
+
+            System.Console.SetCursorPosition(6, 14);
+            if (_confirmingWipe)
+            {
+                System.Console.BackgroundColor = ConsoleColor.Red;
+                System.Console.ForegroundColor = ConsoleColor.White;
+                System.Console.Write(" ARE YOU SURE? Press [Y] to WIPE DISK 0, or [N] to Cancel. ");
+            }
+            else
+            {
+                System.Console.ForegroundColor = ConsoleColor.Yellow;
+                System.Console.Write("Press [W] or [ENTER] to clean and zero-fill Disk 0.");
+            }
+
+            if (!string.IsNullOrEmpty(_wipeStatus))
+            {
+                System.Console.BackgroundColor = winBg;
+                System.Console.SetCursorPosition(6, 17);
+                System.Console.ForegroundColor = _wipeStatus.StartsWith("[OK]") ? ConsoleColor.Green : ConsoleColor.Red;
+                string st = _wipeStatus.Length > 66 ? _wipeStatus.Substring(0, 66) : _wipeStatus;
+                System.Console.Write(st);
+            }
+        }
+
         public void HandleInput(TuiDesktop desktop, KeyEvent keyEvent)
         {
+            if (_confirmingWipe)
+            {
+                if (keyEvent.Key == ConsoleKeyEx.Y)
+                {
+                    _confirmingWipe = false;
+                    bool ok = DiskWipeService.WipeAndCleanDisk(0, out _wipeStatus);
+                    Refresh();
+                }
+                else if (keyEvent.Key == ConsoleKeyEx.N || keyEvent.Key == ConsoleKeyEx.Escape)
+                {
+                    _confirmingWipe = false;
+                    _wipeStatus = "Disk wipe cancelled.";
+                }
+                return;
+            }
+
             if (keyEvent.Key == ConsoleKeyEx.Tab || keyEvent.Key == ConsoleKeyEx.RightArrow)
             {
                 _currentTab = (_currentTab + 1) % _tabNames.Length;
@@ -274,6 +349,15 @@ namespace WeatherOS.Apps
             else if (keyEvent.Key == ConsoleKeyEx.D4 || keyEvent.Key == ConsoleKeyEx.Num4)
             {
                 _currentTab = 3;
+            }
+            else if (keyEvent.Key == ConsoleKeyEx.D5 || keyEvent.Key == ConsoleKeyEx.Num5)
+            {
+                _currentTab = 4;
+            }
+            else if (keyEvent.Key == ConsoleKeyEx.W || (_currentTab == 4 && keyEvent.Key == ConsoleKeyEx.Enter))
+            {
+                _currentTab = 4;
+                _confirmingWipe = true;
             }
             else if (keyEvent.Key == ConsoleKeyEx.R)
             {

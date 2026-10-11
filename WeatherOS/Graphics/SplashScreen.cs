@@ -23,18 +23,31 @@ namespace WeatherOS.Graphics
                 Delay(500);
             }
 
-            // Keep the last icon (snow) and type the OS name from left to right
-            string osName = "W E A T H E R   O S";
-            int startX = 40 - (osName.Length / 2);
-            int startY = 15;
+            // Keep the last icon (snow) and type the OS name: "WEATHER" on top, "OS" underneath
+            string line1 = "W E A T H E R";
+            int startX1 = 40 - (line1.Length / 2);
+            int startY1 = 14;
 
-            System.Console.SetCursorPosition(startX, startY);
+            System.Console.SetCursorPosition(startX1, startY1);
             System.Console.ForegroundColor = ConsoleColor.Cyan;
 
-            for (int i = 0; i < osName.Length; i++)
+            for (int i = 0; i < line1.Length; i++)
             {
-                System.Console.Write(osName[i]);
-                Delay(50); // Typing effect
+                System.Console.Write(line1[i]);
+                Delay(40); // Typing effect
+            }
+
+            string line2 = "O S";
+            int startX2 = 40 - (line2.Length / 2);
+            int startY2 = 16;
+
+            System.Console.SetCursorPosition(startX2, startY2);
+            System.Console.ForegroundColor = ConsoleColor.Yellow;
+
+            for (int i = 0; i < line2.Length; i++)
+            {
+                System.Console.Write(line2[i]);
+                Delay(60); // Typing effect
             }
             
             System.Console.ResetColor();

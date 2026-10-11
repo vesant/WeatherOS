@@ -79,7 +79,7 @@ namespace WeatherOS.Services
                 var destIp = new Cosmos.System.Network.IPv4.Address(5, 9, 243, 187);
                 var gatewayIp = new Cosmos.System.Network.IPv4.Address(10, 0, 2, 2);
                 
-                string request = "GET /?format=j2 HTTP/1.1\r\nHost: wttr.in\r\nConnection: close\r\n\r\n";
+                string request = "GET /?format=j2 HTTP/1.1\r\nHost: wttr.in\r\nUser-Agent: curl/7.68.0\r\nConnection: close\r\n\r\n";
                 string response = RawTcpHttp.FetchGet(destIp, gatewayIp, request);
                 
                 if (!string.IsNullOrWhiteSpace(response))
@@ -97,6 +97,7 @@ namespace WeatherOS.Services
 
         public void FetchOpenWeather(string city, string apiKey)
         {
+            string cleanCity = "";
             try
             {
                 if (!WeatherOS.Graphics.TuiDesktop.IsGuiActive)
@@ -106,7 +107,6 @@ namespace WeatherOS.Services
                 var destIp = new Cosmos.System.Network.IPv4.Address(5, 9, 243, 187);
                 var gatewayIp = new Cosmos.System.Network.IPv4.Address(10, 0, 2, 2);
 
-                string cleanCity = "";
                 if (!string.IsNullOrEmpty(city))
                 {
                     for (int i = 0; i < city.Length; i++)
@@ -116,6 +116,13 @@ namespace WeatherOS.Services
                     }
                 }
                 cleanCity = cleanCity.Trim();
+
+                // Immediately register query city so UI displays it immediately instead of reverting
+                if (!string.IsNullOrWhiteSpace(cleanCity))
+                {
+                    _cachedReading.Location = cleanCity.ToUpper();
+                    _cachedReading.Condition = "Awaiting Telemetry...";
+                }
 
                 string queryCity = cleanCity;
                 // Only qualify Setubal specifically to avoid Laguna Setubal in Argentina
@@ -128,26 +135,25 @@ namespace WeatherOS.Services
                 if (string.IsNullOrWhiteSpace(queryCity))
                 {
                     // Auto-locate via IP if city is empty
-                    request = "GET /?format=j2 HTTP/1.1\r\nHost: wttr.in\r\nConnection: close\r\n\r\n";
+                    request = "GET /?format=j2 HTTP/1.1\r\nHost: wttr.in\r\nUser-Agent: curl/7.68.0\r\nConnection: close\r\n\r\n";
                 }
                 else
                 {
                     string safeCity = queryCity.Replace(" ", "%20");
-                    request = "GET /" + safeCity + "?format=j2 HTTP/1.1\r\nHost: wttr.in\r\nConnection: close\r\n\r\n";
+                    request = "GET /" + safeCity + "?format=j2 HTTP/1.1\r\nHost: wttr.in\r\nUser-Agent: curl/7.68.0\r\nConnection: close\r\n\r\n";
                 }
                                  
                 if (_debugMode && !WeatherOS.Graphics.TuiDesktop.IsGuiActive)
                     System.Console.WriteLine($"[net] raw_tcp: sending SYN to {destIp.ToString()} via Bare-Metal DHCP Gateway");
                 
                 string response = RawTcpHttp.FetchGet(destIp, gatewayIp, request);
-
                 
                 if (!string.IsNullOrWhiteSpace(response))
                 {
                     if (response.Contains("400 Bad Request") || response.Contains("ERR00") || response.Contains("location not found"))
                     {
                         _cachedReading.Location = (!string.IsNullOrWhiteSpace(cleanCity) ? cleanCity.ToUpper() : "UNKNOWN") + " (NOT FOUND)";
-                        _cachedReading.Condition = "City Invalid or API Error";
+                        _cachedReading.Condition = "City Invalid or Not Found";
                         _cachedReading.TemperatureCelsius = 0;
                         _cachedReading.HumidityPercent = 0;
                         _cachedReading.AlertLevel = "NONE";
@@ -162,18 +168,33 @@ namespace WeatherOS.Services
                     }
                     else
                     {
+                        if (!string.IsNullOrWhiteSpace(cleanCity))
+                        {
+                            _cachedReading.Location = cleanCity.ToUpper() + " (RESP ERROR)";
+                            _cachedReading.Condition = "Malformed Server Response";
+                        }
                         if (_debugMode && !WeatherOS.Graphics.TuiDesktop.IsGuiActive)
                             System.Console.WriteLine("[net] raw_tcp: HTTP error or malformed response.");
                     }
                 }
                 else
                 {
+                    if (!string.IsNullOrWhiteSpace(cleanCity))
+                    {
+                        _cachedReading.Location = cleanCity.ToUpper() + " (TIMEOUT)";
+                        _cachedReading.Condition = "Network Timeout / No Signal";
+                    }
                     if (!WeatherOS.Graphics.TuiDesktop.IsGuiActive)
-                        System.Console.WriteLine("[net] Telemetry fetch timed out. Using default offline reading.");
+                        System.Console.WriteLine("[net] Telemetry fetch timed out.");
                 }
             }
             catch (Exception ex)
             {
+                if (!string.IsNullOrWhiteSpace(cleanCity))
+                {
+                    _cachedReading.Location = cleanCity.ToUpper() + " (ERROR)";
+                    _cachedReading.Condition = "Network Failure";
+                }
                 if (_debugMode && !WeatherOS.Graphics.TuiDesktop.IsGuiActive)
                     System.Console.WriteLine($"[net] raw_tcp: critical failure: {ex.Message}");
             }
@@ -212,7 +233,20 @@ namespace WeatherOS.Services
                 string weatherCondition = ParseSectionValue(json, "\"weatherDesc\"");
                 if (string.IsNullOrWhiteSpace(weatherCondition)) weatherCondition = ParseJsonString(json, "value");
                 if (string.IsNullOrWhiteSpace(weatherCondition)) weatherCondition = ParseJsonString(json, "text");
-                if (!string.IsNullOrWhiteSpace(weatherCondition)) _cachedReading.Condition = weatherCondition.Trim();
+
+                if (string.IsNullOrWhiteSpace(weatherCondition) && _cachedReading.WeatherCode > 0)
+                {
+                    weatherCondition = GetConditionFromWeatherCode(_cachedReading.WeatherCode);
+                }
+
+                if (!string.IsNullOrWhiteSpace(weatherCondition))
+                {
+                    _cachedReading.Condition = weatherCondition.Trim();
+                }
+                else if (string.IsNullOrWhiteSpace(_cachedReading.Condition) || _cachedReading.Condition.Contains("Awaiting"))
+                {
+                    _cachedReading.Condition = "Telemetry Received";
+                }
                 
                 // Extract nearest area and country from JSON
                 string area = ParseSectionValue(json, "\"nearest_area\"");
@@ -247,6 +281,7 @@ namespace WeatherOS.Services
                         string cLower = country.ToLower();
                         if (cLower == "portugal") countrySuffix = ", PT";
                         else if (cLower == "spain") countrySuffix = ", ES";
+                        else if (cLower == "estonia") countrySuffix = ", EE";
                         else countrySuffix = ", " + country;
                     }
                     _cachedReading.Location = (area + countrySuffix).ToUpper();
@@ -524,6 +559,62 @@ namespace WeatherOS.Services
         public float GetDewPointCelsius()
         {
             return _cachedReading.TemperatureCelsius - ((100.0f - _cachedReading.HumidityPercent) / 5.0f);
+        }
+
+        public static string GetConditionFromWeatherCode(int code)
+        {
+            switch (code)
+            {
+                case 113: return "Clear / Sunny";
+                case 116: return "Partly Cloudy";
+                case 119: return "Cloudy";
+                case 122: return "Overcast";
+                case 143: return "Mist";
+                case 176: return "Patchy Rain";
+                case 179: return "Patchy Snow";
+                case 182: return "Patchy Sleet";
+                case 185: return "Freezing Drizzle";
+                case 200: return "Thundery Outbreaks";
+                case 227: return "Blowing Snow";
+                case 230: return "Blizzard";
+                case 248: return "Fog";
+                case 260: return "Freezing Fog";
+                case 263: return "Patchy Light Drizzle";
+                case 266: return "Light Drizzle";
+                case 281: return "Freezing Drizzle";
+                case 284: return "Heavy Freezing Drizzle";
+                case 293: return "Patchy Light Rain";
+                case 296: return "Light Rain";
+                case 299: return "Moderate Rain at Times";
+                case 302: return "Moderate Rain";
+                case 305: return "Heavy Rain at Times";
+                case 308: return "Heavy Rain";
+                case 311: return "Light Freezing Rain";
+                case 314: return "Heavy Freezing Rain";
+                case 317: return "Light Sleet";
+                case 320: return "Heavy Sleet";
+                case 323: return "Patchy Light Snow";
+                case 326: return "Light Snow";
+                case 329: return "Patchy Moderate Snow";
+                case 332: return "Moderate Snow";
+                case 335: return "Patchy Heavy Snow";
+                case 338: return "Heavy Snow";
+                case 350: return "Ice Pellets";
+                case 353: return "Light Rain Shower";
+                case 356: return "Moderate / Heavy Rain Shower";
+                case 359: return "Torrential Rain Shower";
+                case 362: return "Light Sleet Showers";
+                case 365: return "Moderate / Heavy Sleet Showers";
+                case 368: return "Light Snow Showers";
+                case 371: return "Heavy Snow Showers";
+                case 374: return "Light Ice Pellet Showers";
+                case 377: return "Heavy Ice Pellet Showers";
+                case 386: return "Thunderstorm with Rain";
+                case 389: return "Heavy Thunderstorm with Rain";
+                case 392: return "Thunderstorm with Snow";
+                case 395: return "Heavy Thunderstorm with Snow";
+                default: return "";
+            }
         }
     }
 }

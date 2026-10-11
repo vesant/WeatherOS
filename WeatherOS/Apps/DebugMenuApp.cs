@@ -43,7 +43,10 @@ namespace WeatherOS.Apps
                     System.Console.ForegroundColor = (i == 0) ? ConsoleColor.Yellow : ConsoleColor.White;
                     System.Console.BackgroundColor = winBg;
                 }
-                System.Console.Write($" > {_options[i]} ".PadRight(54));
+
+                string opt = $" > {_options[i]} ";
+                if (opt.Length > 53) opt = opt.Substring(0, 50) + "... ";
+                System.Console.Write(opt.PadRight(53));
             }
 
             System.Console.BackgroundColor = winBg;

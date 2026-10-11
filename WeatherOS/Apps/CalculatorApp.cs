@@ -16,27 +16,27 @@ namespace WeatherOS.Apps
 
         public void Draw(TuiDesktop desktop)
         {
-            desktop.DrawWindow(20, 4, 30, 17, "CALCULATOR");
+            desktop.DrawWindow(24, 4, 32, 17, "CALCULATOR");
             ConsoleColor winBg = desktop.IsDarkMode ? ConsoleColor.Black : ConsoleColor.Blue;
             System.Console.BackgroundColor = winBg;
             System.Console.ForegroundColor = ConsoleColor.White;
 
-            System.Console.SetCursorPosition(22, 6);
+            System.Console.SetCursorPosition(27, 6);
             System.Console.Write($"[{_calcResult.PadLeft(24)}]");
 
-            System.Console.SetCursorPosition(24, 9);
+            System.Console.SetCursorPosition(29, 9);
             System.Console.Write("[7]  [8]  [9]  [/]");
-            System.Console.SetCursorPosition(24, 11);
+            System.Console.SetCursorPosition(29, 11);
             System.Console.Write("[4]  [5]  [6]  [*]");
-            System.Console.SetCursorPosition(24, 13);
+            System.Console.SetCursorPosition(29, 13);
             System.Console.Write("[1]  [2]  [3]  [-]");
-            System.Console.SetCursorPosition(24, 15);
+            System.Console.SetCursorPosition(29, 15);
             System.Console.Write("[0]  [.]  [C]  [+]");
 
-            System.Console.SetCursorPosition(22, 18);
+            System.Console.SetCursorPosition(27, 18);
             System.Console.ForegroundColor = ConsoleColor.Cyan;
             System.Console.Write("> ");
-            _calcEditor.DrawInline(24, 18, 18, winBg, ConsoleColor.Cyan);
+            _calcEditor.DrawInline(29, 18, 20, winBg, ConsoleColor.Cyan);
         }
 
         public void HandleInput(TuiDesktop desktop, KeyEvent keyEvent)

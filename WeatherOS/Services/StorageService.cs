@@ -22,10 +22,12 @@ namespace WeatherOS.Services
             {
                 long mbFree = FreeSpace / (1024 * 1024);
                 long mbTotal = TotalSize / (1024 * 1024);
-                sizeStr = $" | {mbFree}MB free / {mbTotal}MB";
+                sizeStr = $" | {mbFree}/{mbTotal}MB";
             }
-            string rw = IsLinuxSystem ? " [Linux Target]" : (IsReadOnly ? " [Read-Only]" : " [Writable]");
-            return $"{Name} (FS: {FileSystem}{sizeStr}){rw}";
+            string rw = IsLinuxSystem ? " [Linux]" : (IsReadOnly ? " [RO]" : " [RW]");
+            string desc = $"{Name} ({FileSystem}{sizeStr}){rw}";
+            if (desc.Length > 56) desc = desc.Substring(0, 53) + "...";
+            return desc;
         }
     }
 

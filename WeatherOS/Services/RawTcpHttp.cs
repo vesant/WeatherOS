@@ -354,21 +354,32 @@ namespace WeatherOS.Services
 
         public static string FetchGet(Address destIp, Address gatewayIp, string requestString)
         {
+            if (NetworkDevice.Devices.Count == 0) return null;
             var nic = NetworkDevice.Devices[0];
+
+            // If IP not configured yet, attempt auto-config
+            if (_ipSource[0] == 0 && _ipSource[1] == 0)
+            {
+                DoAutoConfig(nic);
+                if (_ipSource[0] == 0 && _ipSource[1] == 0) return null;
+            }
+
             _ipDest = destIp.ToByteArray();
 
             // Refresh router ARP cache before starting TCP
             if (_gatewayIp[0] != 0) SendArpRequest(_gatewayIp);
 
             // Flush any residual incoming packets from previous session
-            for (int drain = 0; drain < 10; drain++)
+            for (int drain = 0; drain < 30; drain++)
             {
                 WeatherOS.Kernel.CustomNIC?.HackPoll();
+                System.Threading.Thread.Sleep(1);
             }
 
             _synAckReceived = false;
             _finReceived = false;
             _rxLength = 0;
+            Array.Clear(_rxBuffer, 0, _rxBuffer.Length);
             _sequence = 0x4F9B2C11 + (uint)(_sourcePort * 101);
             _acknowledgment = 0;
 
@@ -377,17 +388,18 @@ namespace WeatherOS.Services
 
             try
             {
-                // Send SYN with fast retransmission (up to 3 attempts, ~1.5s per attempt)
-                for (int attempt = 0; attempt < 3; attempt++)
+                // Send SYN with fast retransmission (up to 4 attempts)
+                for (int attempt = 0; attempt < 4; attempt++)
                 {
                     SendTcpPacket(nic, 0x02, new byte[0]); // SYN
                     
                     int synTimeout = 0;
-                    while (!_synAckReceived && synTimeout < 1500000)
+                    while (!_synAckReceived && synTimeout < 300)
                     {
                         WeatherOS.Kernel.CustomNIC?.HackPoll();
+                        System.Threading.Thread.Sleep(5);
                         synTimeout++;
-                        if (!WeatherOS.Graphics.TuiDesktop.IsGuiActive && (synTimeout % 500000 == 0))
+                        if (!WeatherOS.Graphics.TuiDesktop.IsGuiActive && (synTimeout % 50 == 0))
                         {
                             System.Console.Write(".");
                         }
@@ -409,15 +421,17 @@ namespace WeatherOS.Services
                 SendTcpPacket(nic, 0x18, payload); // ACK + PSH
                 _sequence += (uint)payload.Length;
 
-                // Wait for response data
-                int dataTimeout = 0;
+                // Wait for complete response data (with real-time pacing)
+                int dataMs = 0;
                 int lastRxLen = _rxLength;
-                int quietLoops = 0;
-                while (!_finReceived && dataTimeout < 4000000)
+                int quietMs = 0;
+                while (!_finReceived && dataMs < 6000)
                 {
                     WeatherOS.Kernel.CustomNIC?.HackPoll();
-                    dataTimeout++;
-                    if (!WeatherOS.Graphics.TuiDesktop.IsGuiActive && (dataTimeout % 1000000 == 0))
+                    System.Threading.Thread.Sleep(5);
+                    dataMs += 5;
+
+                    if (!WeatherOS.Graphics.TuiDesktop.IsGuiActive && (dataMs % 500 == 0))
                     {
                         System.Console.Write(".");
                     }
@@ -425,12 +439,13 @@ namespace WeatherOS.Services
                     if (_rxLength > lastRxLen)
                     {
                         lastRxLen = _rxLength;
-                        quietLoops = 0;
+                        quietMs = 0;
                     }
                     else if (_rxLength > 0)
                     {
-                        quietLoops++;
-                        if (quietLoops > 1000000) break; // Silence after receiving data
+                        quietMs += 5;
+                        // Wait until full JSON is received (braces balanced) or 600ms of silence
+                        if (_rxLength > 300 && quietMs >= 600) break;
                     }
                 }
 
@@ -453,6 +468,7 @@ namespace WeatherOS.Services
                 SendTcpPacket(nic, 0x04, new byte[0]);
                 nic.DataReceived = _oldHandler;
                 _sourcePort++;
+                if (_sourcePort > 65000) _sourcePort = 50000;
             }
         }
 

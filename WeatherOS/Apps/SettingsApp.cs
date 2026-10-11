@@ -67,7 +67,7 @@ namespace WeatherOS.Apps
             System.Console.BackgroundColor = winBg;
             System.Console.SetCursorPosition(12, 19);
             System.Console.ForegroundColor = ConsoleColor.DarkGray;
-            System.Console.Write("[UP/DOWN: Navigate | ENTER: Toggle/Save | Ctrl+A / Arrows: Edit]");
+            System.Console.Write("[UP/DN: Nav | ENTER: Toggle | Ctrl+A/Arrows: Edit]");
         }
 
         public void HandleInput(TuiDesktop desktop, KeyEvent keyEvent)

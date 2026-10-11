@@ -172,13 +172,14 @@ namespace WeatherOS.Apps
                         System.Console.ForegroundColor = locations[i].IsReadOnly ? ConsoleColor.DarkGray : ConsoleColor.White;
                     }
                     string opt = $" [{i + 1}] {locations[i].GetDescription()} ";
-                    System.Console.Write(opt.PadRight(60));
+                    if (opt.Length > 62) opt = opt.Substring(0, 59) + "... ";
+                    System.Console.Write(opt.PadRight(62));
                 }
 
                 System.Console.BackgroundColor = winBg;
                 System.Console.SetCursorPosition(8, 18);
                 System.Console.ForegroundColor = ConsoleColor.DarkGray;
-                System.Console.Write("[UP/DOWN or 1-4 to select destination, ENTER to Save, ESC:Cancel]");
+                System.Console.Write("[UP/DN/1-4: Select Target | ENTER: Save | ESC: Cancel]".PadRight(62));
             }
             else // Prompts (2=Open, 3=Save Filename, 4=Delete)
             {
