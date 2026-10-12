@@ -190,8 +190,18 @@ namespace WeatherOS.Services
             }
             catch { }
 
-            _cachedPartitions = results;
-            return results;
+            var deduped = new List<PartitionInfo>();
+            foreach (var r in results)
+            {
+                if (!deduped.Exists(d => (d.StartingSector > 0 && d.StartingSector == r.StartingSector) ||
+                                         (!string.IsNullOrEmpty(d.MountedDriveLetter) && !string.IsNullOrEmpty(r.MountedDriveLetter) && d.MountedDriveLetter == r.MountedDriveLetter)))
+                {
+                    deduped.Add(r);
+                }
+            }
+
+            _cachedPartitions = deduped;
+            return deduped;
         }
 
         private static void ProbeRawDrive(BlockDevice drive, int diskIdx, List<PartitionInfo> results)
@@ -381,8 +391,9 @@ namespace WeatherOS.Services
 
                     if (fat32Sig.StartsWith("FAT32"))
                     {
-                        info.FileSystemType = "FAT32 (EFI / Boot)";
+                        info.FileSystemType = "FAT32";
                         info.IsWritable = true;
+                        info.IsLinuxSystem = false;
                         
                         try
                         {
@@ -391,7 +402,7 @@ namespace WeatherOS.Services
                         }
                         catch { }
 
-                        info.Description = "Linux EFI System Partition / FAT32 [Full Read/Write]";
+                        info.Description = "FAT32 Primary Storage [Full Read/Write Ready]";
                         return;
                     }
 

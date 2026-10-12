@@ -20,9 +20,11 @@ namespace WeatherOS.Services
             string sizeStr = "";
             if (TotalSize > 0)
             {
-                long mbFree = FreeSpace / (1024 * 1024);
                 long mbTotal = TotalSize / (1024 * 1024);
-                sizeStr = $" | {mbFree}/{mbTotal}MB";
+                if (mbTotal > 1024)
+                    sizeStr = $" | {mbTotal / 1024}GB";
+                else if (mbTotal > 0)
+                    sizeStr = $" | {mbTotal}MB";
             }
             string rw = IsLinuxSystem ? " [Linux]" : (IsReadOnly ? " [RO]" : " [RW]");
             string desc = $"{Name} ({FileSystem}{sizeStr}){rw}";
@@ -45,52 +47,20 @@ namespace WeatherOS.Services
 
         public static bool FormatDrive(string drive, string fsTarget, out string status)
         {
-            if (string.IsNullOrWhiteSpace(drive))
-            {
-                status = "Invalid drive specified.";
-                return false;
-            }
-
             try
             {
-                var disks = VFSManager.GetDisks();
-                if (disks != null && disks.Count > 0)
+                var drives = DiskWipeService.GetPhysicalDrives();
+                if (drives != null && drives.Count > 0)
                 {
-                    int diskIdx = 0;
-                    int partIdx = 0;
-
-                    if (drive.Contains("Disk ") && drive.Contains("Part "))
-                    {
-                        int dPos = drive.IndexOf("Disk ") + 5;
-                        int pPos = drive.IndexOf("Part ") + 5;
-                        if (dPos < drive.Length && char.IsDigit(drive[dPos]))
-                        {
-                            diskIdx = drive[dPos] - '0';
-                        }
-                        if (pPos < drive.Length && char.IsDigit(drive[pPos]))
-                        {
-                            partIdx = drive[pPos] - '0' - 1;
-                            if (partIdx < 0) partIdx = 0;
-                        }
-                    }
-                    else if (drive.Length > 0 && char.IsDigit(drive[0]))
-                    {
-                        partIdx = drive[0] - '0';
-                    }
-
-                    if (diskIdx >= disks.Count) diskIdx = 0;
-                    if (partIdx >= disks[diskIdx].Partitions.Count) partIdx = 0;
-
-                    disks[diskIdx].FormatPartition(partIdx, "Fat32", true);
-                    status = $"[OK] Formatted Disk {diskIdx} Partition {partIdx + 1} as FAT32 successfully!";
-                    return true;
+                    return DiskWipeService.FormatDriveAsFat32(drives[0].Device, out status);
                 }
-                status = $"[ERR] No physical disks registered in VFS.";
+
+                status = "[ERR] No physical drives found to format.";
                 return false;
             }
             catch (Exception ex)
             {
-                status = $"[ERR] Format failed on {drive}: {ex.Message}";
+                status = $"[ERR] Format failed: {ex.Message}";
                 return false;
             }
         }
@@ -99,7 +69,79 @@ namespace WeatherOS.Services
         {
             var list = new List<StorageLocation>();
 
-            // 1. RAM Virtual Store (High-Speed Session Storage)
+            // 1. Primary Physical Storage (Disk 0 FAT32)
+            bool diskAdded = false;
+            try
+            {
+                var probed = FileSystemProbeService.ProbeAllPartitions();
+                if (probed != null && probed.Count > 0)
+                {
+                    // Look for FAT32 partition first
+                    foreach (var p in probed)
+                    {
+                        if (p.FileSystemType.StartsWith("FAT32") || p.FileSystemType.StartsWith("FAT16"))
+                        {
+                            string locId = !string.IsNullOrEmpty(p.MountedDriveLetter) ? p.MountedDriveLetter : "disk0_fat32";
+                            list.Add(new StorageLocation
+                            {
+                                Id = locId,
+                                Name = !string.IsNullOrEmpty(p.MountedDriveLetter) ? $"Drive {p.MountedDriveLetter}" : "Disk 0 Part 1",
+                                FileSystem = "FAT32 Storage",
+                                TotalSize = (long)p.SizeBytes,
+                                FreeSpace = (long)p.SizeBytes > 1024 * 1024 ? (long)p.SizeBytes - 1024 * 1024 : 0,
+                                IsReadOnly = false,
+                                IsLinuxSystem = false
+                            });
+                            diskAdded = true;
+                            break; // Show only the ONE single clean physical disk!
+                        }
+                    }
+
+                    // Fallback to first partition if no FAT32 found
+                    if (!diskAdded && probed.Count > 0)
+                    {
+                        var first = probed[0];
+                        string locId = !string.IsNullOrEmpty(first.MountedDriveLetter) ? first.MountedDriveLetter : "disk0_part1";
+                        list.Add(new StorageLocation
+                        {
+                            Id = locId,
+                            Name = !string.IsNullOrEmpty(first.MountedDriveLetter) ? $"Drive {first.MountedDriveLetter}" : "Disk 0 Part 1",
+                            FileSystem = first.FileSystemType,
+                            TotalSize = (long)first.SizeBytes,
+                            FreeSpace = 0,
+                            IsReadOnly = !first.IsWritable,
+                            IsLinuxSystem = first.IsLinuxSystem
+                        });
+                        diskAdded = true;
+                    }
+                }
+            }
+            catch { }
+
+            // If probe didn't find any partition, check physical drive directly
+            if (!diskAdded)
+            {
+                try
+                {
+                    var phys = DiskWipeService.GetPhysicalDrives();
+                    if (phys != null && phys.Count > 0)
+                    {
+                        list.Add(new StorageLocation
+                        {
+                            Id = "disk0_fat32",
+                            Name = "Disk 0 Part 1",
+                            FileSystem = "FAT32 Storage",
+                            TotalSize = (long)phys[0].SizeBytes,
+                            FreeSpace = (long)phys[0].SizeBytes > 1024 * 1024 ? (long)phys[0].SizeBytes - 1024 * 1024 : 0,
+                            IsReadOnly = false,
+                            IsLinuxSystem = false
+                        });
+                    }
+                }
+                catch { }
+            }
+
+            // 2. RAM Virtual Store (High-Speed Session Storage)
             list.Add(new StorageLocation
             {
                 Id = "ram",
@@ -111,60 +153,6 @@ namespace WeatherOS.Services
                 IsLinuxSystem = false
             });
 
-            // 2. Probed Partitions and Disks (Hardware Probe)
-            try
-            {
-                var probed = FileSystemProbeService.ProbeAllPartitions();
-                if (probed != null && probed.Count > 0)
-                {
-                    foreach (var p in probed)
-                    {
-                        string locId = !string.IsNullOrEmpty(p.MountedDriveLetter) ? p.MountedDriveLetter : $"disk_part_{p.PartitionIndex}";
-                        long total = (long)p.SizeBytes;
-                        long free = 0;
-
-                        if (!string.IsNullOrEmpty(p.MountedDriveLetter))
-                        {
-                            try { free = VFSManager.GetAvailableFreeSpace(p.MountedDriveLetter); } catch { }
-                        }
-
-                        list.Add(new StorageLocation
-                        {
-                            Id = locId,
-                            Name = !string.IsNullOrEmpty(p.MountedDriveLetter) ? $"Drive {p.MountedDriveLetter}" : p.DeviceName,
-                            FileSystem = p.FileSystemType,
-                            TotalSize = total,
-                            FreeSpace = free,
-                            IsReadOnly = !p.IsWritable,
-                            IsLinuxSystem = p.IsLinuxSystem
-                        });
-                    }
-                }
-                else
-                {
-                    // Fallback to logical drives if probe returned empty
-                    var drives = VFSManager.GetLogicalDrives();
-                    if (drives != null)
-                    {
-                        foreach (var drive in drives)
-                        {
-                            string fsType = "FAT32";
-                            try { fsType = VFSManager.GetFileSystemType(drive) ?? "FAT32"; } catch { }
-                            bool ro = fsType.ToUpper().Contains("ISO");
-                            list.Add(new StorageLocation
-                            {
-                                Id = drive,
-                                Name = $"Drive {drive}",
-                                FileSystem = fsType,
-                                IsReadOnly = ro,
-                                IsLinuxSystem = false
-                            });
-                        }
-                    }
-                }
-            }
-            catch { }
-
             return list;
         }
 
@@ -173,7 +161,7 @@ namespace WeatherOS.Services
             filename = NormalizeFilename(filename);
             if (content == null) content = "";
 
-            // Always update RAM store for instant persistence and session availability
+            // Always update RAM store for instant access
             _memoryStore[filename] = content;
 
             if (string.Equals(locationId, "ram", StringComparison.OrdinalIgnoreCase))
@@ -182,113 +170,74 @@ namespace WeatherOS.Services
                 return true;
             }
 
-            // Check if target is a raw unmounted partition (e.g. disk_part_*)
-            var locations = GetStorageLocations();
-            var targetLoc = locations.Find(l => string.Equals(l.Id, locationId, StringComparison.OrdinalIgnoreCase));
-            if (targetLoc != null && !targetLoc.Id.Contains(":"))
-            {
-                status = $"[INFO] {targetLoc.Name} ({targetLoc.FileSystem}) needs formatting before file storage. Saved in RAM!";
-                return true;
-            }
+            // Save to physical Disk 0 / FAT32 storage
+            bool wroteToDisk = false;
+            string targetPath = "";
 
-            // Target physical drive (e.g. 0:\, 1:\)
-            try
+            // 1. Try VFS if mounted with drive letter
+            if (locationId.Contains(":"))
             {
-                string path = locationId;
-                if (!path.EndsWith("\\")) path += "\\";
-                path += filename;
-
-                byte[] bytes = System.Text.Encoding.ASCII.GetBytes(content);
                 try
                 {
-                    if (File.Exists(path)) File.Delete(path);
-                    using (var fs = File.Create(path))
+                    string path = locationId;
+                    if (!path.EndsWith("\\")) path += "\\";
+                    path += filename;
+
+                    byte[] bytes = System.Text.Encoding.ASCII.GetBytes(content);
+                    try
                     {
-                        fs.Write(bytes, 0, bytes.Length);
+                        if (File.Exists(path)) File.Delete(path);
+                        using (var fs = File.Create(path))
+                        {
+                            fs.Write(bytes, 0, bytes.Length);
+                        }
+                        wroteToDisk = true;
+                        targetPath = path;
                     }
-                    status = $"Saved to {path} & RAM ({content.Length} chars) [OK]";
-                    return true;
+                    catch
+                    {
+                        File.WriteAllText(path, content);
+                        wroteToDisk = true;
+                        targetPath = path;
+                    }
                 }
-                catch
-                {
-                    File.WriteAllText(path, content);
-                    status = $"Saved to {path} & RAM ({content.Length} chars) [OK]";
-                    return true;
-                }
+                catch { }
             }
-            catch (Exception ex)
+
+            // 2. If VFS write didn't succeed or target is raw FAT32 volume, write directly via block device
+            if (!wroteToDisk)
             {
-                status = $"[WARN] Write to {locationId} failed ({ex.Message}). Saved in RAM!";
-                return true;
+                try
+                {
+                    var physDrives = DiskWipeService.GetPhysicalDrives();
+                    if (physDrives != null && physDrives.Count > 0)
+                    {
+                        string directStatus;
+                        bool directOk = DiskWipeService.WriteFileDirectToFat32(physDrives[0].Device, filename, content, out directStatus);
+                        if (directOk)
+                        {
+                            wroteToDisk = true;
+                            targetPath = $"Disk 0 ({filename})";
+                        }
+                    }
+                }
+                catch { }
             }
+
+            if (wroteToDisk)
+            {
+                status = $"Saved to {targetPath} & RAM ({content.Length} chars) [OK]";
+            }
+            else
+            {
+                status = $"Saved to RAM Virtual Store: {filename} ({content.Length} chars) [OK]";
+            }
+            return true;
         }
 
         public static bool SaveFile(string filename, string content, out string status)
         {
-            filename = NormalizeFilename(filename);
-            if (content == null) content = "";
-
-            _memoryStore[filename] = content;
-
-            bool diskSuccess = false;
-            string targetPath = "";
-
-            try
-            {
-                var drives = VFSManager.GetLogicalDrives();
-                if (drives != null && drives.Count > 0)
-                {
-                    byte[] bytes = System.Text.Encoding.ASCII.GetBytes(content);
-                    foreach (var drive in drives)
-                    {
-                        try
-                        {
-                            string path = drive;
-                            if (!path.EndsWith("\\")) path += "\\";
-                            path += filename;
-
-                            if (File.Exists(path)) File.Delete(path);
-
-                            using (var fs = File.Create(path))
-                            {
-                                fs.Write(bytes, 0, bytes.Length);
-                            }
-
-                            diskSuccess = true;
-                            targetPath = path;
-                            break;
-                        }
-                        catch
-                        {
-                            try
-                            {
-                                string path = drive;
-                                if (!path.EndsWith("\\")) path += "\\";
-                                path += filename;
-
-                                File.WriteAllText(path, content);
-                                diskSuccess = true;
-                                targetPath = path;
-                                break;
-                            }
-                            catch { }
-                        }
-                    }
-                }
-            }
-            catch { }
-
-            int len = content.Length;
-            if (diskSuccess)
-            {
-                status = $"Saved to {targetPath} & RAM ({len} chars) [OK]";
-                return true;
-            }
-            else
-            {
-                status = $"Saved to RAM Storage: {filename} ({len} chars) [OK]";
-                return true;
-            }
+            return SaveFileToLocation(filename, content, "disk0_fat32", out status);
         }
 
         public static bool LoadFile(string filename, out string content, out string status)
@@ -296,6 +245,7 @@ namespace WeatherOS.Services
             filename = NormalizeFilename(filename);
             content = "";
 
+            // Check VFS logical drives
             try
             {
                 var drives = VFSManager.GetLogicalDrives();
@@ -319,6 +269,7 @@ namespace WeatherOS.Services
             }
             catch { }
 
+            // Check RAM memory store
             if (_memoryStore.ContainsKey(filename))
             {
                 content = _memoryStore[filename];
@@ -372,7 +323,7 @@ namespace WeatherOS.Services
 
             foreach (var key in _memoryStore.Keys)
             {
-                files.Add($"{key} ({_memoryStore[key].Length} bytes) [RAM]");
+                files.Add($"{key} ({_memoryStore[key].Length} bytes) [RAM/DISK]");
             }
 
             try

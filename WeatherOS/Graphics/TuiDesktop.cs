@@ -66,6 +66,7 @@ namespace WeatherOS.Graphics
             RegisterApp(new SystemResourcesApp());
             RegisterApp(new DebugMenuApp());
             RegisterApp(new DiskDiagnosticsApp());
+            RegisterApp(new BatteryDiagnosticsApp());
         }
 
         private void RegisterApp(IApp app)

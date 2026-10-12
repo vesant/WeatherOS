@@ -91,9 +91,7 @@ namespace WeatherOS.Apps
                 }
                 else if (_selectedIndex == 3)
                 {
-                    var b = BatteryService.GetBatteryInfo();
-                    string ac = b.IsAcConnected ? "AC Plugged (Charging)" : "On Battery (Discharging)";
-                    desktop.DrawStatusMessage($"Power: {ac} | Level: {b.Percentage}% [{b.ChassisType}]");
+                    desktop.SetCurrentApp("battery");
                 }
                 else if (_selectedIndex == 4)
                 {

@@ -383,26 +383,15 @@ namespace WeatherOS.Apps
                 DrawWipeProgress(desktop, winBg, pct, $"Zeroing sector {endSec} / 2048 ({pct}%)...");
             }
 
-            DrawWipeProgress(desktop, winBg, 96, "Writing clean protective MBR table (FAT32 LBA)...");
-            byte[] cleanMbr = new byte[512];
-            cleanMbr[446] = 0x80;
-            cleanMbr[450] = 0x0C;
-            cleanMbr[454] = 0x00; cleanMbr[455] = 0x08;
-            ulong partSectors = dev.BlockCount > 2048 ? dev.BlockCount - 2048 : 0;
-            if (partSectors > 0xFFFFFFFF) partSectors = 0xFFFFFFFF;
-            uint sectors32 = (uint)partSectors;
-            cleanMbr[458] = (byte)(sectors32 & 0xFF);
-            cleanMbr[459] = (byte)((sectors32 >> 8) & 0xFF);
-            cleanMbr[460] = (byte)((sectors32 >> 16) & 0xFF);
-            cleanMbr[461] = (byte)((sectors32 >> 24) & 0xFF);
-            cleanMbr[510] = 0x55; cleanMbr[511] = 0xAA;
-            try { dev.WriteBlock(0, 1, ref cleanMbr); } catch { }
+            DrawWipeProgress(desktop, winBg, 95, "Writing clean MBR & Formatting FAT32 Partition 1...");
+            string fmtStatus;
+            bool fmtOk = DiskWipeService.FormatDriveAsFat32(dev, out fmtStatus);
 
-            DrawWipeProgress(desktop, winBg, 97, "Auditing drive: reading back LBA 0 & LBA 1 for verification...");
+            DrawWipeProgress(desktop, winBg, 98, "Auditing drive: checking LBA 0 (MBR) and LBA 2048 (FAT32 BPB)...");
             byte[] readMbr = new byte[512];
-            byte[] readLba1 = new byte[512];
+            byte[] readBpb = new byte[512];
             bool mbrValid = false;
-            int zeroCount = 0;
+            bool bpbValid = false;
 
             try
             {
@@ -416,24 +405,25 @@ namespace WeatherOS.Apps
 
             try
             {
-                dev.ReadBlock(1, 1, ref readLba1);
-                for (int b = 0; b < 512; b++)
+                dev.ReadBlock(2048, 1, ref readBpb);
+                if (readBpb[510] == 0x55 && readBpb[511] == 0xAA &&
+                    readBpb[82] == 'F' && readBpb[83] == 'A' && readBpb[84] == 'T' && readBpb[85] == '3' && readBpb[86] == '2')
                 {
-                    if (readLba1[b] == 0x00) zeroCount++;
+                    bpbValid = true;
                 }
             }
             catch { }
 
-            _auditPassed = mbrValid && (zeroCount >= 510);
+            _auditPassed = mbrValid && bpbValid;
             if (_auditPassed)
             {
-                _auditResult = $"VERIFIED: LBA0=0x55AA Valid MBR | LBA1={zeroCount}/512 Zero-Filled";
-                _wipeStatus = "[AUDIT PASSED] 100% Cleaned & Verified Zero-Filled!";
+                _auditResult = "VERIFIED: MBR (LBA 0) & FAT32 Volume (LBA 2048) 100% Valid!";
+                _wipeStatus = "[AUDIT PASSED] Partitioned & Formatted as FAT32 Storage!";
             }
             else
             {
-                _auditResult = $"AUDIT: LBA0 MBR={(mbrValid ? "OK" : "ERR")} | LBA1 Zeros={zeroCount}/512";
-                _wipeStatus = "[OK] Disk 0 wipe finished.";
+                _auditResult = $"AUDIT: MBR={(mbrValid ? "OK" : "ERR")} | FAT32 BPB={(bpbValid ? "OK" : "ERR")}";
+                _wipeStatus = fmtOk ? "[OK] Disk wiped & formatted." : "[ERR] Format failed: " + fmtStatus;
             }
 
             DrawWipeProgress(desktop, winBg, 100, _auditResult);

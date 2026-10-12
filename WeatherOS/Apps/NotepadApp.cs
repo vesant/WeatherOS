@@ -22,7 +22,14 @@ namespace WeatherOS.Apps
 
         public void Draw(TuiDesktop desktop)
         {
-            string title = _notepadState == 1 ? $"NOTEPAD: {_notepadFilename}" : "NOTEPAD (VFS Storage Manager)";
+            string title;
+            if (_notepadState == 1)
+                title = $"NOTEPAD: {_notepadFilename}  |  [F2/Ctrl+S] Save  [ESC] Exit";
+            else if (_notepadState == 6)
+                title = "NOTEPAD: Select Storage Target  |  [ESC] Cancel";
+            else
+                title = "NOTEPAD (VFS Storage Manager)  |  [ESC] Exit";
+
             desktop.DrawWindow(5, 3, 70, 18, title);
             ConsoleColor winBg = desktop.IsDarkMode ? ConsoleColor.Black : ConsoleColor.Blue;
             System.Console.BackgroundColor = winBg;
@@ -155,10 +162,10 @@ namespace WeatherOS.Apps
 
                 System.Console.SetCursorPosition(8, 8);
                 System.Console.ForegroundColor = ConsoleColor.Cyan;
-                System.Console.Write("Available Storage Devices & File Systems:");
+                System.Console.Write("Available Storage Devices & Partitions:");
 
                 var locations = StorageService.GetStorageLocations();
-                for (int i = 0; i < locations.Count && i < 4; i++)
+                for (int i = 0; i < locations.Count && i < 2; i++)
                 {
                     System.Console.SetCursorPosition(8, 10 + i * 2);
                     if (i == _selectedLocationIndex)
@@ -176,9 +183,16 @@ namespace WeatherOS.Apps
                     System.Console.Write(opt.PadRight(62));
                 }
 
+                System.Console.BackgroundColor = winBg;
+                System.Console.SetCursorPosition(8, 15);
+                System.Console.ForegroundColor = ConsoleColor.DarkCyan;
+                string stDisp = "Status: " + _lastStatus;
+                if (stDisp.Length > 62) stDisp = stDisp.Substring(0, 59) + "...";
+                System.Console.Write(stDisp.PadRight(62));
+
                 System.Console.SetCursorPosition(8, 18);
                 System.Console.ForegroundColor = ConsoleColor.Yellow;
-                System.Console.Write("[Enter / 1-4] Save to Target  |  [ESC] Return to Editor");
+                System.Console.Write("[Enter / 1-2] Save to Target  |  [ESC] Return to Editor");
             }
             else // Prompts (2=Open, 3=Save Filename, 4=Delete)
             {
