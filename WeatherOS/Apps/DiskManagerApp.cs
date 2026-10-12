@@ -115,7 +115,6 @@ namespace WeatherOS.Apps
             }
 
             // 3. Scan physical disk VFS or Direct FAT32
-            bool vfsSuccess = false;
             bool isDriveMounted = false;
             try
             {
@@ -181,7 +180,6 @@ namespace WeatherOS.Apps
                                 });
                             }
                         }
-                        vfsSuccess = true;
                     }
                 }
                 catch { }
@@ -209,7 +207,6 @@ namespace WeatherOS.Apps
                                     Tag = GetTagForFile(item.Name)
                                 });
                             }
-                            vfsSuccess = true;
                         }
                     }
                 }

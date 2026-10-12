@@ -10,23 +10,23 @@ namespace WeatherOS.Graphics
             System.Console.Clear();
             System.Console.CursorVisible = false;
 
-            string[] icons = { "sun", "cloud", "rain", "snow" };
+            // Snow -> Rain -> Cloud -> Sun (Sun is the final icon)
+            string[] icons = { "snow", "rain", "cloud", "sun" };
+            int iconLeft = (80 - 16) / 2; // Exactly 32 (80 cols centered)
+            int iconTop = 6;
             
-            // Animation loop (Approx 3 seconds total)
-            // 4 icons, each shown for 500ms = 2.0s
-            // Then the final icon stays while OS name types out = 1.0s
-            
+            // Animation loop
             for (int i = 0; i < icons.Length; i++)
             {
                 System.Console.Clear();
-                DrawBigIcon(icons[i], 32, 8);
+                DrawBigIcon(icons[i], iconLeft, iconTop);
                 Delay(500);
             }
 
-            // Keep the last icon (snow) and type the OS name: "WEATHER" on top, "OS" underneath
+            // The Sun remains shining on screen as the final icon while OS title types out
             string line1 = "W E A T H E R";
-            int startX1 = 40 - (line1.Length / 2);
-            int startY1 = 14;
+            int startX1 = (80 - line1.Length) / 2; // Exactly 33
+            int startY1 = 13;
 
             System.Console.SetCursorPosition(startX1, startY1);
             System.Console.ForegroundColor = ConsoleColor.Cyan;
@@ -37,9 +37,9 @@ namespace WeatherOS.Graphics
                 Delay(40); // Typing effect
             }
 
-            string line2 = "O S";
-            int startX2 = 40 - (line2.Length / 2);
-            int startY2 = 16;
+            string line2 = "O  S";
+            int startX2 = (80 - line2.Length) / 2; // Exactly 38
+            int startY2 = 15; // Placed neatly underneath line 1
 
             System.Console.SetCursorPosition(startX2, startY2);
             System.Console.ForegroundColor = ConsoleColor.Yellow;
@@ -49,9 +49,17 @@ namespace WeatherOS.Graphics
                 System.Console.Write(line2[i]);
                 Delay(60); // Typing effect
             }
+
+            string subTitle = "METEOROLOGICAL OPERATING SYSTEM";
+            int startXSub = (80 - subTitle.Length) / 2; // Exactly 24
+            int startYSub = 17;
+
+            System.Console.SetCursorPosition(startXSub, startYSub);
+            System.Console.ForegroundColor = ConsoleColor.DarkGray;
+            System.Console.Write(subTitle);
             
             System.Console.ResetColor();
-            Delay(1000); // Hold for 1 second
+            Delay(1200); // Hold for 1.2s to admire the final sun splash
             
             System.Console.Clear();
             System.Console.CursorVisible = true;

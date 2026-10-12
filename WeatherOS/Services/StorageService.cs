@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using Cosmos.HAL.BlockDevice;
 using Cosmos.System.FileSystem.VFS;
 
 namespace WeatherOS.Services
@@ -119,6 +120,45 @@ namespace WeatherOS.Services
             }
         }
 
+        private static BlockDevice GetTargetDisk(string locationId, out string diskName)
+        {
+            diskName = "Disk 0";
+            var physDrives = DiskWipeService.GetPhysicalDrives();
+            if (physDrives != null && physDrives.Count > 0)
+            {
+                int diskIdx = 0;
+                if (locationId != null && locationId.StartsWith("disk") && locationId.Length > 4)
+                {
+                    int.TryParse(locationId.Substring(4), out diskIdx);
+                }
+                if (diskIdx < 0 || diskIdx >= physDrives.Count) diskIdx = 0;
+                diskName = physDrives[diskIdx].Name;
+                return physDrives[diskIdx].Device;
+            }
+
+            // Fallback to Cosmos BlockDevice.Devices directly
+            try
+            {
+                if (BlockDevice.Devices != null && BlockDevice.Devices.Count > 0)
+                {
+                    for (int i = 0; i < BlockDevice.Devices.Count; i++)
+                    {
+                        var d = BlockDevice.Devices[i];
+                        if (d != null && !(d is Partition))
+                        {
+                            diskName = $"Hardware Dev #{i}";
+                            return d;
+                        }
+                    }
+                    diskName = "Hardware Dev #0";
+                    return BlockDevice.Devices[0];
+                }
+            }
+            catch { }
+
+            return null;
+        }
+
         public static List<StorageLocation> GetStorageLocations()
         {
             var list = new List<StorageLocation>();
@@ -134,7 +174,7 @@ namespace WeatherOS.Services
                         list.Add(new StorageLocation
                         {
                             Id = $"disk{d.Index}",
-                            Name = $"Disk {d.Index} (Hardware Dev #{i})",
+                            Name = !string.IsNullOrEmpty(d.Name) ? d.Name : $"Disk {d.Index} (Storage Drive)",
                             FileSystem = "FAT32 Storage",
                             TotalSize = (long)d.SizeBytes,
                             FreeSpace = (long)d.SizeBytes > 1048576 ? (long)d.SizeBytes - 1048576 : 0,
@@ -145,20 +185,6 @@ namespace WeatherOS.Services
                 }
             }
             catch { }
-
-            if (list.Count == 0)
-            {
-                list.Add(new StorageLocation
-                {
-                    Id = "disk0",
-                    Name = "Disk 0 (Primary Storage)",
-                    FileSystem = "FAT32 Storage",
-                    TotalSize = 1024L * 1024 * 1024,
-                    FreeSpace = 1024L * 1024 * 1024 - (1024 * 1024),
-                    IsReadOnly = false,
-                    IsLinuxSystem = false
-                });
-            }
 
             // RAM Virtual Store (High-Speed Session Storage)
             list.Add(new StorageLocation
@@ -187,29 +213,22 @@ namespace WeatherOS.Services
                 return true;
             }
 
-            // Target is physical disk (e.g. disk0)
-            var physDrives = DiskWipeService.GetPhysicalDrives();
-            if (physDrives == null || physDrives.Count == 0)
+            string diskName;
+            var targetDev = GetTargetDisk(locationId, out diskName);
+            if (targetDev == null)
             {
                 PutMemoryFile(filename, content);
                 status = $"[ERR] No physical drives detected. Saved to RAM Virtual Store.";
                 return false;
             }
 
-            int diskIdx = 0;
-            if (locationId != null && locationId.StartsWith("disk") && locationId.Length > 4)
-            {
-                int.TryParse(locationId.Substring(4), out diskIdx);
-            }
-            if (diskIdx < 0 || diskIdx >= physDrives.Count) diskIdx = 0;
-
             string directStatus;
-            bool directOk = DiskWipeService.WriteFileDirectToFat32(physDrives[diskIdx].Device, filename, content, out directStatus);
+            bool directOk = DiskWipeService.WriteFileDirectToFat32(targetDev, filename, content, out directStatus);
 
             if (directOk)
             {
                 // File saved exclusively to disk - do not duplicate in RAM store!
-                status = $"Saved to {physDrives[diskIdx].Name}: {filename} ({content.Length} bytes) [OK]";
+                status = $"Saved to {diskName}: {filename} ({content.Length} bytes) [OK]";
                 return true;
             }
             else
@@ -234,13 +253,14 @@ namespace WeatherOS.Services
             // 1. Check physical disk first
             try
             {
-                var physDrives = DiskWipeService.GetPhysicalDrives();
-                if (physDrives != null && physDrives.Count > 0)
+                string diskName;
+                var dev = GetTargetDisk("disk0", out diskName);
+                if (dev != null)
                 {
                     string readStatus;
-                    if (DiskWipeService.ReadFileDirectFromFat32(physDrives[0].Device, filename, out content, out readStatus))
+                    if (DiskWipeService.ReadFileDirectFromFat32(dev, filename, out content, out readStatus))
                     {
-                        status = $"Loaded from Disk 0: {filename} ({content.Length} bytes) [OK]";
+                        status = $"Loaded from {diskName}: {filename} ({content.Length} bytes) [OK]";
                         return true;
                     }
                 }
@@ -265,11 +285,12 @@ namespace WeatherOS.Services
 
             try
             {
-                var physDrives = DiskWipeService.GetPhysicalDrives();
-                if (physDrives != null && physDrives.Count > 0)
+                string diskName;
+                var dev = GetTargetDisk("disk0", out diskName);
+                if (dev != null)
                 {
                     string delStatus;
-                    if (DiskWipeService.DeleteFileDirectFromFat32(physDrives[0].Device, filename, out delStatus))
+                    if (DiskWipeService.DeleteFileDirectFromFat32(dev, filename, out delStatus))
                     {
                         deleted = true;
                     }
@@ -293,10 +314,11 @@ namespace WeatherOS.Services
 
             try
             {
-                var physDrives = DiskWipeService.GetPhysicalDrives();
-                if (physDrives != null && physDrives.Count > 0)
+                string diskName;
+                var dev = GetTargetDisk("disk0", out diskName);
+                if (dev != null)
                 {
-                    var diskFiles = DiskWipeService.ListFilesDirectFromFat32(physDrives[0].Device);
+                    var diskFiles = DiskWipeService.ListFilesDirectFromFat32(dev);
                     if (diskFiles != null)
                     {
                         for (int i = 0; i < diskFiles.Count; i++)

@@ -104,50 +104,70 @@ namespace WeatherOS.Services
             }
             catch { }
 
-            // 2. SECONDARY PROBE: Raw BlockDevices from Cosmos HAL if VFS returned 0 partitions
+            // 2. SECONDARY PROBE: SATA AHCI Drives and Raw BlockDevices
             if (results.Count == 0)
             {
                 try
                 {
-                    var devices = BlockDevice.Devices;
-                    if (devices != null && devices.Count > 0)
+                    var ahciDrives = AhciDriverService.GetDrives();
+                    if (ahciDrives != null && ahciDrives.Count > 0)
                     {
-                        int diskIdx = 0;
-                        for (int i = 0; i < devices.Count; i++)
+                        for (int a = 0; a < ahciDrives.Count; a++)
                         {
-                            var dev = devices[i];
-                            if (dev == null) continue;
-
-                            if (dev is Partition part)
-                            {
-                                var info = new PartitionInfo
-                                {
-                                    DiskIndex = diskIdx,
-                                    PartitionIndex = results.Count + 1,
-                                    DeviceName = $"Partition {results.Count + 1}",
-                                    SectorCount = part.BlockCount,
-                                    FileSystemType = "Raw / Unformatted",
-                                    IsWritable = true
-                                };
-
-                                uint bSize = (uint)part.BlockSize;
-                                if (bSize < 512) bSize = 512;
-                                byte[] sec0 = new byte[bSize];
-                                byte[] sec2 = new byte[bSize];
-                                try { part.ReadBlock(0, 1, ref sec0); } catch { }
-                                try { part.ReadBlock(2, 1, ref sec2); } catch { }
-                                InspectSectors(sec0, sec2, info);
-                                results.Add(info);
-                            }
-                            else
-                            {
-                                diskIdx++;
-                                ProbeRawDrive(dev, diskIdx, results);
-                            }
+                            var ad = ahciDrives[a];
+                            if (ad == null || ad.BlockCount == 0 || ad.BlockCount > 20000000000UL) continue;
+                            ProbeRawDrive(ad, a, results);
                         }
                     }
                 }
                 catch { }
+
+                if (results.Count == 0)
+                {
+                    try
+                    {
+                        var devices = BlockDevice.Devices;
+                        if (devices != null && devices.Count > 0)
+                        {
+                            int diskIdx = 0;
+                            for (int i = 0; i < devices.Count; i++)
+                            {
+                                var dev = devices[i];
+                                if (dev == null) continue;
+                                if (dev is AhciBlockDevice) continue;
+                                if (dev.BlockCount == 0) continue;
+
+                                if (dev is Partition part)
+                                {
+                                    var info = new PartitionInfo
+                                    {
+                                        DiskIndex = diskIdx,
+                                        PartitionIndex = results.Count + 1,
+                                        DeviceName = $"Partition {results.Count + 1}",
+                                        SectorCount = part.BlockCount,
+                                        FileSystemType = "Raw / Unformatted",
+                                        IsWritable = true
+                                    };
+
+                                    uint bSize = (uint)part.BlockSize;
+                                    if (bSize < 512) bSize = 512;
+                                    byte[] sec0 = new byte[bSize];
+                                    byte[] sec2 = new byte[bSize];
+                                    try { part.ReadBlock(0, 1, ref sec0); } catch { }
+                                    try { part.ReadBlock(2, 1, ref sec2); } catch { }
+                                    InspectSectors(sec0, sec2, info);
+                                    results.Add(info);
+                                }
+                                else
+                                {
+                                    diskIdx++;
+                                    ProbeRawDrive(dev, diskIdx, results);
+                                }
+                            }
+                        }
+                    }
+                    catch { }
+                }
             }
 
             // 3. Cross-reference with logical drives mounted in Cosmos VFS

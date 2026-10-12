@@ -63,49 +63,217 @@ namespace WeatherOS.Services
         public static List<DiskDriveInfo> GetPhysicalDrives()
         {
             var list = new List<DiskDriveInfo>();
+
+            // 1. Probe Bare-Metal SATA AHCI driver first
+            try
+            {
+                var ahciDrives = AhciDriverService.GetDrives();
+                if (ahciDrives != null && ahciDrives.Count > 0)
+                {
+                    for (int a = 0; a < ahciDrives.Count; a++)
+                    {
+                        var ad = ahciDrives[a];
+                        if (ad == null) continue;
+                        if (ad.BlockCount == 0 || ad.BlockCount > 20000000000UL) continue;
+
+                        var info = new DiskDriveInfo
+                        {
+                            Index = list.Count,
+                            Device = ad,
+                            Name = $"Disk {list.Count} (SATA AHCI: {ad.Model})",
+                            SectorCount = ad.BlockCount
+                        };
+
+                        ProbeDriveFilesystems(ad, list.Count, info);
+                        list.Add(info);
+                    }
+                }
+            }
+            catch { }
+
+            // If AHCI controller found physical SATA drive(s), return them.
+            // Do NOT probe the legacy IDE channels, as in AHCI mode they are floating bus phantoms!
+            if (list.Count > 0)
+            {
+                return list;
+            }
+
+            // 2. Fallback: Probe Cosmos BlockDevice.Devices (IDE / VM / Compatibility mode)
             try
             {
                 var devices = BlockDevice.Devices;
                 if (devices != null)
                 {
-                    int diskIdx = 0;
                     for (int i = 0; i < devices.Count; i++)
                     {
                         var dev = devices[i];
                         if (dev == null) continue;
 
-                        // Only select raw parent drives, not individual partitions
-                        if (!(dev is Partition))
-                        {
-                            var info = new DiskDriveInfo
-                            {
-                                Index = diskIdx,
-                                Device = dev,
-                                Name = $"Physical Disk {diskIdx} (Hardware Dev #{i})",
-                                SectorCount = dev.BlockCount
-                            };
+                        // Only select raw parent drives, not individual partitions or AHCI devices
+                        if (dev is Partition || dev is AhciBlockDevice) continue;
 
-                            // Probe filesystems on this drive
-                            var parts = FileSystemProbeService.ProbeAllPartitions();
-                            foreach (var p in parts)
+                        // Verify that reading sector 0 is responsive on this hardware channel
+                        byte[] testSec = new byte[512];
+                        try
+                        {
+                            dev.ReadBlock(0, 1, ref testSec);
+                        }
+                        catch
+                        {
+                            continue; // Unresponsive floating channel or empty optical drive
+                        }
+
+                        // Check for floating bus noise (all 0xFF)
+                        bool allFF = true;
+                        for (int b = 0; b < 16; b++)
+                        {
+                            if (testSec[b] != 0xFF) { allFF = false; break; }
+                        }
+                        if (allFF) continue; // Disconnected port returning floating bus 0xFF
+
+                        // Probe ATA Hardware Port for True Model and 48-bit Capacity
+                        ushort ioBase = (i == 0) ? (ushort)0x1F0 : (ushort)0x170;
+                        byte drvSel = 0xA0; // Master
+                        var ataInfo = AtaDeviceDiagnostics.ProbeAta(ioBase, drvSel);
+                        if (!ataInfo.Exists && i == 1)
+                        {
+                            ataInfo = AtaDeviceDiagnostics.ProbeAta(0x1F0, 0xB0); // Primary Slave
+                        }
+
+                        // Filter out ATAPI Optical Drives (CD/DVD Drives) - they cannot store FAT32 user files
+                        if (ataInfo.Exists && ataInfo.IsAtapi)
+                        {
+                            continue;
+                        }
+
+                        ulong safeCount = 0;
+                        string driveName = "";
+
+                        if (ataInfo.Exists && ataInfo.TotalSectors > 0)
+                        {
+                            safeCount = ataInfo.TotalSectors;
+                            driveName = $"Disk {list.Count} ({ataInfo.Model} : {ataInfo.SizeDisplay})";
+                        }
+
+                        // Fallback 1: Inspect MBR partition table for partition bounds
+                        if (safeCount == 0 && testSec[510] == 0x55 && testSec[511] == 0xAA)
+                        {
+                            ulong maxEnd = 0;
+                            for (int p = 0; p < 4; p++)
                             {
-                                if (p.DiskIndex == diskIdx || p.DiskIndex == 0)
+                                int off = 446 + (p * 16);
+                                uint sLba = (uint)(testSec[off + 8] | (testSec[off + 9] << 8) | (testSec[off + 10] << 16) | (testSec[off + 11] << 24));
+                                uint cSec = (uint)(testSec[off + 12] | (testSec[off + 13] << 8) | (testSec[off + 14] << 16) | (testSec[off + 15] << 24));
+                                if (sLba > 0 && cSec > 0 && (sLba + cSec) > maxEnd)
                                 {
-                                    if (!info.ContainedFilesystems.Contains(p.FileSystemType))
-                                    {
-                                        info.ContainedFilesystems.Add(p.FileSystemType);
-                                    }
+                                    maxEnd = sLba + cSec;
                                 }
                             }
+                            if (maxEnd > 0) safeCount = maxEnd;
+                        }
 
-                            list.Add(info);
-                            diskIdx++;
+                        // Fallback 2: Sanitize HAL BlockCount if reasonable (< 2 TB)
+                        if (safeCount == 0)
+                        {
+                            if (dev.BlockCount > 0 && dev.BlockCount <= 4000000000UL)
+                            {
+                                safeCount = dev.BlockCount;
+                            }
+                            else
+                            {
+                                ulong masked28 = dev.BlockCount & 0x0FFFFFFF;
+                                if (masked28 > 2048)
+                                {
+                                    safeCount = masked28;
+                                }
+                                else
+                                {
+                                    safeCount = 2097152UL; // 1 GB fallback
+                                }
+                            }
+                        }
+
+                        if (string.IsNullOrEmpty(driveName))
+                        {
+                            ulong gb = (safeCount * 512) / (1024UL * 1024 * 1024);
+                            string szDisplay = gb >= 1 ? $"{gb}GB" : $"{(safeCount * 512) / (1024 * 1024)}MB";
+                            driveName = $"Disk {list.Count} (Hardware Dev #{i} : {szDisplay})";
+                        }
+
+                        var info = new DiskDriveInfo
+                        {
+                            Index = list.Count,
+                            Device = dev,
+                            Name = driveName,
+                            SectorCount = safeCount
+                        };
+
+                        ProbeDriveFilesystems(dev, list.Count, info);
+                        list.Add(info);
+                    }
+                }
+            }
+            catch { }
+
+            // 3. Fallback: If raw drives were not found, probe Cosmos VFS Disks & Partitions directly
+            if (list.Count == 0)
+            {
+                try
+                {
+                    var vfsDisks = VFSManager.GetDisks();
+                    if (vfsDisks != null && vfsDisks.Count > 0)
+                    {
+                        for (int d = 0; d < vfsDisks.Count; d++)
+                        {
+                            var vdisk = vfsDisks[d];
+                            if (vdisk == null || vdisk.Partitions == null) continue;
+
+                            for (int p = 0; p < vdisk.Partitions.Count; p++)
+                            {
+                                var vpart = vdisk.Partitions[p];
+                                if (vpart != null && vpart.Host != null && vpart.Host.BlockCount > 0)
+                                {
+                                    ulong pCount = vpart.Host.BlockCount;
+                                    if (pCount > 4000000000UL) pCount = 2097152UL;
+                                    ulong gb = (pCount * 512) / (1024UL * 1024 * 1024);
+                                    string szDisplay = gb >= 1 ? $"{gb}GB" : $"{(pCount * 512) / (1024 * 1024)}MB";
+
+                                    var info = new DiskDriveInfo
+                                    {
+                                        Index = list.Count,
+                                        Device = vpart.Host,
+                                        Name = $"Disk {d} Part {p + 1} ({szDisplay})",
+                                        SectorCount = pCount
+                                    };
+                                    list.Add(info);
+                                }
+                            }
+                        }
+                    }
+                }
+                catch { }
+            }
+
+            return list;
+        }
+
+        private static void ProbeDriveFilesystems(BlockDevice dev, int diskIdx, DiskDriveInfo info)
+        {
+            try
+            {
+                var parts = FileSystemProbeService.ProbeAllPartitions();
+                foreach (var p in parts)
+                {
+                    if (p.DiskIndex == diskIdx || p.DiskIndex == 0)
+                    {
+                        if (!info.ContainedFilesystems.Contains(p.FileSystemType))
+                        {
+                            info.ContainedFilesystems.Add(p.FileSystemType);
                         }
                     }
                 }
             }
             catch { }
-            return list;
         }
 
         public static bool FormatDriveAsFat32(BlockDevice dev, out string status)
@@ -119,48 +287,83 @@ namespace WeatherOS.Services
             try
             {
                 ulong totalBlocks = dev.BlockCount;
-                if (totalBlocks == 0 || totalBlocks > 0x000FFFFFFFFFFFFFUL)
+                if (totalBlocks == 0 || totalBlocks > 4000000000UL)
                 {
-                    totalBlocks = 204800; // Safe 100MB minimum
+                    byte[] curMbr = new byte[512];
+                    ulong mbrSize = 0;
+                    try
+                    {
+                        dev.ReadBlock(0, 1, ref curMbr);
+                        if (curMbr[510] == 0x55 && curMbr[511] == 0xAA)
+                        {
+                            for (int p = 0; p < 4; p++)
+                            {
+                                int off = 446 + (p * 16);
+                                uint sLba = (uint)(curMbr[off + 8] | (curMbr[off + 9] << 8) | (curMbr[off + 10] << 16) | (curMbr[off + 11] << 24));
+                                uint cSec = (uint)(curMbr[off + 12] | (curMbr[off + 13] << 8) | (curMbr[off + 14] << 16) | (curMbr[off + 15] << 24));
+                                if (sLba > 0 && cSec > 0 && (sLba + cSec) > mbrSize)
+                                {
+                                    mbrSize = sLba + cSec;
+                                }
+                            }
+                        }
+                    }
+                    catch { }
+
+                    if (mbrSize > 2048 && mbrSize < 4000000000UL)
+                    {
+                        totalBlocks = mbrSize;
+                    }
+                    else
+                    {
+                        totalBlocks = 2097152UL; // Safe 1GB standard
+                    }
                 }
 
-                ulong startLba = 2048; // Standard 1MB alignment
-                ulong partSectors = totalBlocks > startLba ? totalBlocks - startLba : 0;
+                bool isPartition = dev is Partition;
+                ulong startLba = isPartition ? 0UL : 2048UL;
+                ulong partSectors = totalBlocks > startLba ? totalBlocks - startLba : totalBlocks;
                 if (partSectors > 0xFFFFFFFF) partSectors = 0xFFFFFFFF;
                 uint sectors32 = (uint)partSectors;
 
-                // 1. Write MBR at Sector 0 with 1 clean active FAT32 partition
-                byte[] mbr = new byte[512];
-                // Partition 1 Entry (offset 446 / 0x1BE)
-                mbr[446] = 0x80; // Bootable / Active
-                mbr[447] = 0x00; // Starting CHS
-                mbr[448] = 0x02;
-                mbr[449] = 0x00;
-                mbr[450] = 0x0C; // Type = FAT32 LBA
-                mbr[451] = 0xFF; // Ending CHS
-                mbr[452] = 0xFF;
-                mbr[453] = 0xFF;
+                // 1. Write MBR at Sector 0 with 1 clean active FAT32 partition (only on raw parent disk)
+                if (!isPartition)
+                {
+                    byte[] mbr = new byte[512];
+                    // Partition 1 Entry (offset 446 / 0x1BE)
+                    mbr[446] = 0x80; // Bootable / Active
+                    mbr[447] = 0x00; // Starting CHS
+                    mbr[448] = 0x02;
+                    mbr[449] = 0x00;
+                    mbr[450] = 0x0C; // Type = FAT32 LBA
+                    mbr[451] = 0xFF; // Ending CHS
+                    mbr[452] = 0xFF;
+                    mbr[453] = 0xFF;
 
-                // Starting LBA = 2048
-                mbr[454] = (byte)(startLba & 0xFF);
-                mbr[455] = (byte)((startLba >> 8) & 0xFF);
-                mbr[456] = (byte)((startLba >> 16) & 0xFF);
-                mbr[457] = (byte)((startLba >> 24) & 0xFF);
+                    // Starting LBA = 2048
+                    mbr[454] = (byte)(startLba & 0xFF);
+                    mbr[455] = (byte)((startLba >> 8) & 0xFF);
+                    mbr[456] = (byte)((startLba >> 16) & 0xFF);
+                    mbr[457] = (byte)((startLba >> 24) & 0xFF);
 
-                // Sector Count
-                mbr[458] = (byte)(sectors32 & 0xFF);
-                mbr[459] = (byte)((sectors32 >> 8) & 0xFF);
-                mbr[460] = (byte)((sectors32 >> 16) & 0xFF);
-                mbr[461] = (byte)((sectors32 >> 24) & 0xFF);
+                    // Sector Count
+                    mbr[458] = (byte)(sectors32 & 0xFF);
+                    mbr[459] = (byte)((sectors32 >> 8) & 0xFF);
+                    mbr[460] = (byte)((sectors32 >> 16) & 0xFF);
+                    mbr[461] = (byte)((sectors32 >> 24) & 0xFF);
 
-                // Signature 0x55, 0xAA
-                mbr[510] = 0x55;
-                mbr[511] = 0xAA;
-                dev.WriteBlock(0, 1, ref mbr);
+                    // Signature 0x55, 0xAA
+                    mbr[510] = 0x55;
+                    mbr[511] = 0xAA;
+                    dev.WriteBlock(0, 1, ref mbr);
+                }
 
                 // 2. Compute FAT32 Parameters
                 ushort reservedSectors = 32;
-                byte sectorsPerCluster = 8; // 4KB cluster
+                byte sectorsPerCluster = 8; // 4KB cluster default
+                if (sectors32 > 67108864) sectorsPerCluster = 64; // 32KB clusters for >32GB
+                else if (sectors32 > 33554432) sectorsPerCluster = 32; // 16KB clusters for >16GB
+                else if (sectors32 > 16777216) sectorsPerCluster = 16; // 8KB clusters for >8GB
                 byte numFats = 2;
                 uint dataSectors = sectors32 > reservedSectors ? sectors32 - reservedSectors : 0;
                 uint totalClusters = dataSectors / sectorsPerCluster;
@@ -453,7 +656,8 @@ namespace WeatherOS.Services
                 }
 
                 int chosenIndex = entryOffset / 32;
-                uint targetCluster = existingCluster >= 2 ? existingCluster : (uint)(2 + chosenIndex);
+                if (chosenIndex < 1) chosenIndex = 1;
+                uint targetCluster = existingCluster >= 3 ? existingCluster : (uint)(2 + chosenIndex);
 
                 // Populate Directory Entry
                 Array.Copy(nameBytes, 0, rootDirSec, entryOffset, 11);
@@ -496,12 +700,15 @@ namespace WeatherOS.Services
                 Array.Copy(contentBytes, 0, dataSec, 0, Math.Min(contentBytes.Length, 512));
                 dev.WriteBlock(clusterLba, 1, ref dataSec);
 
+                // Flush hardware controller write cache
+                AtaDeviceDiagnostics.FlushCache(0x1F0, 0xA0);
+
                 // Read-back verification
                 byte[] verifySec = new byte[512];
                 dev.ReadBlock(rootDirLba, 1, ref verifySec);
                 if (verifySec[entryOffset] != nameBytes[0])
                 {
-                    status = "[ERR] Hardware disk write failed verification (Sector read-back mismatch).";
+                    status = $"[ERR] Hardware disk write mismatch: Read 0x{verifySec[entryOffset]:X2}, expected 0x{nameBytes[0]:X2}.";
                     return false;
                 }
 

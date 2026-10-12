@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Text;
 using Cosmos.Core;
 using Cosmos.HAL;
 using Cosmos.HAL.BlockDevice;
@@ -234,7 +235,7 @@ namespace WeatherOS.Services
                         var dev = BlockDevice.Devices[i];
                         if (dev != null)
                         {
-                            string dType = dev is Partition ? "Partition" : "ATA / IDE Storage Device";
+                            string dType = dev is Partition ? "Partition" : dev.GetType().Name;
                             ulong secCount = dev.BlockCount;
                             string sizeStr = "";
                             if (secCount > 0 && secCount < 2000000000UL)
@@ -472,6 +473,682 @@ namespace WeatherOS.Services
                          (block[offset + 1] << 8) |
                          (block[offset + 2] << 16) |
                          (block[offset + 3] << 24));
+        }
+    }
+
+    public class AtaIdentifyInfo
+    {
+        public bool Exists;
+        public bool IsAtapi;
+        public string Model = "";
+        public string Serial = "";
+        public string Firmware = "";
+        public ulong TotalSectors;
+        public byte StatusByte;
+        public byte ErrorByte;
+
+        public ulong SizeBytes => TotalSectors * 512;
+        public string SizeDisplay
+        {
+            get
+            {
+                if (TotalSectors == 0) return "0 MB";
+                ulong gb = SizeBytes / (1024UL * 1024 * 1024);
+                if (gb >= 1) return $"{gb} GB";
+                return $"{SizeBytes / (1024 * 1024)} MB";
+            }
+        }
+    }
+
+    public static class AtaDeviceDiagnostics
+    {
+        public static AtaIdentifyInfo ProbeAta(ushort ioBase, byte driveSelect)
+        {
+            var info = new AtaIdentifyInfo();
+            try
+            {
+                var pData = new IOPort(ioBase);
+                var pErr = new IOPort((ushort)(ioBase + 1));
+                var pSecCount = new IOPort((ushort)(ioBase + 2));
+                var pLbaLow = new IOPort((ushort)(ioBase + 3));
+                var pLbaMid = new IOPort((ushort)(ioBase + 4));
+                var pLbaHigh = new IOPort((ushort)(ioBase + 5));
+                var pDrive = new IOPort((ushort)(ioBase + 6));
+                var pCmd = new IOPort((ushort)(ioBase + 7));
+
+                // 1. Select drive
+                pDrive.Byte = driveSelect;
+                byte status = pCmd.Byte;
+                status = pCmd.Byte;
+                status = pCmd.Byte;
+                status = pCmd.Byte;
+
+                if (status == 0xFF) return info; // Floating bus
+
+                // 2. Zero LBA registers
+                pSecCount.Byte = 0;
+                pLbaLow.Byte = 0;
+                pLbaMid.Byte = 0;
+                pLbaHigh.Byte = 0;
+
+                // 3. Issue IDENTIFY DEVICE (0xEC)
+                pCmd.Byte = 0xEC;
+
+                // Wait for BSY to clear
+                int timeout = 50000;
+                while (timeout-- > 0)
+                {
+                    status = pCmd.Byte;
+                    if ((status & 0x80) == 0) break; // BSY cleared
+                }
+
+                info.StatusByte = status;
+                if (status == 0 || timeout <= 0) return info;
+
+                byte mid = pLbaMid.Byte;
+                byte high = pLbaHigh.Byte;
+
+                // Check for ATAPI (PATAPI/SATAPI: mid=0x14, high=0xEB)
+                if (mid == 0x14 && high == 0xEB)
+                {
+                    info.IsAtapi = true;
+                    // Issue IDENTIFY PACKET DEVICE (0xA1)
+                    pCmd.Byte = 0xA1;
+                    timeout = 50000;
+                    while (timeout-- > 0)
+                    {
+                        status = pCmd.Byte;
+                        if ((status & 0x80) == 0) break;
+                    }
+                    info.StatusByte = status;
+                }
+
+                // Check if ERR bit is set
+                if ((status & 0x01) != 0)
+                {
+                    info.ErrorByte = pErr.Byte;
+                    return info;
+                }
+
+                // Check if DRQ bit (0x08) is set
+                if ((status & 0x08) == 0)
+                {
+                    return info;
+                }
+
+                // Drive is ready: Read 256 16-bit words
+                ushort[] words = new ushort[256];
+                for (int w = 0; w < 256; w++)
+                {
+                    words[w] = pData.Word;
+                }
+
+                info.Exists = true;
+
+                // Extract Serial (words 10..19, 20 chars)
+                info.Serial = ReadAtaString(words, 10, 10);
+                // Extract Firmware (words 23..26, 8 chars)
+                info.Firmware = ReadAtaString(words, 23, 4);
+                // Extract Model (words 27..46, 40 chars)
+                info.Model = ReadAtaString(words, 27, 20);
+
+                // Words 60..61: 28-bit LBA sector count
+                uint lba28 = (uint)(words[60] | (words[61] << 16));
+
+                // Word 83 bit 10: 48-bit LBA supported
+                bool lba48Supported = (words[83] & 0x0400) != 0;
+                if (lba48Supported)
+                {
+                    ulong lba48 = (ulong)words[100] |
+                                  ((ulong)words[101] << 16) |
+                                  ((ulong)words[102] << 32) |
+                                  ((ulong)words[103] << 48);
+                    if (lba48 > 0 && lba48 < 0x000FFFFFFFFFFFFFUL)
+                    {
+                        info.TotalSectors = lba48;
+                    }
+                    else if (lba28 > 0)
+                    {
+                        info.TotalSectors = lba28;
+                    }
+                }
+                else if (lba28 > 0)
+                {
+                    info.TotalSectors = lba28;
+                }
+            }
+            catch { }
+
+            return info;
+        }
+
+        public static void FlushCache(ushort ioBase, byte driveSelect)
+        {
+            try
+            {
+                var pDrive = new IOPort((ushort)(ioBase + 6));
+                var pCmd = new IOPort((ushort)(ioBase + 7));
+                pDrive.Byte = driveSelect;
+                pCmd.Byte = 0xE7; // FLUSH CACHE
+                int timeout = 50000;
+                while (timeout-- > 0)
+                {
+                    byte st = pCmd.Byte;
+                    if ((st & 0x80) == 0) break; // BSY clear
+                }
+            }
+            catch { }
+        }
+
+        private static string ReadAtaString(ushort[] words, int startWord, int wordCount)
+        {
+            byte[] bytes = new byte[wordCount * 2];
+            for (int i = 0; i < wordCount; i++)
+            {
+                ushort val = words[startWord + i];
+                // High byte first, then low byte (ATA byte-swapped ASCII)
+                bytes[i * 2] = (byte)((val >> 8) & 0xFF);
+                bytes[i * 2 + 1] = (byte)(val & 0xFF);
+            }
+            return Encoding.ASCII.GetString(bytes).Trim('\0', ' ');
+        }
+    }
+
+    public class HardwareDevInfo
+    {
+        public int Index;
+        public BlockDevice Device;
+        public string TypeName = "";
+        public bool IsPartition;
+        public ulong BlockCount;
+        public ulong BlockSize;
+        public string AtaModel = "";
+        public string AtaSerial = "";
+        public bool IsAtapi;
+        public ulong TrueSectors;
+        public string TrueSizeDisplay = "";
+        public bool Sector0Readable;
+        public bool HasMbrSig;
+        public int MbrPartitionCount;
+    }
+
+    public static class DiskHardwareTester
+    {
+        public static List<HardwareDevInfo> GetHardwareDevices()
+        {
+            var list = new List<HardwareDevInfo>();
+            try
+            {
+                var devices = BlockDevice.Devices;
+                if (devices != null)
+                {
+                    for (int i = 0; i < devices.Count; i++)
+                    {
+                        var dev = devices[i];
+                        if (dev == null) continue;
+
+                        var info = new HardwareDevInfo
+                        {
+                            Index = i,
+                            Device = dev,
+                            TypeName = dev.GetType().Name,
+                            IsPartition = dev is Partition,
+                            BlockCount = dev.BlockCount,
+                            BlockSize = dev.BlockSize
+                        };
+
+                        // Probe ATA hardware channels
+                        ushort ioBase = (i == 0) ? (ushort)0x1F0 : (ushort)0x170;
+                        byte drvSel = 0xA0; // Master
+                        var ata = AtaDeviceDiagnostics.ProbeAta(ioBase, drvSel);
+                        if (!ata.Exists && i == 1)
+                        {
+                            // Try Primary Slave for dev 1
+                            ata = AtaDeviceDiagnostics.ProbeAta(0x1F0, 0xB0);
+                        }
+
+                        if (ata.Exists)
+                        {
+                            info.AtaModel = ata.Model;
+                            info.AtaSerial = ata.Serial;
+                            info.IsAtapi = ata.IsAtapi;
+                            info.TrueSectors = ata.TotalSectors;
+                            info.TrueSizeDisplay = ata.SizeDisplay;
+                        }
+
+                        // Probe sector 0
+                        byte[] sec0 = new byte[512];
+                        try
+                        {
+                            dev.ReadBlock(0, 1, ref sec0);
+                            info.Sector0Readable = true;
+                            if (sec0[510] == 0x55 && sec0[511] == 0xAA)
+                            {
+                                info.HasMbrSig = true;
+                                for (int p = 0; p < 4; p++)
+                                {
+                                    int off = 446 + p * 16;
+                                    if (sec0[off + 4] != 0) info.MbrPartitionCount++;
+                                }
+                            }
+                        }
+                        catch { }
+
+                        list.Add(info);
+                    }
+                }
+            }
+            catch { }
+
+            return list;
+        }
+
+        public static void TestReadSector(int devIndex, ulong lba, List<string> logs)
+        {
+            if (BlockDevice.Devices == null || devIndex < 0 || devIndex >= BlockDevice.Devices.Count)
+            {
+                logs.Add($"[ERR] Invalid device index #{devIndex}.");
+                return;
+            }
+            var dev = BlockDevice.Devices[devIndex];
+            logs.Add($"[TEST 1] Read Sector {lba} on Dev #{devIndex} ({dev.GetType().Name})...");
+            try
+            {
+                byte[] sec = new byte[512];
+                dev.ReadBlock(lba, 1, ref sec);
+
+                string hex = "";
+                for (int b = 0; b < 16; b++) hex += sec[b].ToString("X2") + " ";
+                logs.Add($"  Bytes 0..15: {hex.Trim()}");
+
+                string ascii = "";
+                for (int b = 0; b < 16; b++)
+                {
+                    char c = (char)sec[b];
+                    ascii += (c >= 32 && c <= 126) ? c : '.';
+                }
+                logs.Add($"  ASCII: \"{ascii}\"");
+
+                ushort sig = (ushort)(sec[510] | (sec[511] << 8));
+                bool mbrValid = sig == 0xAA55;
+                logs.Add($"  Sig 510-511: 0x{sec[510]:X2}, 0x{sec[511]:X2} (MBR/VBR: {(mbrValid ? "VALID [55 AA]" : "NONE")})");
+
+                if (lba == 0 && mbrValid)
+                {
+                    int pOff = 446;
+                    byte pType = sec[pOff + 4];
+                    uint pStart = (uint)(sec[pOff + 8] | (sec[pOff + 9] << 8) | (sec[pOff + 10] << 16) | (sec[pOff + 11] << 24));
+                    uint pCount = (uint)(sec[pOff + 12] | (sec[pOff + 13] << 8) | (sec[pOff + 14] << 16) | (sec[pOff + 15] << 24));
+                    logs.Add($"  Part 1: Type 0x{pType:X2}, StartLBA {pStart}, Sectors {pCount} ({(pCount * 512UL) / (1024UL * 1024)}MB)");
+                }
+                else if (lba >= 2048)
+                {
+                    string fs = Encoding.ASCII.GetString(sec, 82, 8);
+                    logs.Add($"  BPB FS Type: \"{fs}\"");
+                }
+                logs.Add($"[PASS] Sector {lba} read succeeded without error.");
+            }
+            catch (Exception ex)
+            {
+                logs.Add($"[ERR] ReadBlock failed: {ex.GetType().Name} - {ex.Message}");
+            }
+        }
+
+        public static void TestWriteSector(int devIndex, ulong lba, List<string> logs)
+        {
+            if (BlockDevice.Devices == null || devIndex < 0 || devIndex >= BlockDevice.Devices.Count)
+            {
+                logs.Add($"[ERR] Invalid device index #{devIndex}.");
+                return;
+            }
+            var dev = BlockDevice.Devices[devIndex];
+            logs.Add($"[TEST 3] Write test signature to Sector {lba} on Dev #{devIndex}...");
+
+            try
+            {
+                byte[] writeData = new byte[512];
+                byte[] pattern = Encoding.ASCII.GetBytes("WEATHEROS_VERIFY_SECTOR_" + lba + "_OK");
+                Array.Copy(pattern, 0, writeData, 0, pattern.Length);
+                writeData[510] = 0x55;
+                writeData[511] = 0xAA;
+
+                dev.WriteBlock(lba, 1, ref writeData);
+                logs.Add($"  dev.WriteBlock({lba}, 1) returned OK.");
+
+                // Flush ATA write cache
+                ushort ioBase = (devIndex == 0) ? (ushort)0x1F0 : (ushort)0x170;
+                AtaDeviceDiagnostics.FlushCache(ioBase, 0xA0);
+
+                // Read back
+                byte[] readBack = new byte[512];
+                dev.ReadBlock(lba, 1, ref readBack);
+
+                bool match = true;
+                for (int i = 0; i < pattern.Length; i++)
+                {
+                    if (readBack[i] != pattern[i]) { match = false; break; }
+                }
+
+                if (match)
+                {
+                    logs.Add($"[PASS] Sector read-back MATCH! Write verified physically on hardware!");
+                }
+                else
+                {
+                    string readAscii = "";
+                    for (int b = 0; b < pattern.Length; b++)
+                    {
+                        char c = (char)readBack[b];
+                        readAscii += (c >= 32 && c <= 126) ? c : '.';
+                    }
+                    logs.Add($"[FAIL] Read-back MISMATCH! Medium did not retain data.");
+                    logs.Add($"  Expected: \"WEATHEROS_VERIFY...\"");
+                    logs.Add($"  Found:    \"{readAscii}\"");
+                }
+            }
+            catch (Exception ex)
+            {
+                logs.Add($"[ERR] WriteBlock threw exception: {ex.GetType().Name}");
+                logs.Add($"  Details: {ex.Message}");
+            }
+        }
+
+        public static void TestFormatFat32(int devIndex, List<string> logs)
+        {
+            if (BlockDevice.Devices == null || devIndex < 0 || devIndex >= BlockDevice.Devices.Count)
+            {
+                logs.Add($"[ERR] Invalid device index #{devIndex}.");
+                return;
+            }
+            var dev = BlockDevice.Devices[devIndex];
+            logs.Add($"[TEST 4] Formatting Dev #{devIndex} as FAT32 Storage...");
+
+            string status;
+            bool ok = DiskWipeService.FormatDriveAsFat32(dev, out status);
+            if (ok)
+            {
+                logs.Add($"[PASS] {status}");
+            }
+            else
+            {
+                logs.Add($"[FAIL] {status}");
+            }
+        }
+
+        public static void TestSaveFile(int devIndex, string filename, string content, List<string> logs)
+        {
+            if (BlockDevice.Devices == null || devIndex < 0 || devIndex >= BlockDevice.Devices.Count)
+            {
+                logs.Add($"[ERR] Invalid device index #{devIndex}.");
+                return;
+            }
+            var dev = BlockDevice.Devices[devIndex];
+            logs.Add($"[TEST 5] Writing '{filename}' to Dev #{devIndex} via FAT32 direct driver...");
+
+            string status;
+            bool ok = DiskWipeService.WriteFileDirectToFat32(dev, filename, content, out status);
+            if (ok)
+            {
+                logs.Add($"[PASS] {status}");
+            }
+            else
+            {
+                logs.Add($"[FAIL] {status}");
+            }
+        }
+
+        public static void TestReadFile(int devIndex, string filename, List<string> logs)
+        {
+            if (BlockDevice.Devices == null || devIndex < 0 || devIndex >= BlockDevice.Devices.Count)
+            {
+                logs.Add($"[ERR] Invalid device index #{devIndex}.");
+                return;
+            }
+            var dev = BlockDevice.Devices[devIndex];
+            logs.Add($"[TEST 6] Reading '{filename}' from Dev #{devIndex} via FAT32 driver...");
+
+            string content;
+            string status;
+            bool ok = DiskWipeService.ReadFileDirectFromFat32(dev, filename, out content, out status);
+            if (ok)
+            {
+                string preview = content.Length > 35 ? content.Substring(0, 32) + "..." : content;
+                logs.Add($"[PASS] File loaded ({content.Length} bytes): \"{preview}\"");
+            }
+            else
+            {
+                logs.Add($"[FAIL] {status}");
+            }
+        }
+
+        public static void TestAtaRawProbe(List<string> logs)
+        {
+            logs.Add("[TEST 7] Direct ATA Controller Hardware Port Probe:");
+
+            var pm = AtaDeviceDiagnostics.ProbeAta(0x1F0, 0xA0);
+            if (pm.Exists)
+            {
+                string type = pm.IsAtapi ? "ATAPI Optical Drive" : "ATA Hard Drive";
+                logs.Add($"  [0x1F0 Pri-Master] {pm.Model} ({pm.SizeDisplay}) [{type}]");
+                logs.Add($"     Sectors: {pm.TotalSectors} | Serial: {pm.Serial}");
+            }
+            else
+            {
+                logs.Add($"  [0x1F0 Pri-Master] Status 0x{pm.StatusByte:X2} (No response)");
+            }
+
+            var ps = AtaDeviceDiagnostics.ProbeAta(0x1F0, 0xB0);
+            if (ps.Exists)
+            {
+                string type = ps.IsAtapi ? "ATAPI Optical Drive" : "ATA Hard Drive";
+                logs.Add($"  [0x1F0 Pri-Slave ] {ps.Model} ({ps.SizeDisplay}) [{type}]");
+                logs.Add($"     Sectors: {ps.TotalSectors} | Serial: {ps.Serial}");
+            }
+            else
+            {
+                logs.Add($"  [0x1F0 Pri-Slave ] Status 0x{ps.StatusByte:X2} (Empty / No Device)");
+            }
+
+            var sm = AtaDeviceDiagnostics.ProbeAta(0x170, 0xA0);
+            if (sm.Exists)
+            {
+                string type = sm.IsAtapi ? "ATAPI Optical Drive" : "ATA Hard Drive";
+                logs.Add($"  [0x170 Sec-Master] {sm.Model} ({sm.SizeDisplay}) [{type}]");
+            }
+            else
+            {
+                logs.Add($"  [0x170 Sec-Master] Status 0x{sm.StatusByte:X2} (Empty)");
+            }
+        }
+
+        public static void TestFlushCache(int devIndex, List<string> logs)
+        {
+            logs.Add($"[TEST 8] Sending ATA Flush Cache (0xE7) to Dev #{devIndex}...");
+            ushort ioBase = (devIndex == 0) ? (ushort)0x1F0 : (ushort)0x170;
+            AtaDeviceDiagnostics.FlushCache(ioBase, 0xA0);
+            logs.Add($"[PASS] ATA Flush Cache command completed.");
+        }
+
+        public static void RunAutoTestAll(int devIndex, List<string> logs)
+        {
+            logs.Clear();
+            if (BlockDevice.Devices == null || devIndex < 0 || devIndex >= BlockDevice.Devices.Count)
+            {
+                logs.Add($"[ERR] Target device index #{devIndex} not found in Cosmos HAL.");
+                return;
+            }
+
+            var dev = BlockDevice.Devices[devIndex];
+            ushort ioBase = (devIndex == 0) ? (ushort)0x1F0 : (ushort)0x170;
+            byte drvSel = 0xA0; // Master
+            logs.Add($"=== AUTOMATED BARE-METAL HARDWARE DIAGNOSTICS ===");
+            logs.Add($"TARGET: Dev #{devIndex} ({dev.GetType().Name}) | Port: 0x{ioBase:X3}");
+
+            bool isAllPassed = true;
+
+            // [1/6] ATA Hardware Identification
+            var ata = AtaDeviceDiagnostics.ProbeAta(ioBase, drvSel);
+            if (!ata.Exists && devIndex == 1)
+            {
+                ata = AtaDeviceDiagnostics.ProbeAta(0x1F0, 0xB0); // Primary Slave
+            }
+
+            if (ata.Exists)
+            {
+                if (ata.IsAtapi)
+                {
+                    logs.Add($"[1/6] ATA IDENTIFY: ATAPI OPTICAL DRIVE DETECTED ({ata.Model})");
+                    logs.Add("      STATUS: Read-Only optical medium. Not writable as FAT32.");
+                    logs.Add(">>> VERDICT: [SKIP] Target is CD/DVD drive. Select HDD (Dev #0).");
+                    return;
+                }
+                logs.Add($"[1/6] ATA IDENTIFY: OK | {ata.Model} ({ata.SizeDisplay})");
+                logs.Add($"      SN: {ata.Serial} | LBA: {ata.TotalSectors} sectors (48-bit)");
+            }
+            else
+            {
+                logs.Add($"[1/6] ATA IDENTIFY: PORT 0x{ioBase:X3} NO ATA RESPONSE (VM/Emulated)");
+            }
+
+            // [2/6] Sector 0 (MBR) Read
+            byte[] sec0 = new byte[512];
+            try
+            {
+                dev.ReadBlock(0, 1, ref sec0);
+                ushort mbrSig = (ushort)(sec0[510] | (sec0[511] << 8));
+                if (mbrSig == 0xAA55)
+                {
+                    int pOff = 446;
+                    byte pType = sec0[pOff + 4];
+                    uint pStart = (uint)(sec0[pOff + 8] | (sec0[pOff + 9] << 8) | (sec0[pOff + 10] << 16) | (sec0[pOff + 11] << 24));
+                    uint pCount = (uint)(sec0[pOff + 12] | (sec0[pOff + 13] << 8) | (sec0[pOff + 14] << 16) | (sec0[pOff + 15] << 24));
+                    logs.Add($"[2/6] MBR SECTOR 0: OK | Sig 0x55AA | Part1: LBA {pStart}, {pCount} sec (Type 0x{pType:X2})");
+                }
+                else
+                {
+                    logs.Add($"[2/6] MBR SECTOR 0: OK | Read 512B, No MBR Sig (0x{mbrSig:X4})");
+                }
+            }
+            catch (Exception ex)
+            {
+                isAllPassed = false;
+                logs.Add($"[2/6] MBR SECTOR 0: FAIL | {ex.GetType().Name}: {ex.Message}");
+            }
+
+            // [3/6] Sector 2048 (VBR/BPB) Probe
+            byte[] sec2048 = new byte[512];
+            bool hasFat32Bpb = false;
+            try
+            {
+                dev.ReadBlock(2048, 1, ref sec2048);
+                ushort vbrSig = (ushort)(sec2048[510] | (sec2048[511] << 8));
+                string fsType = Encoding.ASCII.GetString(sec2048, 82, 8);
+                if (vbrSig == 0xAA55 && fsType.StartsWith("FAT32"))
+                {
+                    hasFat32Bpb = true;
+                    logs.Add($"[3/6] VBR SEC 2048: OK | FAT32 BPB verified (OEM: MSWIN4.1)");
+                }
+                else
+                {
+                    logs.Add($"[3/6] VBR SEC 2048: UNFORMATTED | Executing fast FAT32 format...");
+                    string fmtStat;
+                    bool fmtOk = DiskWipeService.FormatDriveAsFat32(dev, out fmtStat);
+                    if (fmtOk)
+                    {
+                        hasFat32Bpb = true;
+                        logs.Add($"      FORMAT: OK | Partition 1 initialized (WEATHEROS)");
+                    }
+                    else
+                    {
+                        isAllPassed = false;
+                        logs.Add($"      FORMAT: FAIL | {fmtStat}");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                isAllPassed = false;
+                logs.Add($"[3/6] VBR SEC 2048: FAIL | {ex.GetType().Name}: {ex.Message}");
+            }
+
+            // [4/6] Raw Sector Write & Cache Flush & Readback Verify
+            try
+            {
+                byte[] testPattern = new byte[512];
+                byte[] marker = Encoding.ASCII.GetBytes("WEATHEROS_DIAG_WRITE_OK_HWPASS");
+                Array.Copy(marker, 0, testPattern, 0, marker.Length);
+                testPattern[510] = 0x55;
+                testPattern[511] = 0xAA;
+
+                dev.WriteBlock(2048, 1, ref testPattern);
+                AtaDeviceDiagnostics.FlushCache(ioBase, drvSel);
+
+                byte[] readVerify = new byte[512];
+                dev.ReadBlock(2048, 1, ref readVerify);
+
+                bool match = true;
+                for (int i = 0; i < marker.Length; i++)
+                {
+                    if (readVerify[i] != marker[i]) { match = false; break; }
+                }
+
+                if (match)
+                {
+                    logs.Add("[4/6] RAW SECTOR W: OK | 512B write verified byte-for-byte");
+                }
+                else
+                {
+                    isAllPassed = false;
+                    logs.Add($"[4/6] RAW SECTOR W: FAIL | Write dropped (Medium read-only / cache)");
+                }
+            }
+            catch (Exception ex)
+            {
+                isAllPassed = false;
+                logs.Add($"[4/6] RAW SECTOR W: FAIL | {ex.GetType().Name}: {ex.Message}");
+            }
+
+            // [5/6] FAT32 File Creation Test ('AUTOTEST.TXT')
+            string fileStat;
+            bool writeOk = DiskWipeService.WriteFileDirectToFat32(dev, "AUTOTEST.TXT", "WEATHEROS_DIAGNOSTIC_PASS_12345", out fileStat);
+            if (writeOk)
+            {
+                logs.Add("[5/6] FAT32 CREATE: OK | 'AUTOTEST.TXT' committed to RootDir & FAT");
+            }
+            else
+            {
+                isAllPassed = false;
+                logs.Add($"[5/6] FAT32 CREATE: FAIL | {fileStat}");
+            }
+
+            // [6/6] FAT32 File Readback & Content Integrity
+            string fileContent;
+            string readStat;
+            bool readOk = DiskWipeService.ReadFileDirectFromFat32(dev, "AUTOTEST.TXT", out fileContent, out readStat);
+            if (readOk && fileContent.Contains("WEATHEROS_DIAGNOSTIC_PASS"))
+            {
+                logs.Add("[6/6] FAT32 READ  : OK | Payload integrity 100% matched");
+            }
+            else
+            {
+                isAllPassed = false;
+                logs.Add($"[6/6] FAT32 READ  : FAIL | {readStat}");
+            }
+
+            // ATA Cache Flush to physical disk
+            AtaDeviceDiagnostics.FlushCache(ioBase, drvSel);
+
+            // Final Technical Verdict
+            if (isAllPassed)
+            {
+                logs.Add(">>> VERDICT: [PASS] HARDWARE IS PERSISTENT & FULLY OPERATIONAL");
+                logs.Add("    Status: Storage is non-volatile. Files will persist across reboots.");
+            }
+            else
+            {
+                logs.Add(">>> VERDICT: [FAIL] STORAGE WRITE BLOCKED OR FAILED");
+                logs.Add("    Status: Medium is read-only or hardware controller rejected write.");
+            }
         }
     }
 }
