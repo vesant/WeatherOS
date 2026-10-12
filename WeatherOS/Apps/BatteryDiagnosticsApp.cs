@@ -11,7 +11,6 @@ namespace WeatherOS.Apps
         public string Name => "Battery & Power Diagnostics";
         public bool IsRealTime => true;
 
-        private int _refreshTick = 0;
         private string _lastActionStatus = "Live hardware telemetry polling active.";
 
         public void Draw(TuiDesktop desktop)

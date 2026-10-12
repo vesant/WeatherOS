@@ -24,11 +24,11 @@ namespace WeatherOS.Apps
         {
             string title;
             if (_notepadState == 1)
-                title = $"NOTEPAD: {_notepadFilename}  |  [F2/Ctrl+S] Save  [ESC] Exit";
+                title = $"NOTEPAD: {_notepadFilename}  |  [F2] Save  [ESC] Menu";
             else if (_notepadState == 6)
                 title = "NOTEPAD: Select Storage Target  |  [ESC] Cancel";
             else
-                title = "NOTEPAD (VFS Storage Manager)  |  [ESC] Exit";
+                title = "NOTEPAD (Storage Manager)  |  [ESC] Exit";
 
             desktop.DrawWindow(5, 3, 70, 18, title);
             ConsoleColor winBg = desktop.IsDarkMode ? ConsoleColor.Black : ConsoleColor.Blue;
@@ -113,7 +113,7 @@ namespace WeatherOS.Apps
                 System.Console.SetCursorPosition(7, 18);
                 System.Console.BackgroundColor = winBg;
                 System.Console.ForegroundColor = ConsoleColor.Yellow;
-                System.Console.Write("[F2 / Ctrl+S] Save Note  |  [ESC] Menu / Exit");
+                System.Console.Write("[F2] Save Note  |  [ESC] Menu / Exit");
 
                 // File metrics and status
                 System.Console.SetCursorPosition(7, 19);
@@ -165,7 +165,7 @@ namespace WeatherOS.Apps
                 System.Console.Write("Available Storage Devices & Partitions:");
 
                 var locations = StorageService.GetStorageLocations();
-                for (int i = 0; i < locations.Count && i < 2; i++)
+                for (int i = 0; i < locations.Count && i < 3; i++)
                 {
                     System.Console.SetCursorPosition(8, 10 + i * 2);
                     if (i == _selectedLocationIndex)
@@ -184,7 +184,7 @@ namespace WeatherOS.Apps
                 }
 
                 System.Console.BackgroundColor = winBg;
-                System.Console.SetCursorPosition(8, 15);
+                System.Console.SetCursorPosition(8, 16);
                 System.Console.ForegroundColor = ConsoleColor.DarkCyan;
                 string stDisp = "Status: " + _lastStatus;
                 if (stDisp.Length > 62) stDisp = stDisp.Substring(0, 59) + "...";
@@ -192,7 +192,8 @@ namespace WeatherOS.Apps
 
                 System.Console.SetCursorPosition(8, 18);
                 System.Console.ForegroundColor = ConsoleColor.Yellow;
-                System.Console.Write("[Enter / 1-2] Save to Target  |  [ESC] Return to Editor");
+                int maxOpt = Math.Min(locations.Count, 3);
+                System.Console.Write($"[Enter / 1-{maxOpt}] Save to Target  |  [ESC] Return to Editor");
             }
             else // Prompts (2=Open, 3=Save Filename, 4=Delete)
             {
@@ -390,6 +391,16 @@ namespace WeatherOS.Apps
             StorageService.SaveFileToLocation(_notepadFilename, _editorState.Text, loc.Id, out status);
             _lastStatus = status;
             _notepadState = 1; // Return to editor with file saved and status shown
+        }
+
+        public void OpenDirect(string filename, string content)
+        {
+            _notepadFilename = StorageService.NormalizeFilename(filename);
+            _editorState.Text = content ?? "";
+            _editorState.CursorPos = _editorState.Text.Length;
+            _editorState.ClearSelection();
+            _notepadState = 1;
+            _lastStatus = $"Loaded {_notepadFilename} [OK]";
         }
     }
 }

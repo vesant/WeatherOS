@@ -89,23 +89,26 @@ namespace WeatherOS
 
                 try
                 {
-                    if (System.IO.File.Exists(@"0:\settings.ini"))
+                    string iniContent;
+                    string stat;
+                    if (StorageService.LoadFile("settings.ini", out iniContent, out stat) && !string.IsNullOrEmpty(iniContent))
                     {
-                        string[] lines = System.IO.File.ReadAllLines(@"0:\settings.ini");
+                        string[] lines = iniContent.Split('\n');
                         foreach (var line in lines)
                         {
-                            if (line.StartsWith("DefaultCity="))
+                            string t = line.Trim();
+                            if (t.StartsWith("DefaultCity="))
                             {
-                                string c = line.Substring(12).Trim();
+                                string c = t.Substring(12).Trim();
                                 if (!string.IsNullOrWhiteSpace(c)) targetCity = c;
                             }
-                            if (line.StartsWith("AutoLoc="))
+                            if (t.StartsWith("AutoLoc="))
                             {
-                                autoLocEnabled = line.Substring(8).Trim() == "true";
+                                autoLocEnabled = t.Substring(8).Trim() == "true";
                             }
-                            if (line.StartsWith("DebugLog="))
+                            if (t.StartsWith("DebugLog="))
                             {
-                                bool dbg = line.Substring(9).Trim() == "true";
+                                bool dbg = t.Substring(9).Trim() == "true";
                                 _weatherService.SetDebugMode(dbg);
                             }
                         }
@@ -146,7 +149,6 @@ namespace WeatherOS
             _commandManager.Register(new DisksCommand());
             _commandManager.Register(new DiskDiagCommand());
             _commandManager.Register(new FormatCommand());
-            _commandManager.Register(new WipeCommand());
             _commandManager.Register(new PoweroffCommand());
             _commandManager.Register(new RebootCommand());
         }
@@ -195,10 +197,11 @@ namespace WeatherOS
             {
                 input = "diskdiag";
             }
-            if (command == "clean")
+            if (command == "clean" || command == "cls" || command == "clear")
             {
-                // clean alias for wipe
-                input = "wipe" + (parts.Length > 1 ? " " + parts[1] : "");
+                System.Console.Clear();
+                PrintBootBanner();
+                return;
             }
 
             bool executed = _commandManager.Execute(input);
@@ -212,7 +215,7 @@ namespace WeatherOS
 
         private void SwitchToGuiMode()
         {
-            System.Console.WriteLine("Loading TUI Desktop Environment...");
+            System.Console.Clear();
             _tuiDesktop.Start();
             PrintBootBanner();
         }

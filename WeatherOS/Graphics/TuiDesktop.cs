@@ -179,6 +179,11 @@ namespace WeatherOS.Graphics
         public void SetCurrentApp(string appId)
         {
             _currentApp = appId;
+            if (appId == "diskmgr")
+            {
+                var dm = GetApp("diskmgr") as WeatherOS.Apps.DiskManagerApp;
+                dm?.Refresh();
+            }
         }
 
         public void StartApp(string appId)
@@ -206,6 +211,7 @@ namespace WeatherOS.Graphics
         private void RunLoop()
         {
             IsGuiActive = true;
+            System.Console.Clear();
             try
             {
                 while (_isActive)
@@ -307,7 +313,7 @@ namespace WeatherOS.Graphics
                 string selected = appIds[_selectedAppIndex];
                 if (selected == "reboot") Cosmos.System.Power.Reboot();
                 else if (selected == "poweroff" || selected == "halt") Cosmos.System.Power.Shutdown();
-                else _currentApp = selected;
+                else SetCurrentApp(selected);
             }
         }
 
@@ -319,28 +325,34 @@ namespace WeatherOS.Graphics
             ConsoleColor bgDesktop = _isDarkMode ? ConsoleColor.Black : ConsoleColor.DarkBlue;
             System.Console.BackgroundColor = bgDesktop;
             
-            // Top Bar
+            // Top Bar (Row 0)
             System.Console.SetCursorPosition(0, 0);
             System.Console.BackgroundColor = ConsoleColor.Gray;
             System.Console.ForegroundColor = ConsoleColor.Black;
+            string topText;
             if (_currentApp == "launcher")
             {
-                System.Console.Write("  WeatherOS Desktop  |  Standalone Meteorological System                        ");
+                topText = " WeatherOS Desktop  |  Standalone Meteorological System";
+            }
+            else if (_currentApp == "notepad")
+            {
+                topText = " WeatherOS > Notepad  |  [F2] Save Note  |  [ESC] Menu / Desktop";
             }
             else
             {
                 IApp curAppObj = GetApp(_currentApp);
                 string appTitle = curAppObj != null ? curAppObj.Name : _currentApp;
-                string topBarText = $"  WeatherOS > {appTitle}  |  [ESC] Return to Desktop";
-                if (topBarText.Length > 79) topBarText = topBarText.Substring(0, 79);
-                System.Console.Write(topBarText.PadRight(79));
+                topText = $" WeatherOS > {appTitle}  |  [ESC] Return to Desktop";
             }
+            if (topText.Length > 79) topText = topText.Substring(0, 79);
+            System.Console.Write(topText.PadRight(79));
 
             System.Console.BackgroundColor = bgDesktop;
+            string clearLine = "                                                                               "; // 79 spaces
             for (int y = 1; y < 24; y++)
             {
                 System.Console.SetCursorPosition(0, y);
-                System.Console.Write("                                                                                ");
+                System.Console.Write(clearLine);
             }
 
             if (_currentApp == "launcher")
@@ -360,18 +372,21 @@ namespace WeatherOS.Graphics
                 }
             }
 
-            // Bottom Bar
+            // Bottom Bar (Row 24)
             System.Console.SetCursorPosition(0, 24);
             System.Console.BackgroundColor = ConsoleColor.Gray;
             System.Console.ForegroundColor = ConsoleColor.Black;
+            string btmText;
             if (_currentApp == "launcher")
             {
-                System.Console.Write("  [Up/Down/Tab] Navigate  |  [Enter] Launch Application                         ");
+                btmText = " [Up/Down/Tab] Navigate  |  [Enter] Open Application";
             }
             else
             {
-                System.Console.Write("  WeatherOS v3.0  |  Cosmos x86 Dedicated Meteorological Kernel                ");
+                btmText = " WeatherOS v3.0  |  Cosmos x86 Dedicated Meteorological Kernel";
             }
+            if (btmText.Length > 79) btmText = btmText.Substring(0, 79);
+            System.Console.Write(btmText.PadRight(79));
             System.Console.ResetColor();
         }
 
@@ -413,7 +428,7 @@ namespace WeatherOS.Graphics
         {
             if (left < 0) left = 0;
             if (top < 1) top = 1;
-            if (left + width > 80) width = 80 - left;
+            if (left + width > 79) width = 79 - left;
             if (top + height > 24) height = 24 - top;
             if (width < 4 || height < 3) return;
 

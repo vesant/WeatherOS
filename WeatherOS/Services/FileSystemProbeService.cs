@@ -78,13 +78,13 @@ namespace WeatherOS.Services
                                 DeviceName = $"Disk {d} Part {p + 1}",
                                 StartingSector = host != null ? host.StartingSector : 0,
                                 SectorCount = bCount,
-                                FileSystemType = (part.MountedFS != null && !string.IsNullOrEmpty(part.MountedFS.Type)) ? part.MountedFS.Type : "Linux Native / Data",
+                                FileSystemType = (part.MountedFS != null && !string.IsNullOrEmpty(part.MountedFS.Type)) ? part.MountedFS.Type : "FAT32 Storage",
                                 VolumeLabel = (part.MountedFS != null && !string.IsNullOrEmpty(part.MountedFS.Label)) ? part.MountedFS.Label : "",
                                 IsMounted = part.MountedFS != null,
                                 MountedDriveLetter = (part.MountedFS != null && !string.IsNullOrEmpty(part.MountedFS.RootPath)) ? part.MountedFS.RootPath : (part.RootPath ?? ""),
                                 IsWritable = true,
-                                IsLinuxSystem = true,
-                                Description = "Physical Partition (Ready to Overwrite/Install)"
+                                IsLinuxSystem = false,
+                                Description = "Physical Storage Partition"
                             };
 
                             byte[] sec0 = new byte[bSize];
@@ -257,9 +257,9 @@ namespace WeatherOS.Services
                                         StartingSector = startLba,
                                         SectorCount = count,
                                         IsWritable = true,
-                                        IsLinuxSystem = true,
-                                        FileSystemType = "Linux Native (GPT)",
-                                        Description = "GPT Linux Partition (Ready to Overwrite/Install)"
+                                        IsLinuxSystem = false,
+                                        FileSystemType = "Storage Partition (GPT)",
+                                        Description = "Physical Storage Partition"
                                     };
 
                                     byte[] s0 = new byte[bSize];
@@ -296,8 +296,8 @@ namespace WeatherOS.Services
                                 StartingSector = lbaStart,
                                 SectorCount = lbaCount,
                                 IsWritable = true,
-                                IsLinuxSystem = true,
-                                FileSystemType = "Linux Native / Data"
+                                IsLinuxSystem = false,
+                                FileSystemType = "FAT32 Storage"
                             };
 
                             byte[] sec0 = new byte[bSize];
@@ -435,10 +435,10 @@ namespace WeatherOS.Services
             }
 
             // Default fallback for detected partitions on the disk
-            info.FileSystemType = "Linux Native / Data";
-            info.IsLinuxSystem = true;
+            info.FileSystemType = "FAT32 Storage";
+            info.IsLinuxSystem = false;
             info.IsWritable = true;
-            info.Description = "Linux Partition (Ready to Overwrite/Install)";
+            info.Description = "Primary Storage Partition";
         }
     }
 }

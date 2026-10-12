@@ -17,14 +17,14 @@ namespace WeatherOS.Apps
             System.Console.BackgroundColor = winBg;
             System.Console.ForegroundColor = ConsoleColor.White;
 
-            System.Console.SetCursorPosition(25, 9);
+            System.Console.SetCursorPosition(23, 9);
             System.Console.Write("WeatherOS v3.0 (Cosmos Kernel)");
-            System.Console.SetCursorPosition(25, 11);
+            System.Console.SetCursorPosition(23, 11);
             System.Console.Write("Developed by: Ghost");
-            System.Console.SetCursorPosition(25, 13);
+            System.Console.SetCursorPosition(23, 13);
             System.Console.Write("Architecture: x86 / 32-bit (IL2CPU)");
 
-            System.Console.SetCursorPosition(25, 14);
+            System.Console.SetCursorPosition(23, 14);
             System.Console.ForegroundColor = ConsoleColor.Yellow;
             System.Console.Write("[ESC] Return to Desktop");
         }

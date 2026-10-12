@@ -32,6 +32,32 @@ namespace WeatherOS.Services
         public List<string> ContainedFilesystems { get; set; } = new List<string>();
     }
 
+    public class Fat32FileItem
+    {
+        public string Name { get; set; } = "";
+        public uint Size { get; set; }
+    }
+
+    public class Fat32VolumeInfo
+    {
+        public ulong PartStartLba;
+        public ushort BytesPerSector;
+        public byte SectorsPerCluster;
+        public ushort ReservedSectors;
+        public byte NumFats;
+        public uint FatSectors;
+        public uint RootDirCluster;
+        public ulong Fat1Lba => PartStartLba + ReservedSectors;
+        public ulong Fat2Lba => Fat1Lba + FatSectors;
+        public ulong DataRegionLba => PartStartLba + ReservedSectors + ((ulong)NumFats * FatSectors);
+
+        public ulong GetClusterLba(uint cluster)
+        {
+            if (cluster < 2) return DataRegionLba;
+            return DataRegionLba + ((ulong)(cluster - 2) * SectorsPerCluster);
+        }
+    }
+
     public static class DiskWipeService
     {
         public static List<DiskDriveInfo> GetPhysicalDrives()
@@ -242,17 +268,6 @@ namespace WeatherOS.Services
                     dev.WriteBlock(rootDirLba + r, 1, ref zeros);
                 }
 
-                // 7. Sync Cosmos VFS if available
-                try
-                {
-                    var vfsDisks = VFSManager.GetDisks();
-                    if (vfsDisks != null && vfsDisks.Count > 0)
-                    {
-                        vfsDisks[0].FormatPartition(0, "Fat32", true);
-                    }
-                }
-                catch { }
-
                 FileSystemProbeService.ProbeAllPartitions();
                 status = $"[SUCCESS] Disk formatted as FAT32 Primary Storage (Partition 1: {partSectors / 2048}MB, Label: WEATHEROS).";
                 return true;
@@ -260,6 +275,89 @@ namespace WeatherOS.Services
             catch (Exception ex)
             {
                 status = $"[ERR] FAT32 format failed: {ex.Message}";
+                return false;
+            }
+        }
+
+        public static bool FindFat32Volume(BlockDevice dev, out Fat32VolumeInfo vol)
+        {
+            vol = null;
+            if (dev == null) return false;
+
+            // 1. Check partition table in MBR (Sector 0)
+            try
+            {
+                byte[] mbr = new byte[512];
+                dev.ReadBlock(0, 1, ref mbr);
+                if (mbr[510] == 0x55 && mbr[511] == 0xAA)
+                {
+                    for (int p = 0; p < 4; p++)
+                    {
+                        int off = 446 + (p * 16);
+                        uint startLba = (uint)(mbr[off + 8] | (mbr[off + 9] << 8) | (mbr[off + 10] << 16) | (mbr[off + 11] << 24));
+                        if (startLba > 0 && startLba < dev.BlockCount)
+                        {
+                            if (CheckFat32Bpb(dev, startLba, out vol))
+                            {
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+            catch { }
+
+            // 2. Check standard 1MB alignment LBA 2048
+            if (CheckFat32Bpb(dev, 2048, out vol))
+            {
+                return true;
+            }
+
+            // 3. Check Superfloppy / LBA 0
+            if (CheckFat32Bpb(dev, 0, out vol))
+            {
+                return true;
+            }
+
+            return false;
+        }
+
+        private static bool CheckFat32Bpb(BlockDevice dev, ulong lba, out Fat32VolumeInfo vol)
+        {
+            vol = null;
+            try
+            {
+                byte[] bpb = new byte[512];
+                dev.ReadBlock(lba, 1, ref bpb);
+                if (bpb[510] != 0x55 || bpb[511] != 0xAA) return false;
+
+                ushort bytesPerSec = (ushort)(bpb[11] | (bpb[12] << 8));
+                byte secPerClus = bpb[13];
+                ushort resSec = (ushort)(bpb[14] | (bpb[15] << 8));
+                byte numFats = bpb[16];
+                uint fatSec = (uint)(bpb[36] | (bpb[37] << 8) | (bpb[38] << 16) | (bpb[39] << 24));
+                uint rootClus = (uint)(bpb[44] | (bpb[45] << 8) | (bpb[46] << 16) | (bpb[47] << 24));
+
+                // Sanity checks for FAT32 BPB
+                if (bytesPerSec != 512) return false;
+                if (secPerClus == 0 || (secPerClus & (secPerClus - 1)) != 0) return false;
+                if (resSec == 0 || numFats == 0 || numFats > 2) return false;
+                if (fatSec == 0 || rootClus < 2) return false;
+
+                vol = new Fat32VolumeInfo
+                {
+                    PartStartLba = lba,
+                    BytesPerSector = bytesPerSec,
+                    SectorsPerCluster = secPerClus,
+                    ReservedSectors = resSec,
+                    NumFats = numFats,
+                    FatSectors = fatSec,
+                    RootDirCluster = rootClus
+                };
+                return true;
+            }
+            catch
+            {
                 return false;
             }
         }
@@ -274,40 +372,19 @@ namespace WeatherOS.Services
 
             try
             {
-                ulong startLba = 2048;
-                ushort reservedSectors = 32;
-                byte sectorsPerCluster = 8;
-                ulong totalBlocks = dev.BlockCount;
-                if (totalBlocks == 0 || totalBlocks > 0x000FFFFFFFFFFFFFUL) totalBlocks = 204800;
-
-                ulong partSectors = totalBlocks > startLba ? totalBlocks - startLba : 0;
-                uint sectors32 = (uint)partSectors;
-                uint dataSectors = sectors32 > reservedSectors ? sectors32 - reservedSectors : 0;
-                uint totalClusters = dataSectors / sectorsPerCluster;
-                uint fatBytes = (totalClusters + 2) * 4;
-                uint fatSectors = (fatBytes + 511) / 512;
-                if (fatSectors < 32) fatSectors = 32;
-
-                ulong fat1Lba = startLba + reservedSectors;
-                ulong fat2Lba = fat1Lba + fatSectors;
-                ulong rootDirLba = startLba + reservedSectors + (fatSectors * 2);
-
-                // Cluster 3 starts immediately after root directory cluster 2
-                ulong cluster3Lba = rootDirLba + sectorsPerCluster;
-
-                // Read root directory sector 0
-                byte[] rootDirSec = new byte[512];
-                try { dev.ReadBlock(rootDirLba, 1, ref rootDirSec); } catch { }
-
-                // Find free entry (entry 1 onwards)
-                int entryOffset = 32; // Offset 32 is entry 1
-                for (int e = 1; e < 16; e++)
+                Fat32VolumeInfo vol;
+                if (!FindFat32Volume(dev, out vol))
                 {
-                    int off = e * 32;
-                    if (rootDirSec[off] == 0x00 || rootDirSec[off] == 0xE5)
+                    string fmtStatus;
+                    if (!FormatDriveAsFat32(dev, out fmtStatus))
                     {
-                        entryOffset = off;
-                        break;
+                        status = $"Auto-format failed: {fmtStatus}";
+                        return false;
+                    }
+                    if (!FindFat32Volume(dev, out vol))
+                    {
+                        status = "FAT32 volume could not be initialized.";
+                        return false;
                     }
                 }
 
@@ -332,13 +409,59 @@ namespace WeatherOS.Services
                     name8 = rawName.PadRight(8);
                 }
 
-                byte[] nameBytes = Encoding.ASCII.GetBytes(name8 + ext3);
+                string target83 = name8 + ext3;
+                byte[] nameBytes = Encoding.ASCII.GetBytes(target83);
+
+                // Read Root Directory sector
+                ulong rootDirLba = vol.GetClusterLba(vol.RootDirCluster);
+                byte[] rootDirSec = new byte[512];
+                try { dev.ReadBlock(rootDirLba, 1, ref rootDirSec); } catch { }
+
+                // Find matching entry or free entry (entries 1..15, entry 0 reserved for Volume Label)
+                int entryOffset = -1;
+                int freeOffset = -1;
+                uint existingCluster = 0;
+
+                for (int e = 1; e < 16; e++)
+                {
+                    int off = e * 32;
+                    byte b0 = rootDirSec[off];
+
+                    if (b0 == 0x00 || b0 == 0xE5)
+                    {
+                        if (freeOffset == -1) freeOffset = off;
+                        if (b0 == 0x00) break;
+                        continue;
+                    }
+
+                    if (rootDirSec[off + 11] == 0x0F || (rootDirSec[off + 11] & 0x08) != 0) continue;
+
+                    string curEntry = Encoding.ASCII.GetString(rootDirSec, off, 11);
+                    if (string.Equals(curEntry, target83, StringComparison.OrdinalIgnoreCase))
+                    {
+                        entryOffset = off;
+                        ushort cLo = (ushort)(rootDirSec[off + 26] | (rootDirSec[off + 27] << 8));
+                        ushort cHi = (ushort)(rootDirSec[off + 20] | (rootDirSec[off + 21] << 8));
+                        existingCluster = (uint)(cLo | (cHi << 16));
+                        break;
+                    }
+                }
+
+                if (entryOffset == -1)
+                {
+                    entryOffset = freeOffset != -1 ? freeOffset : 32;
+                }
+
+                int chosenIndex = entryOffset / 32;
+                uint targetCluster = existingCluster >= 2 ? existingCluster : (uint)(2 + chosenIndex);
+
+                // Populate Directory Entry
                 Array.Copy(nameBytes, 0, rootDirSec, entryOffset, 11);
                 rootDirSec[entryOffset + 11] = 0x20; // Archive attribute
-                rootDirSec[entryOffset + 20] = 0x00; // Cluster High = 0
-                rootDirSec[entryOffset + 21] = 0x00;
-                rootDirSec[entryOffset + 26] = 0x03; // Cluster Low = 3
-                rootDirSec[entryOffset + 27] = 0x00;
+                rootDirSec[entryOffset + 20] = (byte)((targetCluster >> 16) & 0xFF); // Cluster High
+                rootDirSec[entryOffset + 21] = (byte)((targetCluster >> 24) & 0xFF);
+                rootDirSec[entryOffset + 26] = (byte)(targetCluster & 0xFF);         // Cluster Low
+                rootDirSec[entryOffset + 27] = (byte)((targetCluster >> 8) & 0xFF);
 
                 byte[] contentBytes = Encoding.ASCII.GetBytes(content ?? "");
                 uint fileSize = (uint)contentBytes.Length;
@@ -347,20 +470,40 @@ namespace WeatherOS.Services
                 rootDirSec[entryOffset + 30] = (byte)((fileSize >> 16) & 0xFF);
                 rootDirSec[entryOffset + 31] = (byte)((fileSize >> 24) & 0xFF);
 
+                // Write directory sector
                 dev.WriteBlock(rootDirLba, 1, ref rootDirSec);
 
-                // Update FAT tables for Cluster 3: EOF marker
-                byte[] fatSec0 = new byte[512];
-                try { dev.ReadBlock(fat1Lba, 1, ref fatSec0); } catch { }
-                // Offset for Cluster 3: 3 * 4 = 12
-                fatSec0[12] = 0xFF; fatSec0[13] = 0xFF; fatSec0[14] = 0xFF; fatSec0[15] = 0x0F;
-                dev.WriteBlock(fat1Lba, 1, ref fatSec0);
-                dev.WriteBlock(fat2Lba, 1, ref fatSec0);
+                // Update FAT tables for targetCluster: 0x0FFFFFFF (EOF)
+                ulong fatSecOffset = (ulong)(targetCluster * 4) / 512;
+                uint fatEntryByteOffset = (uint)((targetCluster * 4) % 512);
 
-                // Write file content into Cluster 3
+                byte[] fatSec = new byte[512];
+                try { dev.ReadBlock(vol.Fat1Lba + fatSecOffset, 1, ref fatSec); } catch { }
+                fatSec[fatEntryByteOffset] = 0xFF;
+                fatSec[fatEntryByteOffset + 1] = 0xFF;
+                fatSec[fatEntryByteOffset + 2] = 0xFF;
+                fatSec[fatEntryByteOffset + 3] = 0x0F;
+
+                dev.WriteBlock(vol.Fat1Lba + fatSecOffset, 1, ref fatSec);
+                if (vol.NumFats > 1)
+                {
+                    dev.WriteBlock(vol.Fat2Lba + fatSecOffset, 1, ref fatSec);
+                }
+
+                // Write file content into target cluster
+                ulong clusterLba = vol.GetClusterLba(targetCluster);
                 byte[] dataSec = new byte[512];
                 Array.Copy(contentBytes, 0, dataSec, 0, Math.Min(contentBytes.Length, 512));
-                dev.WriteBlock(cluster3Lba, 1, ref dataSec);
+                dev.WriteBlock(clusterLba, 1, ref dataSec);
+
+                // Read-back verification
+                byte[] verifySec = new byte[512];
+                dev.ReadBlock(rootDirLba, 1, ref verifySec);
+                if (verifySec[entryOffset] != nameBytes[0])
+                {
+                    status = "[ERR] Hardware disk write failed verification (Sector read-back mismatch).";
+                    return false;
+                }
 
                 status = $"Saved to FAT32 Disk: {name8.Trim()}.{ext3.Trim()} ({fileSize} bytes) [OK]";
                 return true;
@@ -370,6 +513,256 @@ namespace WeatherOS.Services
                 status = $"Direct FAT32 write error: {ex.Message}";
                 return false;
             }
+        }
+
+        public static bool ReadFileDirectFromFat32(BlockDevice dev, string filename, out string content, out string status)
+        {
+            content = "";
+            if (dev == null)
+            {
+                status = "BlockDevice is null.";
+                return false;
+            }
+
+            try
+            {
+                Fat32VolumeInfo vol;
+                if (!FindFat32Volume(dev, out vol))
+                {
+                    status = "No FAT32 volume found on device.";
+                    return false;
+                }
+
+                string rawName = filename.ToUpper();
+                string name8 = "UNTITLED";
+                string ext3 = "TXT";
+                int dotIdx = rawName.LastIndexOf('.');
+                if (dotIdx > 0)
+                {
+                    string n = rawName.Substring(0, dotIdx);
+                    if (n.Length > 8) n = n.Substring(0, 8);
+                    name8 = n.PadRight(8);
+
+                    string x = rawName.Substring(dotIdx + 1);
+                    if (x.Length > 3) x = x.Substring(0, 3);
+                    ext3 = x.PadRight(3);
+                }
+                else
+                {
+                    if (rawName.Length > 8) rawName = rawName.Substring(0, 8);
+                    name8 = rawName.PadRight(8);
+                }
+
+                string target83 = name8 + ext3;
+
+                ulong rootDirLba = vol.GetClusterLba(vol.RootDirCluster);
+                byte[] rootDirSec = new byte[512];
+                try { dev.ReadBlock(rootDirLba, 1, ref rootDirSec); } catch { }
+
+                for (int e = 0; e < 16; e++)
+                {
+                    int off = e * 32;
+                    if (rootDirSec[off] == 0x00) break;
+                    if (rootDirSec[off] == 0xE5) continue;
+                    if (rootDirSec[off + 11] == 0x0F || (rootDirSec[off + 11] & 0x08) != 0) continue;
+
+                    string entryName = Encoding.ASCII.GetString(rootDirSec, off, 11);
+                    if (string.Equals(entryName, target83, StringComparison.OrdinalIgnoreCase))
+                    {
+                        ushort clusLow = (ushort)(rootDirSec[off + 26] | (rootDirSec[off + 27] << 8));
+                        ushort clusHigh = (ushort)(rootDirSec[off + 20] | (rootDirSec[off + 21] << 8));
+                        uint cluster = (uint)(clusLow | (clusHigh << 16));
+                        uint fileSize = (uint)(rootDirSec[off + 28] | (rootDirSec[off + 29] << 8) | (rootDirSec[off + 30] << 16) | (rootDirSec[off + 31] << 24));
+
+                        if (cluster >= 2 && fileSize > 0)
+                        {
+                            ulong clusterLba = vol.GetClusterLba(cluster);
+                            byte[] dataSec = new byte[512];
+                            try { dev.ReadBlock(clusterLba, 1, ref dataSec); } catch { }
+
+                            int len = Math.Min((int)fileSize, 512);
+                            content = Encoding.ASCII.GetString(dataSec, 0, len);
+                            status = $"Loaded from FAT32 Disk ({len} bytes) [OK]";
+                            return true;
+                        }
+                        else
+                        {
+                            content = "";
+                            status = "Empty file [OK]";
+                            return true;
+                        }
+                    }
+                }
+
+                status = $"File '{filename}' not found on FAT32 disk.";
+                return false;
+            }
+            catch (Exception ex)
+            {
+                status = $"FAT32 read error: {ex.Message}";
+                return false;
+            }
+        }
+
+        public static bool DeleteFileDirectFromFat32(BlockDevice dev, string filename, out string status)
+        {
+            if (dev == null)
+            {
+                status = "BlockDevice is null.";
+                return false;
+            }
+
+            try
+            {
+                Fat32VolumeInfo vol;
+                if (!FindFat32Volume(dev, out vol))
+                {
+                    status = "No FAT32 volume found on device.";
+                    return false;
+                }
+
+                string rawName = filename.ToUpper();
+                string name8 = "UNTITLED";
+                string ext3 = "TXT";
+                int dotIdx = rawName.LastIndexOf('.');
+                if (dotIdx > 0)
+                {
+                    string n = rawName.Substring(0, dotIdx);
+                    if (n.Length > 8) n = n.Substring(0, 8);
+                    name8 = n.PadRight(8);
+
+                    string x = rawName.Substring(dotIdx + 1);
+                    if (x.Length > 3) x = x.Substring(0, 3);
+                    ext3 = x.PadRight(3);
+                }
+                else
+                {
+                    if (rawName.Length > 8) rawName = rawName.Substring(0, 8);
+                    name8 = rawName.PadRight(8);
+                }
+
+                string target83 = name8 + ext3;
+
+                ulong rootDirLba = vol.GetClusterLba(vol.RootDirCluster);
+                byte[] rootDirSec = new byte[512];
+                try { dev.ReadBlock(rootDirLba, 1, ref rootDirSec); } catch { }
+
+                for (int e = 0; e < 16; e++)
+                {
+                    int off = e * 32;
+                    if (rootDirSec[off] == 0x00) break;
+                    if (rootDirSec[off] == 0xE5) continue;
+                    if (rootDirSec[off + 11] == 0x0F || (rootDirSec[off + 11] & 0x08) != 0) continue;
+
+                    string entryName = Encoding.ASCII.GetString(rootDirSec, off, 11);
+                    if (string.Equals(entryName, target83, StringComparison.OrdinalIgnoreCase))
+                    {
+                        ushort clusLow = (ushort)(rootDirSec[off + 26] | (rootDirSec[off + 27] << 8));
+                        ushort clusHigh = (ushort)(rootDirSec[off + 20] | (rootDirSec[off + 21] << 8));
+                        uint cluster = (uint)(clusLow | (clusHigh << 16));
+
+                        rootDirSec[off] = 0xE5;
+                        dev.WriteBlock(rootDirLba, 1, ref rootDirSec);
+
+                        if (cluster >= 2)
+                        {
+                            ulong fatSecOffset = (ulong)(cluster * 4) / 512;
+                            uint fatEntryByteOffset = (uint)((cluster * 4) % 512);
+
+                            byte[] fatSec = new byte[512];
+                            try { dev.ReadBlock(vol.Fat1Lba + fatSecOffset, 1, ref fatSec); } catch { }
+                            fatSec[fatEntryByteOffset] = 0;
+                            fatSec[fatEntryByteOffset + 1] = 0;
+                            fatSec[fatEntryByteOffset + 2] = 0;
+                            fatSec[fatEntryByteOffset + 3] = 0;
+                            dev.WriteBlock(vol.Fat1Lba + fatSecOffset, 1, ref fatSec);
+                            if (vol.NumFats > 1) dev.WriteBlock(vol.Fat2Lba + fatSecOffset, 1, ref fatSec);
+                        }
+
+                        status = $"File '{filename}' deleted from FAT32 disk [OK]";
+                        return true;
+                    }
+                }
+
+                status = $"File '{filename}' not found on FAT32 disk.";
+                return false;
+            }
+            catch (Exception ex)
+            {
+                status = $"FAT32 delete error: {ex.Message}";
+                return false;
+            }
+        }
+
+        public static List<Fat32FileItem> ListFilesDetailedDirectFromFat32(BlockDevice dev)
+        {
+            var list = new List<Fat32FileItem>();
+            if (dev == null) return list;
+
+            Fat32VolumeInfo vol;
+            if (!FindFat32Volume(dev, out vol))
+            {
+                return list;
+            }
+
+            try
+            {
+                ulong rootDirLba = vol.GetClusterLba(vol.RootDirCluster);
+                byte[] rootDirSec = new byte[512];
+                dev.ReadBlock(rootDirLba, 1, ref rootDirSec);
+
+                for (int e = 0; e < 16; e++)
+                {
+                    int off = e * 32;
+                    byte firstByte = rootDirSec[off];
+                    if (firstByte == 0x00) break; // End of directory marker
+                    if (firstByte == 0xE5) continue; // Deleted entry
+
+                    byte attr = rootDirSec[off + 11];
+                    if (attr == 0x0F) continue; // Long File Name entry
+                    if ((attr & 0x08) != 0) continue; // Volume label
+
+                    // Validate printable ASCII in filename
+                    bool validAscii = true;
+                    for (int i = 0; i < 11; i++)
+                    {
+                        byte b = rootDirSec[off + i];
+                        if (b < 32 || b > 126 || b == 0xFF)
+                        {
+                            validAscii = false;
+                            break;
+                        }
+                    }
+                    if (!validAscii) continue;
+
+                    string raw8 = Encoding.ASCII.GetString(rootDirSec, off, 8).Trim();
+                    string raw3 = Encoding.ASCII.GetString(rootDirSec, off + 8, 3).Trim();
+                    if (string.IsNullOrEmpty(raw8)) continue;
+
+                    string fname = string.IsNullOrEmpty(raw3) ? raw8 : $"{raw8}.{raw3}";
+                    uint sz = (uint)(rootDirSec[off + 28] | (rootDirSec[off + 29] << 8) | (rootDirSec[off + 30] << 16) | (rootDirSec[off + 31] << 24));
+
+                    list.Add(new Fat32FileItem
+                    {
+                        Name = fname,
+                        Size = sz
+                    });
+                }
+            }
+            catch { }
+
+            return list;
+        }
+
+        public static List<string> ListFilesDirectFromFat32(BlockDevice dev)
+        {
+            var list = new List<string>();
+            var detailed = ListFilesDetailedDirectFromFat32(dev);
+            for (int i = 0; i < detailed.Count; i++)
+            {
+                list.Add(detailed[i].Name);
+            }
+            return list;
         }
 
         public static bool WipeAndCleanDisk(int diskIndex, out string status)

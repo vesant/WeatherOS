@@ -33,9 +33,15 @@ namespace WeatherOS.Services
         }
     }
 
+    public class StoredFile
+    {
+        public string Name { get; set; } = "";
+        public string Content { get; set; } = "";
+    }
+
     public static class StorageService
     {
-        private static Dictionary<string, string> _memoryStore = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        private static List<StoredFile> _memoryFiles = new List<StoredFile>();
 
         public static string NormalizeFilename(string filename)
         {
@@ -43,6 +49,54 @@ namespace WeatherOS.Services
             filename = filename.Trim();
             if (!filename.Contains(".")) filename += ".txt";
             return filename;
+        }
+
+        private static void PutMemoryFile(string filename, string content)
+        {
+            filename = NormalizeFilename(filename);
+            for (int i = 0; i < _memoryFiles.Count; i++)
+            {
+                if (string.Equals(_memoryFiles[i].Name, filename, StringComparison.OrdinalIgnoreCase))
+                {
+                    _memoryFiles[i].Content = content ?? "";
+                    return;
+                }
+            }
+            _memoryFiles.Add(new StoredFile { Name = filename, Content = content ?? "" });
+        }
+
+        private static bool TryGetMemoryFile(string filename, out string content)
+        {
+            filename = NormalizeFilename(filename);
+            for (int i = 0; i < _memoryFiles.Count; i++)
+            {
+                if (string.Equals(_memoryFiles[i].Name, filename, StringComparison.OrdinalIgnoreCase))
+                {
+                    content = _memoryFiles[i].Content;
+                    return true;
+                }
+            }
+            content = "";
+            return false;
+        }
+
+        private static bool DeleteMemoryFile(string filename)
+        {
+            filename = NormalizeFilename(filename);
+            for (int i = 0; i < _memoryFiles.Count; i++)
+            {
+                if (string.Equals(_memoryFiles[i].Name, filename, StringComparison.OrdinalIgnoreCase))
+                {
+                    _memoryFiles.RemoveAt(i);
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        public static List<StoredFile> GetMemoryFiles()
+        {
+            return _memoryFiles;
         }
 
         public static bool FormatDrive(string drive, string fsTarget, out string status)
@@ -69,86 +123,51 @@ namespace WeatherOS.Services
         {
             var list = new List<StorageLocation>();
 
-            // 1. Primary Physical Storage (Disk 0 FAT32)
-            bool diskAdded = false;
             try
             {
-                var probed = FileSystemProbeService.ProbeAllPartitions();
-                if (probed != null && probed.Count > 0)
+                var physDrives = DiskWipeService.GetPhysicalDrives();
+                if (physDrives != null && physDrives.Count > 0)
                 {
-                    // Look for FAT32 partition first
-                    foreach (var p in probed)
+                    for (int i = 0; i < physDrives.Count; i++)
                     {
-                        if (p.FileSystemType.StartsWith("FAT32") || p.FileSystemType.StartsWith("FAT16"))
-                        {
-                            string locId = !string.IsNullOrEmpty(p.MountedDriveLetter) ? p.MountedDriveLetter : "disk0_fat32";
-                            list.Add(new StorageLocation
-                            {
-                                Id = locId,
-                                Name = !string.IsNullOrEmpty(p.MountedDriveLetter) ? $"Drive {p.MountedDriveLetter}" : "Disk 0 Part 1",
-                                FileSystem = "FAT32 Storage",
-                                TotalSize = (long)p.SizeBytes,
-                                FreeSpace = (long)p.SizeBytes > 1024 * 1024 ? (long)p.SizeBytes - 1024 * 1024 : 0,
-                                IsReadOnly = false,
-                                IsLinuxSystem = false
-                            });
-                            diskAdded = true;
-                            break; // Show only the ONE single clean physical disk!
-                        }
-                    }
-
-                    // Fallback to first partition if no FAT32 found
-                    if (!diskAdded && probed.Count > 0)
-                    {
-                        var first = probed[0];
-                        string locId = !string.IsNullOrEmpty(first.MountedDriveLetter) ? first.MountedDriveLetter : "disk0_part1";
+                        var d = physDrives[i];
                         list.Add(new StorageLocation
                         {
-                            Id = locId,
-                            Name = !string.IsNullOrEmpty(first.MountedDriveLetter) ? $"Drive {first.MountedDriveLetter}" : "Disk 0 Part 1",
-                            FileSystem = first.FileSystemType,
-                            TotalSize = (long)first.SizeBytes,
-                            FreeSpace = 0,
-                            IsReadOnly = !first.IsWritable,
-                            IsLinuxSystem = first.IsLinuxSystem
-                        });
-                        diskAdded = true;
-                    }
-                }
-            }
-            catch { }
-
-            // If probe didn't find any partition, check physical drive directly
-            if (!diskAdded)
-            {
-                try
-                {
-                    var phys = DiskWipeService.GetPhysicalDrives();
-                    if (phys != null && phys.Count > 0)
-                    {
-                        list.Add(new StorageLocation
-                        {
-                            Id = "disk0_fat32",
-                            Name = "Disk 0 Part 1",
+                            Id = $"disk{d.Index}",
+                            Name = $"Disk {d.Index} (Hardware Dev #{i})",
                             FileSystem = "FAT32 Storage",
-                            TotalSize = (long)phys[0].SizeBytes,
-                            FreeSpace = (long)phys[0].SizeBytes > 1024 * 1024 ? (long)phys[0].SizeBytes - 1024 * 1024 : 0,
+                            TotalSize = (long)d.SizeBytes,
+                            FreeSpace = (long)d.SizeBytes > 1048576 ? (long)d.SizeBytes - 1048576 : 0,
                             IsReadOnly = false,
                             IsLinuxSystem = false
                         });
                     }
                 }
-                catch { }
+            }
+            catch { }
+
+            if (list.Count == 0)
+            {
+                list.Add(new StorageLocation
+                {
+                    Id = "disk0",
+                    Name = "Disk 0 (Primary Storage)",
+                    FileSystem = "FAT32 Storage",
+                    TotalSize = 1024L * 1024 * 1024,
+                    FreeSpace = 1024L * 1024 * 1024 - (1024 * 1024),
+                    IsReadOnly = false,
+                    IsLinuxSystem = false
+                });
             }
 
-            // 2. RAM Virtual Store (High-Speed Session Storage)
+            // RAM Virtual Store (High-Speed Session Storage)
             list.Add(new StorageLocation
             {
                 Id = "ram",
                 Name = "RAM Virtual Store",
-                FileSystem = "RAM-FS (Session)",
+                FileSystem = "RAM-FS Session",
                 TotalSize = 32 * 1024 * 1024,
-                FreeSpace = 32 * 1024 * 1024 - (_memoryStore.Count * 2048),
+                FreeSpace = 32 * 1024 * 1024 - (_memoryFiles.Count * 2048),
                 IsReadOnly = false,
                 IsLinuxSystem = false
             });
@@ -161,83 +180,50 @@ namespace WeatherOS.Services
             filename = NormalizeFilename(filename);
             if (content == null) content = "";
 
-            // Always update RAM store for instant access
-            _memoryStore[filename] = content;
-
             if (string.Equals(locationId, "ram", StringComparison.OrdinalIgnoreCase))
             {
+                PutMemoryFile(filename, content);
                 status = $"Saved to RAM Storage: {filename} ({content.Length} chars) [OK]";
                 return true;
             }
 
-            // Save to physical Disk 0 / FAT32 storage
-            bool wroteToDisk = false;
-            string targetPath = "";
-
-            // 1. Try VFS if mounted with drive letter
-            if (locationId.Contains(":"))
+            // Target is physical disk (e.g. disk0)
+            var physDrives = DiskWipeService.GetPhysicalDrives();
+            if (physDrives == null || physDrives.Count == 0)
             {
-                try
-                {
-                    string path = locationId;
-                    if (!path.EndsWith("\\")) path += "\\";
-                    path += filename;
-
-                    byte[] bytes = System.Text.Encoding.ASCII.GetBytes(content);
-                    try
-                    {
-                        if (File.Exists(path)) File.Delete(path);
-                        using (var fs = File.Create(path))
-                        {
-                            fs.Write(bytes, 0, bytes.Length);
-                        }
-                        wroteToDisk = true;
-                        targetPath = path;
-                    }
-                    catch
-                    {
-                        File.WriteAllText(path, content);
-                        wroteToDisk = true;
-                        targetPath = path;
-                    }
-                }
-                catch { }
+                PutMemoryFile(filename, content);
+                status = $"[ERR] No physical drives detected. Saved to RAM Virtual Store.";
+                return false;
             }
 
-            // 2. If VFS write didn't succeed or target is raw FAT32 volume, write directly via block device
-            if (!wroteToDisk)
+            int diskIdx = 0;
+            if (locationId != null && locationId.StartsWith("disk") && locationId.Length > 4)
             {
-                try
-                {
-                    var physDrives = DiskWipeService.GetPhysicalDrives();
-                    if (physDrives != null && physDrives.Count > 0)
-                    {
-                        string directStatus;
-                        bool directOk = DiskWipeService.WriteFileDirectToFat32(physDrives[0].Device, filename, content, out directStatus);
-                        if (directOk)
-                        {
-                            wroteToDisk = true;
-                            targetPath = $"Disk 0 ({filename})";
-                        }
-                    }
-                }
-                catch { }
+                int.TryParse(locationId.Substring(4), out diskIdx);
             }
+            if (diskIdx < 0 || diskIdx >= physDrives.Count) diskIdx = 0;
 
-            if (wroteToDisk)
+            string directStatus;
+            bool directOk = DiskWipeService.WriteFileDirectToFat32(physDrives[diskIdx].Device, filename, content, out directStatus);
+
+            if (directOk)
             {
-                status = $"Saved to {targetPath} & RAM ({content.Length} chars) [OK]";
+                // File saved exclusively to disk - do not duplicate in RAM store!
+                status = $"Saved to {physDrives[diskIdx].Name}: {filename} ({content.Length} bytes) [OK]";
+                return true;
             }
             else
             {
-                status = $"Saved to RAM Virtual Store: {filename} ({content.Length} chars) [OK]";
+                // Fallback to RAM so user work is never lost
+                PutMemoryFile(filename, content);
+                status = $"Disk save failed: {directStatus}. File saved in RAM temporary store.";
+                return false;
             }
-            return true;
         }
 
         public static bool SaveFile(string filename, string content, out string status)
         {
-            return SaveFileToLocation(filename, content, "disk0_fat32", out status);
+            return SaveFileToLocation(filename, content, "disk0", out status);
         }
 
         public static bool LoadFile(string filename, out string content, out string status)
@@ -245,34 +231,25 @@ namespace WeatherOS.Services
             filename = NormalizeFilename(filename);
             content = "";
 
-            // Check VFS logical drives
+            // 1. Check physical disk first
             try
             {
-                var drives = VFSManager.GetLogicalDrives();
-                if (drives != null)
+                var physDrives = DiskWipeService.GetPhysicalDrives();
+                if (physDrives != null && physDrives.Count > 0)
                 {
-                    foreach (var drive in drives)
+                    string readStatus;
+                    if (DiskWipeService.ReadFileDirectFromFat32(physDrives[0].Device, filename, out content, out readStatus))
                     {
-                        string path = drive;
-                        if (!path.EndsWith("\\")) path += "\\";
-                        path += filename;
-
-                        if (File.Exists(path))
-                        {
-                            content = File.ReadAllText(path);
-                            status = $"Loaded from {path} ({content.Length} chars) [OK]";
-                            _memoryStore[filename] = content;
-                            return true;
-                        }
+                        status = $"Loaded from Disk 0: {filename} ({content.Length} bytes) [OK]";
+                        return true;
                     }
                 }
             }
             catch { }
 
-            // Check RAM memory store
-            if (_memoryStore.ContainsKey(filename))
+            // 2. Check RAM store fallback
+            if (TryGetMemoryFile(filename, out content))
             {
-                content = _memoryStore[filename];
                 status = $"Loaded from RAM Storage: {filename} ({content.Length} chars) [OK]";
                 return true;
             }
@@ -284,30 +261,17 @@ namespace WeatherOS.Services
         public static bool DeleteFile(string filename, out string status)
         {
             filename = NormalizeFilename(filename);
-            bool deleted = false;
-
-            if (_memoryStore.ContainsKey(filename))
-            {
-                _memoryStore.Remove(filename);
-                deleted = true;
-            }
+            bool deleted = DeleteMemoryFile(filename);
 
             try
             {
-                var drives = VFSManager.GetLogicalDrives();
-                if (drives != null)
+                var physDrives = DiskWipeService.GetPhysicalDrives();
+                if (physDrives != null && physDrives.Count > 0)
                 {
-                    foreach (var drive in drives)
+                    string delStatus;
+                    if (DiskWipeService.DeleteFileDirectFromFat32(physDrives[0].Device, filename, out delStatus))
                     {
-                        string path = drive;
-                        if (!path.EndsWith("\\")) path += "\\";
-                        path += filename;
-
-                        if (File.Exists(path))
-                        {
-                            File.Delete(path);
-                            deleted = true;
-                        }
+                        deleted = true;
                     }
                 }
             }
@@ -321,34 +285,37 @@ namespace WeatherOS.Services
         {
             var files = new List<string>();
 
-            foreach (var key in _memoryStore.Keys)
+            for (int i = 0; i < _memoryFiles.Count; i++)
             {
-                files.Add($"{key} ({_memoryStore[key].Length} bytes) [RAM/DISK]");
+                var f = _memoryFiles[i];
+                files.Add($"{f.Name} ({f.Content.Length} bytes) [RAM/DISK]");
             }
 
             try
             {
-                var drives = VFSManager.GetLogicalDrives();
-                if (drives != null)
+                var physDrives = DiskWipeService.GetPhysicalDrives();
+                if (physDrives != null && physDrives.Count > 0)
                 {
-                    foreach (var drive in drives)
+                    var diskFiles = DiskWipeService.ListFilesDirectFromFat32(physDrives[0].Device);
+                    if (diskFiles != null)
                     {
-                        try
+                        for (int i = 0; i < diskFiles.Count; i++)
                         {
-                            var diskFiles = Directory.GetFiles(drive);
-                            if (diskFiles != null)
+                            string df = diskFiles[i];
+                            bool alreadyInList = false;
+                            for (int j = 0; j < files.Count; j++)
                             {
-                                foreach (var df in diskFiles)
+                                if (files[j].StartsWith(df, StringComparison.OrdinalIgnoreCase))
                                 {
-                                    string name = Path.GetFileName(df);
-                                    if (!files.Exists(f => f.StartsWith(name)))
-                                    {
-                                        files.Add($"{name} [DISK]");
-                                    }
+                                    alreadyInList = true;
+                                    break;
                                 }
                             }
+                            if (!alreadyInList)
+                            {
+                                files.Add($"{df} [DISK]");
+                            }
                         }
-                        catch { }
                     }
                 }
             }
@@ -357,9 +324,9 @@ namespace WeatherOS.Services
             return files;
         }
 
-        public static Dictionary<string, string> GetMemoryStore()
+        public static List<StoredFile> GetMemoryStore()
         {
-            return _memoryStore;
+            return _memoryFiles;
         }
     }
 }

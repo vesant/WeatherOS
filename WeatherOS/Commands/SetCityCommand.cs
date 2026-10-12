@@ -29,7 +29,8 @@ namespace WeatherOS.Commands
             string newCity = string.Join(" ", args, 1, args.Length - 1).Trim();
             try
             {
-                File.WriteAllText(@"0:\settings.ini", $"DarkMode=false\nAutoLoc=false\nDefaultCity={newCity}\nDebugLog={WeatherService.IsDebugModeActive}\nCustomKey=\n");
+                string status;
+                StorageService.SaveFile("settings.ini", $"DarkMode=false\nAutoLoc=false\nDefaultCity={newCity}\nDebugLog={WeatherService.IsDebugModeActive}\nCustomKey=\n", out status);
             }
             catch { }
 
