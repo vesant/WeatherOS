@@ -241,7 +241,14 @@ namespace WeatherOS.Apps
                     System.Console.SetCursorPosition(7, line++);
                     System.Console.ForegroundColor = ConsoleColor.Yellow;
                     string type = c.IsAhci ? "SATA AHCI" : (c.IsNvme ? "NVMe SSD" : (c.IsIde ? "Legacy IDE" : "Storage"));
-                    System.Console.Write($"Type: {type} ({c.SubclassName}) | BAR5: 0x{c.AbarAddress:X8}");
+                    System.Console.Write($"Type: {type} ({c.SubclassName})");
+
+                    if (line < 20)
+                    {
+                        System.Console.SetCursorPosition(7, line++);
+                        System.Console.ForegroundColor = ConsoleColor.Cyan;
+                        System.Console.Write($"B0:0x{c.Bars[0]:X4} B1:0x{c.Bars[1]:X4} B2:0x{c.Bars[2]:X4} B3:0x{c.Bars[3]:X4} B4:0x{c.Bars[4]:X4}");
+                    }
 
                     line++; // Blank separator
                 }
@@ -318,7 +325,8 @@ namespace WeatherOS.Apps
             }
             else
             {
-                for (int d = 0; d < _hardwareDevs.Count && d < 2; d++)
+                int maxDevShow = Math.Min(_hardwareDevs.Count, 3);
+                for (int d = 0; d < maxDevShow; d++)
                 {
                     var hDev = _hardwareDevs[d];
                     bool isSel = (d == _selectedHardwareDevIndex);
@@ -333,7 +341,7 @@ namespace WeatherOS.Apps
                 }
 
                 var dev = _hardwareDevs[_selectedHardwareDevIndex];
-                System.Console.SetCursorPosition(5, 9);
+                System.Console.SetCursorPosition(5, 10);
                 string s0Str = dev.Sector0Readable ? (dev.HasMbrSig ? $"MBR Valid [55 AA] ({dev.MbrPartitionCount} part)" : "Readable, No MBR Sig") : "Unreadable Sector 0";
                 System.Console.ForegroundColor = ConsoleColor.Gray;
                 System.Console.Write($"Sector 0   : {s0Str} | BlockSize: {dev.BlockSize}B | [T=Toggle]".PadRight(66));

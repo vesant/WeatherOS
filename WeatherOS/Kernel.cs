@@ -66,6 +66,7 @@ namespace WeatherOS
 
             try
             {
+                CustomPciAtaDriverService.Initialize();
                 _vfs = new Cosmos.System.FileSystem.CosmosVFS();
                 Cosmos.System.FileSystem.VFS.VFSManager.RegisterVFS(_vfs);
                 _isVfsMounted = true; 

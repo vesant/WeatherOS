@@ -10,57 +10,50 @@ namespace WeatherOS.Graphics
             System.Console.Clear();
             System.Console.CursorVisible = false;
 
-            // Snow -> Rain -> Cloud -> Sun (Sun is the final icon)
-            string[] icons = { "snow", "rain", "cloud", "sun" };
-            int iconLeft = (80 - 16) / 2; // Exactly 32 (80 cols centered)
+            int iconLeft = (80 - 16) / 2; // Exactly 32
             int iconTop = 6;
-            
-            // Animation loop
+
+            // 1. Cycle stormy weather first: Snow -> Rain -> Cloud
+            string[] icons = { "snow", "rain", "cloud" };
             for (int i = 0; i < icons.Length; i++)
             {
                 System.Console.Clear();
                 DrawBigIcon(icons[i], iconLeft, iconTop);
-                Delay(500);
+                Delay(450);
             }
 
-            // The Sun remains shining on screen as the final icon while OS title types out
-            string line1 = "W E A T H E R";
-            int startX1 = (80 - line1.Length) / 2; // Exactly 33
-            int startY1 = 13;
+            // 2. Clear icon area and type perfectly centered title & subtitle
+            System.Console.Clear();
 
-            System.Console.SetCursorPosition(startX1, startY1);
+            string title = "W E A T H E R   O S";
+            int startX = (80 - title.Length) / 2; // Exactly 30 (80 columns centered)
+            int startY = 13;
+
+            System.Console.SetCursorPosition(startX, startY);
             System.Console.ForegroundColor = ConsoleColor.Cyan;
 
-            for (int i = 0; i < line1.Length; i++)
+            for (int i = 0; i < title.Length; i++)
             {
-                System.Console.Write(line1[i]);
-                Delay(40); // Typing effect
-            }
-
-            string line2 = "O  S";
-            int startX2 = (80 - line2.Length) / 2; // Exactly 38
-            int startY2 = 15; // Placed neatly underneath line 1
-
-            System.Console.SetCursorPosition(startX2, startY2);
-            System.Console.ForegroundColor = ConsoleColor.Yellow;
-
-            for (int i = 0; i < line2.Length; i++)
-            {
-                System.Console.Write(line2[i]);
-                Delay(60); // Typing effect
+                System.Console.Write(title[i]);
+                Delay(35);
             }
 
             string subTitle = "METEOROLOGICAL OPERATING SYSTEM";
-            int startXSub = (80 - subTitle.Length) / 2; // Exactly 24
-            int startYSub = 17;
+            int startXSub = (80 - subTitle.Length) / 2; // Exactly 24 (80 columns centered)
+            int startYSub = 15;
 
             System.Console.SetCursorPosition(startXSub, startYSub);
             System.Console.ForegroundColor = ConsoleColor.DarkGray;
             System.Console.Write(subTitle);
-            
+
+            Delay(300);
+
+            // 3. SUN APPEARS LAST: The golden sun shines down above the title
+            DrawBigIcon("sun", iconLeft, iconTop);
+
             System.Console.ResetColor();
-            Delay(1200); // Hold for 1.2s to admire the final sun splash
-            
+            Delay(1500); // Admire the sun before transitioning to desktop
+
             System.Console.Clear();
             System.Console.CursorVisible = true;
         }

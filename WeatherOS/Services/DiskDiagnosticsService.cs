@@ -480,6 +480,7 @@ namespace WeatherOS.Services
     {
         public bool Exists;
         public bool IsAtapi;
+        public bool IsLba48;
         public string Model = "";
         public string Serial = "";
         public string Firmware = "";
@@ -530,6 +531,13 @@ namespace WeatherOS.Services
 
                 if (status == 0xFF) return info; // Floating bus
 
+                // Wait for drive not busy before issuing command
+                int preWait = 300000;
+                while (preWait-- > 0)
+                {
+                    if ((pCmd.Byte & 0x80) == 0) break;
+                }
+
                 // 2. Zero LBA registers
                 pSecCount.Byte = 0;
                 pLbaLow.Byte = 0;
@@ -540,7 +548,7 @@ namespace WeatherOS.Services
                 pCmd.Byte = 0xEC;
 
                 // Wait for BSY to clear
-                int timeout = 50000;
+                int timeout = 500000;
                 while (timeout-- > 0)
                 {
                     status = pCmd.Byte;
@@ -559,7 +567,7 @@ namespace WeatherOS.Services
                     info.IsAtapi = true;
                     // Issue IDENTIFY PACKET DEVICE (0xA1)
                     pCmd.Byte = 0xA1;
-                    timeout = 50000;
+                    timeout = 300000;
                     while (timeout-- > 0)
                     {
                         status = pCmd.Byte;
@@ -575,7 +583,18 @@ namespace WeatherOS.Services
                     return info;
                 }
 
-                // Check if DRQ bit (0x08) is set
+                // Wait for DRQ bit (0x08) to become asserted
+                timeout = 500000;
+                while (timeout-- > 0)
+                {
+                    status = pCmd.Byte;
+                    if ((status & 0x80) == 0)
+                    {
+                        if ((status & 0x08) != 0) break; // Data ready
+                        if ((status & 0x01) != 0) return info; // Error
+                    }
+                }
+
                 if ((status & 0x08) == 0)
                 {
                     return info;
@@ -602,6 +621,7 @@ namespace WeatherOS.Services
 
                 // Word 83 bit 10: 48-bit LBA supported
                 bool lba48Supported = (words[83] & 0x0400) != 0;
+                info.IsLba48 = lba48Supported;
                 if (lba48Supported)
                 {
                     ulong lba48 = (ulong)words[100] |
@@ -717,7 +737,11 @@ namespace WeatherOS.Services
                         if (dev == null) continue;
 
                         string typeName = "BlockDevice";
-                        if (dev is ATA_PIO ataPio)
+                        if (dev is CustomPciAtaBlockDevice cp)
+                        {
+                            typeName = $"PCI ATA (0x{cp.CmdBase:X3})";
+                        }
+                        else if (dev is ATA_PIO ataPio)
                         {
                             typeName = $"ATA {(ataPio.ControllerID == Ata.ControllerIdEnum.Primary ? "Pri" : "Sec")}-{(ataPio.BusPosition == Ata.BusPositionEnum.Master ? "Master" : "Slave")}";
                         }
@@ -743,7 +767,12 @@ namespace WeatherOS.Services
                         // Probe exact ATA hardware channel
                         ushort ioBase = 0x1F0;
                         byte drvSel = 0xA0; // Master
-                        if (dev is Ata ataD)
+                        if (dev is CustomPciAtaBlockDevice cpDev)
+                        {
+                            ioBase = cpDev.CmdBase;
+                            drvSel = cpDev.DriveSelect;
+                        }
+                        else if (dev is Ata ataD)
                         {
                             ioBase = (ataD.ControllerID == Ata.ControllerIdEnum.Primary) ? (ushort)0x1F0 : (ushort)0x170;
                             drvSel = (ataD.BusPosition == Ata.BusPositionEnum.Master) ? (byte)0xA0 : (byte)0xB0;

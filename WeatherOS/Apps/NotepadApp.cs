@@ -62,7 +62,9 @@ namespace WeatherOS.Apps
 
                 System.Console.SetCursorPosition(10, 16);
                 System.Console.ForegroundColor = ConsoleColor.Cyan;
-                System.Console.Write("Status: " + _lastStatus);
+                string stMsg = "Status: " + _lastStatus;
+                if (stMsg.Length > 63) stMsg = stMsg.Substring(0, 60) + "...";
+                System.Console.Write(stMsg.PadRight(63));
             }
             else if (_notepadState == 1) // Editor Mode
             {

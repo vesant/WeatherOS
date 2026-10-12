@@ -21,11 +21,19 @@ namespace WeatherOS.Services
             string sizeStr = "";
             if (TotalSize > 0)
             {
-                long mbTotal = TotalSize / (1024 * 1024);
-                if (mbTotal > 1024)
-                    sizeStr = $" | {mbTotal / 1024}GB";
+                long cleanSize = TotalSize;
+                if (cleanSize > 2199023255552L) cleanSize = 1073741824L; // Sanitize corrupt overflow
+                long mbTotal = cleanSize / (1024 * 1024);
+                if (mbTotal >= 1024)
+                {
+                    long gb = mbTotal / 1024;
+                    long dec = ((mbTotal % 1024) * 10) / 1024;
+                    sizeStr = dec > 0 ? $" | {gb}.{dec}GB" : $" | {gb}GB";
+                }
                 else if (mbTotal > 0)
+                {
                     sizeStr = $" | {mbTotal}MB";
+                }
             }
             string rw = IsLinuxSystem ? " [Linux]" : (IsReadOnly ? " [RO]" : " [RW]");
             string desc = $"{Name} ({FileSystem}{sizeStr}){rw}";

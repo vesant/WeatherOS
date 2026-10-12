@@ -44,6 +44,7 @@ namespace WeatherOS.Services
 
     public class Fat32VolumeInfo
     {
+        public string VolumeLabel = "";
         public ulong PartStartLba;
         public ushort BytesPerSector;
         public byte SectorsPerCluster;
@@ -64,6 +65,20 @@ namespace WeatherOS.Services
 
     public static class DiskWipeService
     {
+        public static string FormatSectors(ulong sectors)
+        {
+            if (sectors == 0) return "0 MB";
+            if (sectors > 4000000000UL) sectors = 2097152UL;
+            ulong mb = (sectors * 512UL) / (1024UL * 1024UL);
+            if (mb >= 1024)
+            {
+                ulong gb = mb / 1024;
+                ulong dec = ((mb % 1024) * 10) / 1024;
+                return dec > 0 ? $"{gb}.{dec} GB" : $"{gb} GB";
+            }
+            return $"{mb} MB";
+        }
+
         public static List<DiskDriveInfo> GetPhysicalDrives()
         {
             var list = new List<DiskDriveInfo>();
@@ -95,17 +110,39 @@ namespace WeatherOS.Services
             }
             catch { }
 
-            // If AHCI controller found physical SATA drive(s), return them.
-            // Do NOT probe the legacy IDE channels, as in AHCI mode they are floating bus phantoms!
-            if (list.Count > 0)
-            {
-                return list;
-            }
-
-            // 2. Fallback: Probe Cosmos BlockDevice.Devices (IDE / VM / Compatibility mode)
+            // 1.5. Probe Bare-Metal PCI ATA/IDE driver (Native PCI BAR ports on Intel ICH7-M)
             try
             {
-                var devices = BlockDevice.Devices;
+                var pciAtaDrives = CustomPciAtaDriverService.GetDevices();
+                if (pciAtaDrives != null && pciAtaDrives.Count > 0)
+                {
+                    for (int p = 0; p < pciAtaDrives.Count; p++)
+                    {
+                        var pd = pciAtaDrives[p];
+                        if (pd == null || pd.BlockCount == 0) continue;
+                        bool isUsb = (pd.BlockCount > 0 && pd.BlockCount < 10000000UL);
+
+                        var info = new DiskDriveInfo
+                        {
+                            Index = list.Count,
+                            Device = pd,
+                            Name = isUsb ? $"Disk {list.Count} (Live USB Boot Medium)" : $"Disk {list.Count} ({pd.Model} : {FormatSectors(pd.BlockCount)})",
+                            SectorCount = pd.BlockCount
+                        };
+
+                        ProbeDriveFilesystems(pd, list.Count, info);
+                        list.Add(info);
+                    }
+                }
+            }
+            catch { }
+
+            // 2. Fallback: Probe Cosmos BlockDevice.Devices ONLY if bare-metal drivers found no disks
+            if (list.Count == 0)
+            {
+                try
+                {
+                    var devices = BlockDevice.Devices;
                 if (devices != null)
                 {
                     for (int i = 0; i < devices.Count; i++)
@@ -113,8 +150,8 @@ namespace WeatherOS.Services
                         var dev = devices[i];
                         if (dev == null) continue;
 
-                        // Only select raw parent drives, not individual partitions or AHCI devices
-                        if (dev is Partition || dev is AhciBlockDevice) continue;
+                        // Only select raw parent drives, not individual partitions, AHCI, or Custom PCI ATA devices
+                        if (dev is Partition || dev is AhciBlockDevice || dev is CustomPciAtaBlockDevice) continue;
 
                         // Verify that reading sector 0 is responsive on this hardware channel
                         byte[] testSec = new byte[512];
@@ -214,6 +251,17 @@ namespace WeatherOS.Services
                             driveName = $"Disk {list.Count} (Hardware Dev #{i} : {szDisplay})";
                         }
 
+                        // Avoid adding duplicate device (mirrored USB or duplicate sector count)
+                        bool isUsbDev = (safeCount > 0 && safeCount < 10000000UL);
+                        if (isUsbDev && list.Exists(x => x.SectorCount > 0 && x.SectorCount < 10000000UL))
+                        {
+                            continue;
+                        }
+                        if (list.Exists(x => x.SectorCount == safeCount))
+                        {
+                            continue;
+                        }
+
                         var info = new DiskDriveInfo
                         {
                             Index = list.Count,
@@ -228,6 +276,7 @@ namespace WeatherOS.Services
                 }
             }
             catch { }
+            }
 
             // Sort physical drives so that writable storage drives come first, and live USB boot medium comes last
             if (list.Count > 1)
@@ -298,6 +347,20 @@ namespace WeatherOS.Services
         {
             try
             {
+                Fat32VolumeInfo fatVol;
+                if (FindFat32Volume(dev, out fatVol))
+                {
+                    string label = !string.IsNullOrEmpty(fatVol.VolumeLabel) ? fatVol.VolumeLabel : "FAT32 Storage";
+                    if (!info.ContainedFilesystems.Contains("FAT32"))
+                    {
+                        info.ContainedFilesystems.Add($"FAT32 ({label})");
+                    }
+                    if (!string.IsNullOrEmpty(fatVol.VolumeLabel) && !info.Name.Contains(fatVol.VolumeLabel))
+                    {
+                        info.Name = $"Disk {diskIdx} ({fatVol.VolumeLabel} : {info.SizeDisplay})";
+                    }
+                }
+
                 var parts = FileSystemProbeService.ProbeAllPartitions();
                 foreach (var p in parts)
                 {
@@ -584,8 +647,44 @@ namespace WeatherOS.Services
                 if (resSec == 0 || numFats == 0 || numFats > 2) return false;
                 if (fatSec == 0 || rootClus < 2) return false;
 
+                string vLabel = "";
+                try
+                {
+                    vLabel = Encoding.ASCII.GetString(bpb, 71, 11).Trim();
+                    if (vLabel == "NO NAME") vLabel = "";
+                }
+                catch { }
+
+                if (string.IsNullOrEmpty(vLabel))
+                {
+                    try
+                    {
+                        ulong rLba = lba + resSec + ((ulong)numFats * fatSec) + ((ulong)(rootClus - 2) * secPerClus);
+                        byte[] rSec = new byte[512];
+                        dev.ReadBlock(rLba, 1, ref rSec);
+                        for (int e = 0; e < 16; e++)
+                        {
+                            int off = e * 32;
+                            if (rSec[off] == 0x00) break;
+                            if (rSec[off] == 0xE5) continue;
+                            byte attr = rSec[off + 11];
+                            if (attr == 0x08)
+                            {
+                                string lab = Encoding.ASCII.GetString(rSec, off, 11).Trim();
+                                if (!string.IsNullOrEmpty(lab) && lab != "NO NAME")
+                                {
+                                    vLabel = lab;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    catch { }
+                }
+
                 vol = new Fat32VolumeInfo
                 {
+                    VolumeLabel = vLabel,
                     PartStartLba = lba,
                     BytesPerSector = bytesPerSec,
                     SectorsPerCluster = secPerClus,

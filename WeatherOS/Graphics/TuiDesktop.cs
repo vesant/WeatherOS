@@ -332,17 +332,17 @@ namespace WeatherOS.Graphics
             string topText;
             if (_currentApp == "launcher")
             {
-                topText = " WeatherOS Desktop  |  Standalone Meteorological System";
+                topText = "WeatherOS Desktop  |  Standalone Meteorological System";
             }
             else if (_currentApp == "notepad")
             {
-                topText = " WeatherOS > Notepad  |  [F2] Save Note  |  [ESC] Menu / Desktop";
+                topText = "WeatherOS > Notepad  |  [F2] Save Note  |  [ESC] Menu / Desktop";
             }
             else
             {
                 IApp curAppObj = GetApp(_currentApp);
                 string appTitle = curAppObj != null ? curAppObj.Name : _currentApp;
-                topText = $" WeatherOS > {appTitle}  |  [ESC] Return to Desktop";
+                topText = $"WeatherOS > {appTitle}  |  [ESC] Return to Desktop";
             }
             if (topText.Length > 79) topText = topText.Substring(0, 79);
             System.Console.Write(topText.PadRight(79));
@@ -379,11 +379,11 @@ namespace WeatherOS.Graphics
             string btmText;
             if (_currentApp == "launcher")
             {
-                btmText = " [Up/Down/Tab] Navigate  |  [Enter] Open Application";
+                btmText = "[Up/Down/Tab] Navigate  |  [Enter] Open Application";
             }
             else
             {
-                btmText = " WeatherOS v3.0  |  Cosmos x86 Dedicated Meteorological Kernel";
+                btmText = "WeatherOS v3.0  |  Cosmos x86 Dedicated Meteorological Kernel";
             }
             if (btmText.Length > 79) btmText = btmText.Substring(0, 79);
             System.Console.Write(btmText.PadRight(79));
