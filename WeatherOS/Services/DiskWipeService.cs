@@ -19,11 +19,15 @@ namespace WeatherOS.Services
             {
                 if (SectorCount == 0 || SectorCount > 0x000FFFFFFFFFFFFFUL)
                     return "Raw / Unmeasured";
-                ulong gb = SizeBytes / (1024UL * 1024 * 1024);
-                if (gb > 20000)
+                ulong mb = SizeBytes / (1024UL * 1024);
+                if (mb > 20000000)
                     return "Raw / Unmeasured";
-                if (gb >= 1)
-                    return $"{gb} GB";
+                if (mb >= 1024)
+                {
+                    ulong gb = mb / 1024;
+                    ulong dec = ((mb % 1024) * 10) / 1024;
+                    return dec > 0 ? $"{gb}.{dec} GB" : $"{gb} GB";
+                }
                 if (SizeBytes >= 1024UL * 1024)
                     return $"{SizeBytes / (1024UL * 1024)} MB";
                 return $"{SizeBytes / 1024} KB";
@@ -195,8 +199,18 @@ namespace WeatherOS.Services
 
                         if (string.IsNullOrEmpty(driveName))
                         {
-                            ulong gb = (safeCount * 512) / (1024UL * 1024 * 1024);
-                            string szDisplay = gb >= 1 ? $"{gb}GB" : $"{(safeCount * 512) / (1024 * 1024)}MB";
+                            ulong mb = (safeCount * 512) / (1024UL * 1024);
+                            string szDisplay = "";
+                            if (mb >= 1024)
+                            {
+                                ulong gb = mb / 1024;
+                                ulong dec = ((mb % 1024) * 10) / 1024;
+                                szDisplay = dec > 0 ? $"{gb}.{dec} GB" : $"{gb} GB";
+                            }
+                            else
+                            {
+                                szDisplay = $"{mb} MB";
+                            }
                             driveName = $"Disk {list.Count} (Hardware Dev #{i} : {szDisplay})";
                         }
 

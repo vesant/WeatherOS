@@ -493,9 +493,14 @@ namespace WeatherOS.Services
             get
             {
                 if (TotalSectors == 0) return "0 MB";
-                ulong gb = SizeBytes / (1024UL * 1024 * 1024);
-                if (gb >= 1) return $"{gb} GB";
-                return $"{SizeBytes / (1024 * 1024)} MB";
+                ulong mb = SizeBytes / (1024UL * 1024);
+                if (mb >= 1024)
+                {
+                    ulong gb = mb / 1024;
+                    ulong dec = ((mb % 1024) * 10) / 1024;
+                    return dec > 0 ? $"{gb}.{dec} GB" : $"{gb} GB";
+                }
+                return $"{mb} MB";
             }
         }
     }
@@ -612,9 +617,16 @@ namespace WeatherOS.Services
                         info.TotalSectors = lba28;
                     }
                 }
-                else if (lba28 > 0)
+                if (string.IsNullOrEmpty(info.Model))
                 {
-                    info.TotalSectors = lba28;
+                    if (info.TotalSectors > 0 && info.TotalSectors < 10000000UL)
+                    {
+                        info.Model = "USB Boot Medium";
+                    }
+                    else
+                    {
+                        info.Model = "Fixed ATA Storage";
+                    }
                 }
             }
             catch { }
@@ -650,7 +662,19 @@ namespace WeatherOS.Services
                 bytes[i * 2] = (byte)((val >> 8) & 0xFF);
                 bytes[i * 2 + 1] = (byte)(val & 0xFF);
             }
-            return Encoding.ASCII.GetString(bytes).Trim('\0', ' ');
+            string s = Encoding.ASCII.GetString(bytes).Trim('\0', ' ');
+            // Filter out corrupted strings with repeated identical characters (e.g. "1 1 1 1 1 1...")
+            if (s.Length > 2)
+            {
+                char first = s[0];
+                bool allSame = true;
+                for (int c = 1; c < s.Length; c++)
+                {
+                    if (s[c] != first && s[c] != ' ') { allSame = false; break; }
+                }
+                if (allSame) return "";
+            }
+            return s;
         }
     }
 
@@ -687,23 +711,47 @@ namespace WeatherOS.Services
                         var dev = devices[i];
                         if (dev == null) continue;
 
+                        string typeName = "BlockDevice";
+                        if (dev is ATA_PIO ataPio)
+                        {
+                            typeName = $"ATA {(ataPio.ControllerID == Ata.ControllerIdEnum.Primary ? "Pri" : "Sec")}-{(ataPio.BusPosition == Ata.BusPositionEnum.Master ? "Master" : "Slave")}";
+                        }
+                        else if (dev is Ata ataDev)
+                        {
+                            typeName = $"ATA {(ataDev.ControllerID == Ata.ControllerIdEnum.Primary ? "Pri" : "Sec")}-{(ataDev.BusPosition == Ata.BusPositionEnum.Master ? "Master" : "Slave")}";
+                        }
+                        else if (dev is Partition)
+                        {
+                            typeName = "Partition";
+                        }
+
                         var info = new HardwareDevInfo
                         {
                             Index = i,
                             Device = dev,
-                            TypeName = dev.GetType().Name,
+                            TypeName = typeName,
                             IsPartition = dev is Partition,
                             BlockCount = dev.BlockCount,
                             BlockSize = dev.BlockSize
                         };
 
-                        // Probe ATA hardware channels
-                        ushort ioBase = (i == 0) ? (ushort)0x1F0 : (ushort)0x170;
+                        // Probe exact ATA hardware channel
+                        ushort ioBase = 0x1F0;
                         byte drvSel = 0xA0; // Master
-                        var ata = AtaDeviceDiagnostics.ProbeAta(ioBase, drvSel);
-                        if (!ata.Exists && i == 1)
+                        if (dev is Ata ataD)
                         {
-                            // Try Primary Slave for dev 1
+                            ioBase = (ataD.ControllerID == Ata.ControllerIdEnum.Primary) ? (ushort)0x1F0 : (ushort)0x170;
+                            drvSel = (ataD.BusPosition == Ata.BusPositionEnum.Master) ? (byte)0xA0 : (byte)0xB0;
+                        }
+                        else if (i == 1)
+                        {
+                            ioBase = 0x170;
+                            drvSel = 0xA0;
+                        }
+
+                        var ata = AtaDeviceDiagnostics.ProbeAta(ioBase, drvSel);
+                        if (!ata.Exists && i == 1 && drvSel == 0xA0)
+                        {
                             ata = AtaDeviceDiagnostics.ProbeAta(0x1F0, 0xB0);
                         }
 
@@ -979,16 +1027,28 @@ namespace WeatherOS.Services
             }
 
             var dev = BlockDevice.Devices[devIndex];
-            ushort ioBase = (devIndex == 0) ? (ushort)0x1F0 : (ushort)0x170;
+            ushort ioBase = 0x1F0;
             byte drvSel = 0xA0; // Master
+            if (dev is Ata ataD)
+            {
+                ioBase = (ataD.ControllerID == Ata.ControllerIdEnum.Primary) ? (ushort)0x1F0 : (ushort)0x170;
+                drvSel = (ataD.BusPosition == Ata.BusPositionEnum.Master) ? (byte)0xA0 : (byte)0xB0;
+            }
+            else if (devIndex == 1)
+            {
+                ioBase = 0x170;
+                drvSel = 0xA0;
+            }
+
+            string devTypeName = dev is Partition ? "Partition" : (dev is ATA_PIO ? "ATA_PIO" : "BlockDevice");
             logs.Add($"=== AUTOMATED BARE-METAL HARDWARE DIAGNOSTICS ===");
-            logs.Add($"TARGET: Dev #{devIndex} ({dev.GetType().Name}) | Port: 0x{ioBase:X3}");
+            logs.Add($"TARGET: Dev #{devIndex} ({devTypeName}) | Port: 0x{ioBase:X3} Drv: 0x{drvSel:X2}");
 
             bool isAllPassed = true;
 
             // [1/6] ATA Hardware Identification
             var ata = AtaDeviceDiagnostics.ProbeAta(ioBase, drvSel);
-            if (!ata.Exists && devIndex == 1)
+            if (!ata.Exists && devIndex == 1 && drvSel == 0xA0)
             {
                 ata = AtaDeviceDiagnostics.ProbeAta(0x1F0, 0xB0); // Primary Slave
             }

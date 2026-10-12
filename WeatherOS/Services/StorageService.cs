@@ -171,14 +171,20 @@ namespace WeatherOS.Services
                     for (int i = 0; i < physDrives.Count; i++)
                     {
                         var d = physDrives[i];
+                        bool isUsbLive = (d.SectorCount > 0 && d.SectorCount < 10000000UL);
+                        string dName = !string.IsNullOrEmpty(d.Name) ? d.Name : $"Disk {d.Index} (Storage Drive)";
+                        if (isUsbLive && !dName.Contains("USB"))
+                        {
+                            dName += " [Live USB]";
+                        }
                         list.Add(new StorageLocation
                         {
                             Id = $"disk{d.Index}",
-                            Name = !string.IsNullOrEmpty(d.Name) ? d.Name : $"Disk {d.Index} (Storage Drive)",
+                            Name = dName,
                             FileSystem = "FAT32 Storage",
                             TotalSize = (long)d.SizeBytes,
                             FreeSpace = (long)d.SizeBytes > 1048576 ? (long)d.SizeBytes - 1048576 : 0,
-                            IsReadOnly = false,
+                            IsReadOnly = isUsbLive,
                             IsLinuxSystem = false
                         });
                     }

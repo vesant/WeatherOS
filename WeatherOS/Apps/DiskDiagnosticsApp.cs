@@ -325,7 +325,7 @@ namespace WeatherOS.Apps
 
                 System.Console.SetCursorPosition(5, 8);
                 string ataStr = !string.IsNullOrEmpty(dev.AtaModel) ? $"{dev.AtaModel} ({dev.TrueSizeDisplay})" : $"Block Device ({dev.BlockCount} sectors)";
-                string atapiStr = dev.IsAtapi ? " [ATAPI CD/DVD]" : " [Writable Disk]";
+                string atapiStr = dev.IsAtapi ? " [ATAPI CD/DVD]" : (dev.BlockCount > 0 && dev.BlockCount < 10000000UL ? " [Live USB - Read-Only]" : " [Writable Disk]");
                 System.Console.ForegroundColor = ConsoleColor.Cyan;
                 System.Console.Write($"Hardware   : {ataStr}{atapiStr}".PadRight(66));
 
