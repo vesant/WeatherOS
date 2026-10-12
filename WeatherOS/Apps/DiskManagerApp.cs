@@ -52,7 +52,9 @@ namespace WeatherOS.Apps
                 var drives = VFSManager.GetLogicalDrives();
                 if (drives != null && drives.Count > 0)
                 {
-                    _currentDrive = drives[0];
+                    int sel = 0;
+                    if (drives.Count > 1) sel = 1; // Default to Fixed Storage 1:\ if Live USB is 0:\
+                    _currentDrive = drives[sel];
                     if (!_currentDrive.EndsWith("\\")) _currentDrive += "\\";
                     _currentPath = _currentDrive;
                 }

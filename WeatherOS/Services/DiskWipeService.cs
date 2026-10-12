@@ -229,6 +229,29 @@ namespace WeatherOS.Services
             }
             catch { }
 
+            // Sort physical drives so that writable storage drives come first, and live USB boot medium comes last
+            if (list.Count > 1)
+            {
+                for (int i = 0; i < list.Count - 1; i++)
+                {
+                    for (int j = i + 1; j < list.Count; j++)
+                    {
+                        bool aUsb = (list[i].SectorCount > 0 && list[i].SectorCount < 10000000UL);
+                        bool bUsb = (list[j].SectorCount > 0 && list[j].SectorCount < 10000000UL);
+                        if (aUsb && !bUsb)
+                        {
+                            var temp = list[i];
+                            list[i] = list[j];
+                            list[j] = temp;
+                        }
+                    }
+                }
+                for (int idx = 0; idx < list.Count; idx++)
+                {
+                    list[idx].Index = idx;
+                }
+            }
+
             // 3. Fallback: If raw drives were not found, probe Cosmos VFS Disks & Partitions directly
             if (list.Count == 0)
             {

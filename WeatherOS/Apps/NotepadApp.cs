@@ -281,7 +281,7 @@ namespace WeatherOS.Apps
                     }
                     else
                     {
-                        _selectedLocationIndex = 0;
+                        _selectedLocationIndex = GetDefaultWritableLocationIndex();
                         _notepadState = 6; // Destination Mini-Menu
                     }
                 }
@@ -360,7 +360,7 @@ namespace WeatherOS.Apps
                     else if (_notepadState == 3) // Save Prompt -> Select Destination Menu
                     {
                         _notepadFilename = targetFile;
-                        _selectedLocationIndex = 0;
+                        _selectedLocationIndex = GetDefaultWritableLocationIndex();
                         _notepadState = 6; // Transition to mini-menu to pick device/filesystem!
                     }
                     else if (_notepadState == 4) // Delete File
@@ -383,6 +383,16 @@ namespace WeatherOS.Apps
                     _promptEditor.HandleKey(keyEvent);
                 }
             }
+        }
+
+        private int GetDefaultWritableLocationIndex()
+        {
+            var locs = StorageService.GetStorageLocations();
+            for (int i = 0; i < locs.Count; i++)
+            {
+                if (!locs[i].IsReadOnly) return i;
+            }
+            return 0;
         }
 
         private void SaveToLocation(StorageLocation loc)

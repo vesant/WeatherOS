@@ -617,6 +617,10 @@ namespace WeatherOS.Services
                         info.TotalSectors = lba28;
                     }
                 }
+                else if (lba28 > 0)
+                {
+                    info.TotalSectors = lba28;
+                }
                 if (string.IsNullOrEmpty(info.Model))
                 {
                     if (info.TotalSectors > 0 && info.TotalSectors < 10000000UL)
@@ -694,6 +698,7 @@ namespace WeatherOS.Services
         public bool Sector0Readable;
         public bool HasMbrSig;
         public int MbrPartitionCount;
+        public bool IsUsbLive;
     }
 
     public static class DiskHardwareTester
@@ -762,6 +767,38 @@ namespace WeatherOS.Services
                             info.IsAtapi = ata.IsAtapi;
                             info.TrueSectors = ata.TotalSectors;
                             info.TrueSizeDisplay = ata.SizeDisplay;
+                        }
+
+                        if (info.TrueSectors == 0 && dev.BlockCount > 0)
+                        {
+                            info.TrueSectors = dev.BlockCount;
+                            ulong mb = (dev.BlockCount * dev.BlockSize) / (1024UL * 1024);
+                            if (mb >= 1024)
+                            {
+                                ulong gb = mb / 1024;
+                                ulong dec = ((mb % 1024) * 10) / 1024;
+                                info.TrueSizeDisplay = dec > 0 ? $"{gb}.{dec} GB" : $"{gb} GB";
+                            }
+                            else
+                            {
+                                info.TrueSizeDisplay = $"{mb} MB";
+                            }
+                        }
+
+                        if (info.TrueSectors > 0 && info.TrueSectors < 10000000UL)
+                        {
+                            info.IsUsbLive = true;
+                            if (string.IsNullOrEmpty(info.AtaModel) || info.AtaModel == "Fixed ATA Storage")
+                            {
+                                info.AtaModel = "USB Live Boot Medium";
+                            }
+                        }
+                        else
+                        {
+                            if (string.IsNullOrEmpty(info.AtaModel))
+                            {
+                                info.AtaModel = "Internal Fixed HDD";
+                            }
                         }
 
                         // Probe sector 0
@@ -1017,9 +1054,9 @@ namespace WeatherOS.Services
             logs.Add($"[PASS] ATA Flush Cache command completed.");
         }
 
-        public static void RunAutoTestAll(int devIndex, List<string> logs)
+        public static void RunAutoTestAll(int devIndex, List<string> logs, bool clearLogs = true)
         {
-            logs.Clear();
+            if (clearLogs) logs.Clear();
             if (BlockDevice.Devices == null || devIndex < 0 || devIndex >= BlockDevice.Devices.Count)
             {
                 logs.Add($"[ERR] Target device index #{devIndex} not found in Cosmos HAL.");
@@ -1208,6 +1245,14 @@ namespace WeatherOS.Services
             {
                 logs.Add(">>> VERDICT: [FAIL] STORAGE WRITE BLOCKED OR FAILED");
                 logs.Add("    Status: Medium is read-only or hardware controller rejected write.");
+
+                if (devIndex == 0 && BlockDevice.Devices != null && BlockDevice.Devices.Count > 1)
+                {
+                    logs.Add("");
+                    logs.Add("[AUTO-CHAIN] Dev #0 is Live USB (Read-Only). Auto-testing Dev #1...");
+                    logs.Add("----------------------------------------------------------------");
+                    RunAutoTestAll(1, logs, false);
+                }
             }
         }
     }

@@ -318,29 +318,33 @@ namespace WeatherOS.Apps
             }
             else
             {
+                for (int d = 0; d < _hardwareDevs.Count && d < 2; d++)
+                {
+                    var hDev = _hardwareDevs[d];
+                    bool isSel = (d == _selectedHardwareDevIndex);
+                    System.Console.SetCursorPosition(5, 7 + d);
+                    System.Console.ForegroundColor = isSel ? ConsoleColor.Yellow : ConsoleColor.White;
+                    string prefix = isSel ? "> [*] " : "  [ ] ";
+                    string tag = hDev.IsUsbLive ? "[Live USB - Read-Only]" : "[Internal Storage - Writable]";
+                    string ataStr = !string.IsNullOrEmpty(hDev.AtaModel) ? $"{hDev.AtaModel} ({hDev.TrueSizeDisplay})" : $"BlockDevice ({hDev.TrueSizeDisplay})";
+                    string lineStr = $"{prefix}[Dev #{hDev.Index}] {hDev.TypeName} | {ataStr} {tag}";
+                    if (lineStr.Length > 66) lineStr = lineStr.Substring(0, 66);
+                    System.Console.Write(lineStr.PadRight(66));
+                }
+
                 var dev = _hardwareDevs[_selectedHardwareDevIndex];
-                System.Console.ForegroundColor = ConsoleColor.White;
-                string type = dev.IsPartition ? "Partition" : dev.TypeName;
-                System.Console.Write($"Target Dev : [Dev #{dev.Index}] {type} (Total: {_hardwareDevs.Count} devs) [T=Toggle]".PadRight(66));
-
-                System.Console.SetCursorPosition(5, 8);
-                string ataStr = !string.IsNullOrEmpty(dev.AtaModel) ? $"{dev.AtaModel} ({dev.TrueSizeDisplay})" : $"Block Device ({dev.BlockCount} sectors)";
-                string atapiStr = dev.IsAtapi ? " [ATAPI CD/DVD]" : (dev.BlockCount > 0 && dev.BlockCount < 10000000UL ? " [Live USB - Read-Only]" : " [Writable Disk]");
-                System.Console.ForegroundColor = ConsoleColor.Cyan;
-                System.Console.Write($"Hardware   : {ataStr}{atapiStr}".PadRight(66));
-
                 System.Console.SetCursorPosition(5, 9);
                 string s0Str = dev.Sector0Readable ? (dev.HasMbrSig ? $"MBR Valid [55 AA] ({dev.MbrPartitionCount} part)" : "Readable, No MBR Sig") : "Unreadable Sector 0";
                 System.Console.ForegroundColor = ConsoleColor.Gray;
-                System.Console.Write($"Sector 0   : {s0Str} | BlockSize: {dev.BlockSize}B".PadRight(66));
+                System.Console.Write($"Sector 0   : {s0Str} | BlockSize: {dev.BlockSize}B | [T=Toggle]".PadRight(66));
             }
 
             System.Console.SetCursorPosition(5, 11);
             System.Console.ForegroundColor = ConsoleColor.Yellow;
-            System.Console.Write("[A] AUTO TEST ALL   [1] Read Sec 0  [2] Read Sec 2048  [3] Write Sec    ");
+            System.Console.Write("[A] AUTO TEST ALL   [T] Switch Target  [1] Read Sec 0  [3] Write Sec    ");
 
             System.Console.SetCursorPosition(5, 12);
-            System.Console.Write("[4] Format FAT32    [5] Write File  [6] Read File      [7] ATA Probe    ");
+            System.Console.Write("[4] Format FAT32    [5] Write File     [6] Read File   [7] ATA Probe    ");
 
             System.Console.SetCursorPosition(5, 13);
             System.Console.ForegroundColor = ConsoleColor.DarkCyan;
@@ -448,7 +452,7 @@ namespace WeatherOS.Apps
                     _logScrollOffset = 0;
                     DiskHardwareTester.TestFlushCache(_selectedHardwareDevIndex, _testLogs);
                 }
-                else if (keyEvent.Key == ConsoleKeyEx.T)
+                else if (keyEvent.Key == ConsoleKeyEx.T || keyEvent.KeyChar == 't' || keyEvent.KeyChar == 'T' || keyEvent.Key == ConsoleKeyEx.Tab)
                 {
                     if (_hardwareDevs != null && _hardwareDevs.Count > 0)
                     {

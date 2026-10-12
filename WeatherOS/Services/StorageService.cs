@@ -132,6 +132,20 @@ namespace WeatherOS.Services
                     int.TryParse(locationId.Substring(4), out diskIdx);
                 }
                 if (diskIdx < 0 || diskIdx >= physDrives.Count) diskIdx = 0;
+
+                // Safety: If the requested disk is Live USB (read-only) and another fixed drive exists, redirect to fixed drive
+                if (physDrives.Count > 1 && (physDrives[diskIdx].SectorCount > 0 && physDrives[diskIdx].SectorCount < 10000000UL))
+                {
+                    for (int alt = 0; alt < physDrives.Count; alt++)
+                    {
+                        if (physDrives[alt].SectorCount >= 10000000UL)
+                        {
+                            diskIdx = alt;
+                            break;
+                        }
+                    }
+                }
+
                 diskName = physDrives[diskIdx].Name;
                 return physDrives[diskIdx].Device;
             }
@@ -141,17 +155,18 @@ namespace WeatherOS.Services
             {
                 if (BlockDevice.Devices != null && BlockDevice.Devices.Count > 0)
                 {
+                    int bestIdx = 0;
                     for (int i = 0; i < BlockDevice.Devices.Count; i++)
                     {
                         var d = BlockDevice.Devices[i];
-                        if (d != null && !(d is Partition))
+                        if (d != null && !(d is Partition) && d.BlockCount >= 10000000UL)
                         {
-                            diskName = $"Hardware Dev #{i}";
-                            return d;
+                            bestIdx = i;
+                            break;
                         }
                     }
-                    diskName = "Hardware Dev #0";
-                    return BlockDevice.Devices[0];
+                    diskName = $"Hardware Dev #{bestIdx}";
+                    return BlockDevice.Devices[bestIdx];
                 }
             }
             catch { }
