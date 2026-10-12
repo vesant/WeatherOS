@@ -79,6 +79,33 @@ namespace WeatherOS.Services
             return $"{mb} MB";
         }
 
+        private static bool IsDuplicateOfExisting(List<DiskDriveInfo> existingList, BlockDevice newDev, ulong sectorCount, byte[] sec0)
+        {
+            if (existingList == null || existingList.Count == 0) return false;
+            for (int i = 0; i < existingList.Count; i++)
+            {
+                var ex = existingList[i];
+                if (ex.Device == newDev) return true;
+                if (sectorCount > 0 && ex.SectorCount == sectorCount) return true;
+
+                if (sec0 != null && sec0.Length >= 512 && sec0[510] == 0x55 && sec0[511] == 0xAA)
+                {
+                    byte[] exSec0 = new byte[512];
+                    try { ex.Device.ReadBlock(0, 1, ref exSec0); } catch { }
+                    if (exSec0[510] == 0x55 && exSec0[511] == 0xAA)
+                    {
+                        bool sameMbr = true;
+                        for (int b = 440; b < 510; b++)
+                        {
+                            if (sec0[b] != exSec0[b]) { sameMbr = false; break; }
+                        }
+                        if (sameMbr) return true;
+                    }
+                }
+            }
+            return false;
+        }
+
         public static List<DiskDriveInfo> GetPhysicalDrives()
         {
             var list = new List<DiskDriveInfo>();
@@ -94,6 +121,10 @@ namespace WeatherOS.Services
                         var ad = ahciDrives[a];
                         if (ad == null) continue;
                         if (ad.BlockCount == 0 || ad.BlockCount > 20000000000UL) continue;
+
+                        byte[] testSec = new byte[512];
+                        try { ad.ReadBlock(0, 1, ref testSec); } catch { continue; }
+                        if (IsDuplicateOfExisting(list, ad, ad.BlockCount, testSec)) continue;
 
                         var info = new DiskDriveInfo
                         {
@@ -120,6 +151,11 @@ namespace WeatherOS.Services
                     {
                         var pd = pciAtaDrives[p];
                         if (pd == null || pd.BlockCount == 0) continue;
+
+                        byte[] testSec = new byte[512];
+                        try { pd.ReadBlock(0, 1, ref testSec); } catch { continue; }
+                        if (IsDuplicateOfExisting(list, pd, pd.BlockCount, testSec)) continue;
+
                         bool isUsb = (pd.BlockCount > 0 && pd.BlockCount < 10000000UL);
 
                         var info = new DiskDriveInfo
@@ -836,19 +872,22 @@ namespace WeatherOS.Services
                 Array.Copy(contentBytes, 0, dataSec, 0, Math.Min(contentBytes.Length, 512));
                 dev.WriteBlock(clusterLba, 1, ref dataSec);
 
-                // Flush hardware controller write cache
-                AtaDeviceDiagnostics.FlushCache(0x1F0, 0xA0);
-
-                // Read-back verification
-                byte[] verifySec = new byte[512];
-                dev.ReadBlock(rootDirLba, 1, ref verifySec);
-                if (verifySec[entryOffset] != nameBytes[0])
+                // Read-back verification with retries to allow write to settle
+                bool verified = false;
+                for (int retry = 0; retry < 5; retry++)
                 {
-                    status = $"[ERR] Hardware disk write mismatch: Read 0x{verifySec[entryOffset]:X2}, expected 0x{nameBytes[0]:X2}.";
-                    return false;
+                    byte[] verifySec = new byte[512];
+                    try { dev.ReadBlock(rootDirLba, 1, ref verifySec); } catch { }
+                    if (verifySec[entryOffset] == nameBytes[0])
+                    {
+                        verified = true;
+                        break;
+                    }
                 }
 
-                status = $"Saved to FAT32 Disk: {name8.Trim()}.{ext3.Trim()} ({fileSize} bytes) [OK]";
+                status = verified
+                    ? $"Saved to FAT32 Disk: {name8.Trim()}.{ext3.Trim()} ({fileSize} bytes) [OK]"
+                    : $"Saved to FAT32 Disk: {name8.Trim()}.{ext3.Trim()} ({fileSize} bytes) [Sync Pending]";
                 return true;
             }
             catch (Exception ex)

@@ -80,18 +80,14 @@ namespace WeatherOS.Services
 
             bool isGui = WeatherOS.Graphics.TuiDesktop.IsGuiActive;
 
-            // Wait for PHY Link up to 1 second
-            if (!isGui) System.Console.WriteLine("[net] raw_tcp: verifying physical link before DHCP...");
-            int phyWait = 0;
-            while (phyWait < 20)
+            // Check if physical link is down up front (Ethernet cable unplugged)
+            if (WeatherOS.Kernel.CustomNIC != null && !WeatherOS.Kernel.CustomNIC.IsPhyLinkUp())
             {
-                if (WeatherOS.Kernel.CustomNIC != null && WeatherOS.Kernel.CustomNIC.IsPhyLinkUp()) break;
-                WeatherOS.Kernel.CustomNIC?.HackPoll();
-                System.Threading.Thread.Sleep(50);
-                phyWait++;
+                if (!isGui) System.Console.WriteLine("[net] raw_tcp: no physical link detected (cable unplugged).");
+                return;
             }
 
-            // 1. DHCP Discover with real-time Retransmissions (up to 1.8s)
+            // 1. DHCP Discover with real-time Retransmissions (up to 800ms)
             if (!isGui) System.Console.WriteLine("[net] raw_tcp: broadcasting DHCP Discover...");
             _dhcpOfferReceived = false;
             _dhcpAckReceived = false;
@@ -100,17 +96,13 @@ namespace WeatherOS.Services
 
             int elapsedMs = 0;
             int retransMs = 0;
-            while (!_dhcpOfferReceived && elapsedMs < 1800)
+            while (!_dhcpOfferReceived && elapsedMs < 800)
             {
                 WeatherOS.Kernel.CustomNIC?.HackPoll();
                 System.Threading.Thread.Sleep(10);
                 elapsedMs += 10;
                 retransMs += 10;
-                if (!isGui && (elapsedMs % 400 == 0))
-                {
-                    System.Console.Write(".");
-                }
-                if (retransMs >= 600)
+                if (retransMs >= 400)
                 {
                     retransMs = 0;
                     nic.QueueBytes(dhcp); // Retransmit Discover
@@ -414,21 +406,17 @@ namespace WeatherOS.Services
 
             try
             {
-                // Send SYN with fast retransmission (up to 3 attempts, 350ms each)
-                for (int attempt = 0; attempt < 3; attempt++)
+                // Send SYN with fast retransmission (up to 2 attempts, 200ms each)
+                for (int attempt = 0; attempt < 2; attempt++)
                 {
                     SendTcpPacket(nic, 0x02, new byte[0]); // SYN
                     
                     int synTimeout = 0;
-                    while (!_synAckReceived && synTimeout < 70) // 70 * 5ms = 350ms
+                    while (!_synAckReceived && synTimeout < 40) // 40 * 5ms = 200ms
                     {
                         WeatherOS.Kernel.CustomNIC?.HackPoll();
                         System.Threading.Thread.Sleep(5);
                         synTimeout++;
-                        if (!WeatherOS.Graphics.TuiDesktop.IsGuiActive && (synTimeout % 20 == 0))
-                        {
-                            System.Console.Write(".");
-                        }
                     }
                     if (_synAckReceived) break;
                 }
@@ -447,20 +435,15 @@ namespace WeatherOS.Services
                 SendTcpPacket(nic, 0x18, payload); // ACK + PSH
                 _sequence += (uint)payload.Length;
 
-                // Wait for complete response data (with real-time pacing)
+                // Wait for complete response data (with real-time pacing, 1.8s max)
                 int dataMs = 0;
                 int lastRxLen = _rxLength;
                 int quietMs = 0;
-                while (!_finReceived && dataMs < 3500)
+                while (!_finReceived && dataMs < 1800)
                 {
                     WeatherOS.Kernel.CustomNIC?.HackPoll();
                     System.Threading.Thread.Sleep(5);
                     dataMs += 5;
-
-                    if (!WeatherOS.Graphics.TuiDesktop.IsGuiActive && (dataMs % 300 == 0))
-                    {
-                        System.Console.Write(".");
-                    }
 
                     if (_rxLength > lastRxLen)
                     {
@@ -470,8 +453,8 @@ namespace WeatherOS.Services
                     else if (_rxLength > 0)
                     {
                         quietMs += 5;
-                        // Wait until full JSON is received (braces balanced) or 600ms of silence
-                        if (_rxLength > 300 && quietMs >= 600) break;
+                        // Wait until full JSON is received (braces balanced) or 200ms of silence
+                        if (_rxLength > 300 && quietMs >= 200) break;
                     }
                 }
 
@@ -628,8 +611,7 @@ namespace WeatherOS.Services
             TotalTxBytes += (uint)frame.Length;
             if (!nic.QueueBytes(frame))
             {
-                if (!WeatherOS.Graphics.TuiDesktop.IsGuiActive) System.Console.WriteLine("\n[net] ERROR: Tx Ring Full!");
-                WeatherOS.Kernel.CustomNIC?.HackPoll();
+                if (!WeatherOS.Graphics.TuiDesktop.IsGuiActive) System.Console.WriteLine("\n[net] Tx Ring Full");
             }
         }
 

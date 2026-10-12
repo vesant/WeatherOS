@@ -617,25 +617,21 @@ namespace WeatherOS.Services
                 info.Model = ReadAtaString(words, 27, 20);
 
                 // Words 60..61: 28-bit LBA sector count
-                uint lba28 = (uint)(words[60] | (words[61] << 16));
+                uint lba28 = (uint)((uint)words[60] | ((uint)words[61] << 16));
 
-                // Word 83 bit 10: 48-bit LBA supported
-                bool lba48Supported = (words[83] & 0x0400) != 0;
+                // Words 100..103: 48-bit LBA sector count
+                ulong lba48 = (ulong)words[100] |
+                              ((ulong)words[101] << 16) |
+                              ((ulong)words[102] << 32) |
+                              ((ulong)words[103] << 48);
+
+                // Word 83 bit 10 or Word 86 bit 10: 48-bit LBA supported / enabled
+                bool lba48Supported = (words[83] & 0x0400) != 0 || (words[86] & 0x0400) != 0 || (lba48 > lba28 && lba48 < 0x000FFFFFFFFFFFFFUL);
                 info.IsLba48 = lba48Supported;
-                if (lba48Supported)
+
+                if (lba48 > 0 && lba48 < 0x000FFFFFFFFFFFFFUL && (lba48 >= lba28 || lba28 == 0x0FFFFFFF))
                 {
-                    ulong lba48 = (ulong)words[100] |
-                                  ((ulong)words[101] << 16) |
-                                  ((ulong)words[102] << 32) |
-                                  ((ulong)words[103] << 48);
-                    if (lba48 > 0 && lba48 < 0x000FFFFFFFFFFFFFUL)
-                    {
-                        info.TotalSectors = lba48;
-                    }
-                    else if (lba28 > 0)
-                    {
-                        info.TotalSectors = lba28;
-                    }
+                    info.TotalSectors = lba48;
                 }
                 else if (lba28 > 0)
                 {

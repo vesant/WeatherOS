@@ -136,12 +136,20 @@ namespace WeatherOS.Services
             string cleanCity = "";
             try
             {
+                if (WeatherOS.Kernel.CustomNIC != null && !WeatherOS.Kernel.CustomNIC.IsPhyLinkUp())
+                {
+                    if (!WeatherOS.Graphics.TuiDesktop.IsGuiActive)
+                        System.Console.WriteLine("[net] Ethernet cable disconnected (PHY link down).");
+                    _cachedReading.Condition = "Cable Disconnected";
+                    _cachedReading.Location = (!string.IsNullOrWhiteSpace(city) ? city.ToUpper() : "OFFLINE") + " [OFFLINE]";
+                    return;
+                }
+
                 if (!WeatherOS.Graphics.TuiDesktop.IsGuiActive)
-                    System.Console.WriteLine("[net] raw_tcp: initializing bare-metal TCP handshake sequence...");
+                    System.Console.WriteLine("[net] raw_tcp: initializing bare-metal TCP connection...");
                 
-                // Destination IPs: BunnyCDN Anycast for WeatherAPI.com + Hetzner fallback for wttr.in
+                // Destination IPs: WeatherAPI Edge CDN + Hetzner fallback for wttr.in
                 var primaryIp = new Cosmos.System.Network.IPv4.Address(143, 244, 56, 52);    // WeatherAPI Anycast Edge
-                var secondaryIp = new Cosmos.System.Network.IPv4.Address(79, 127, 134, 132);  // WeatherAPI Alternate Edge
                 var wttrIp = new Cosmos.System.Network.IPv4.Address(5, 9, 243, 187);          // Fallback wttr.in
                 var gatewayIp = new Cosmos.System.Network.IPv4.Address(10, 0, 2, 2);
 
@@ -166,20 +174,12 @@ namespace WeatherOS.Services
                 string weatherApiRequest = "GET /v1/forecast.json?key=" + effectiveKey + "&q=" + safeCity + "&days=7 HTTP/1.1\r\nHost: api.weatherapi.com\r\nUser-Agent: WeatherOS/3.0\r\nConnection: close\r\n\r\n";
 
                 if (_debugMode && !WeatherOS.Graphics.TuiDesktop.IsGuiActive)
-                    System.Console.WriteLine($"[net] raw_tcp: querying WeatherAPI via {primaryIp.ToString()} (7-day forecast)...");
+                    System.Console.WriteLine($"[net] raw_tcp: querying WeatherAPI via {primaryIp.ToString()}...");
 
                 // 1. Primary WeatherAPI Anycast CDN (143.244.56.52)
                 string response = RawTcpHttp.FetchGet(primaryIp, gatewayIp, weatherApiRequest);
 
-                // 2. Secondary WeatherAPI CDN (79.127.134.132)
-                if (string.IsNullOrWhiteSpace(response))
-                {
-                    if (_debugMode && !WeatherOS.Graphics.TuiDesktop.IsGuiActive)
-                        System.Console.WriteLine($"[net] raw_tcp: trying secondary WeatherAPI IP {secondaryIp.ToString()}...");
-                    response = RawTcpHttp.FetchGet(secondaryIp, gatewayIp, weatherApiRequest);
-                }
-
-                // 3. Fallback to wttr.in if WeatherAPI endpoints were unreachable
+                // 2. Direct fallback to wttr.in if WeatherAPI was unreachable
                 if (string.IsNullOrWhiteSpace(response))
                 {
                     if (_debugMode && !WeatherOS.Graphics.TuiDesktop.IsGuiActive)

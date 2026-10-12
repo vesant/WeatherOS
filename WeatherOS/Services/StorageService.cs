@@ -254,16 +254,16 @@ namespace WeatherOS.Services
             string directStatus;
             bool directOk = DiskWipeService.WriteFileDirectToFat32(targetDev, filename, content, out directStatus);
 
+            // Always store in RAM so the session is never lost and preview works immediately
+            PutMemoryFile(filename, content);
+
             if (directOk)
             {
-                // File saved exclusively to disk - do not duplicate in RAM store!
                 status = $"Saved to {diskName}: {filename} ({content.Length} bytes) [OK]";
                 return true;
             }
             else
             {
-                // Fallback to RAM so user work is never lost
-                PutMemoryFile(filename, content);
                 status = $"Disk save failed: {directStatus}. File saved in RAM temporary store.";
                 return false;
             }
@@ -289,17 +289,30 @@ namespace WeatherOS.Services
                     string readStatus;
                     if (DiskWipeService.ReadFileDirectFromFat32(dev, filename, out content, out readStatus))
                     {
-                        status = $"Loaded from {diskName}: {filename} ({content.Length} bytes) [OK]";
-                        return true;
+                        if (!string.IsNullOrEmpty(content))
+                        {
+                            status = $"Loaded from {diskName}: {filename} ({content.Length} bytes) [OK]";
+                            PutMemoryFile(filename, content); // Keep RAM in sync
+                            return true;
+                        }
                     }
                 }
             }
             catch { }
 
             // 2. Check RAM store fallback
-            if (TryGetMemoryFile(filename, out content))
+            if (TryGetMemoryFile(filename, out var ramContent) && !string.IsNullOrEmpty(ramContent))
             {
+                content = ramContent;
                 status = $"Loaded from RAM Storage: {filename} ({content.Length} chars) [OK]";
+                return true;
+            }
+
+            // 3. Empty file on disk or RAM
+            if (TryGetMemoryFile(filename, out _))
+            {
+                content = "";
+                status = $"Loaded: {filename} (0 bytes) [OK]";
                 return true;
             }
 

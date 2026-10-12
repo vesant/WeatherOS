@@ -70,9 +70,9 @@ namespace WeatherOS.Services
                 var pCmd = new IOPort((ushort)(cmdBase + 7));
 
                 // Wait for drive not busy
-                if (!WaitNotBusy(pCmd, 30000)) return false;
+                if (!WaitNotBusy(pCmd, 300000)) return false;
 
-                if (lba48)
+                if (lba48 && lba >= 0x0FFFFFFFU)
                 {
                     pDrive.Byte = (byte)(0x40 | (drvSel == 0xB0 ? 0x10 : 0x00));
                     WaitIo(pCmd);
@@ -104,7 +104,7 @@ namespace WeatherOS.Services
                     pCmd.Byte = 0x20; // READ SECTORS
                 }
 
-                if (!WaitDrq(pCmd, 50000)) return false;
+                if (!WaitDrq(pCmd, 300000)) return false;
 
                 for (int w = 0; w < 256; w++)
                 {
@@ -132,9 +132,9 @@ namespace WeatherOS.Services
                 var pDrive = new IOPort((ushort)(cmdBase + 6));
                 var pCmd = new IOPort((ushort)(cmdBase + 7));
 
-                if (!WaitNotBusy(pCmd, 30000)) return false;
+                if (!WaitNotBusy(pCmd, 300000)) return false;
 
-                if (lba48)
+                if (lba48 && lba >= 0x0FFFFFFFU)
                 {
                     pDrive.Byte = (byte)(0x40 | (drvSel == 0xB0 ? 0x10 : 0x00));
                     WaitIo(pCmd);
@@ -164,7 +164,7 @@ namespace WeatherOS.Services
                     pCmd.Byte = 0x30; // WRITE SECTORS
                 }
 
-                if (!WaitDrq(pCmd, 50000)) return false;
+                if (!WaitDrq(pCmd, 300000)) return false;
 
                 for (int w = 0; w < 256; w++)
                 {
@@ -173,7 +173,7 @@ namespace WeatherOS.Services
                 }
 
                 // Wait for BSY to clear after writing sector
-                return WaitNotBusy(pCmd, 30000);
+                return WaitNotBusy(pCmd, 300000);
             }
             catch
             {
@@ -189,8 +189,8 @@ namespace WeatherOS.Services
                 var pCmd = new IOPort((ushort)(cmdBase + 7));
                 pDrive.Byte = (byte)(0xE0 | (drvSel == 0xB0 ? 0x10 : 0x00));
                 WaitIo(pCmd);
-                pCmd.Byte = lba48 ? (byte)0xEA : (byte)0xE7; // FLUSH CACHE EXT / FLUSH CACHE
-                WaitNotBusy(pCmd, 30000);
+                pCmd.Byte = (lba48 && drvSel == 0xA0) ? (byte)0xEA : (byte)0xE7; // FLUSH CACHE EXT / FLUSH CACHE
+                WaitNotBusy(pCmd, 300000);
             }
             catch { }
         }
@@ -342,6 +342,41 @@ namespace WeatherOS.Services
                 var info = AtaDeviceDiagnostics.ProbeAta(cmdBase, drvSel);
                 if (info.Exists && !info.IsAtapi)
                 {
+                    // Verify that Sector 0 can actually be read from this hardware channel
+                    byte[] sec0 = new byte[512];
+                    bool sec0Ok = CustomPciAtaBlockDevice.ReadSectorPio(cmdBase, ctrlBase, drvSel, false, 0, sec0);
+                    if (!sec0Ok) return; // Unresponsive floating channel or non-existent slave
+
+                    // Filter out floating bus noise (all 0xFF or all 0x00)
+                    bool allFF = true;
+                    bool all00 = true;
+                    for (int b = 0; b < 16; b++)
+                    {
+                        if (sec0[b] != 0xFF) allFF = false;
+                        if (sec0[b] != 0x00) all00 = false;
+                    }
+                    if (allFF || all00) return;
+
+                    // Inspect MBR partition table to get true drive capacity if GParted partitioned the disk
+                    if (sec0[510] == 0x55 && sec0[511] == 0xAA)
+                    {
+                        ulong maxPartEnd = 0;
+                        for (int p = 0; p < 4; p++)
+                        {
+                            int off = 446 + (p * 16);
+                            uint sLba = (uint)(sec0[off + 8] | (sec0[off + 9] << 8) | (sec0[off + 10] << 16) | (sec0[off + 11] << 24));
+                            uint cSec = (uint)(sec0[off + 12] | (sec0[off + 13] << 8) | (sec0[off + 14] << 16) | (sec0[off + 15] << 24));
+                            if (sLba > 0 && cSec > 0 && ((ulong)sLba + (ulong)cSec) > maxPartEnd)
+                            {
+                                maxPartEnd = (ulong)sLba + (ulong)cSec;
+                            }
+                        }
+                        if (maxPartEnd > info.TotalSectors)
+                        {
+                            info.TotalSectors = maxPartEnd;
+                        }
+                    }
+
                     bool isUsb = (info.TotalSectors > 0 && info.TotalSectors < 10000000UL);
                     for (int i = 0; i < _devices.Count; i++)
                     {
@@ -355,9 +390,22 @@ namespace WeatherOS.Services
                         {
                             return; // Skip duplicate USB mirror (BIOS mirrors USB on Slave)
                         }
-                        if (ed.BlockCount == info.TotalSectors)
+                        if (ed.BlockCount == info.TotalSectors && info.TotalSectors > 0)
                         {
                             return; // Duplicate drive with identical sector count
+                        }
+
+                        // Check for identical MBR signature & partition table (bytes 440..510)
+                        byte[] edSec0 = new byte[512];
+                        try { ed.ReadBlock(0, 1, ref edSec0); } catch { }
+                        if (sec0[510] == 0x55 && sec0[511] == 0xAA && edSec0[510] == 0x55 && edSec0[511] == 0xAA)
+                        {
+                            bool sameMbr = true;
+                            for (int b = 440; b < 510; b++)
+                            {
+                                if (sec0[b] != edSec0[b]) { sameMbr = false; break; }
+                            }
+                            if (sameMbr) return; // Same physical disk mirror!
                         }
                     }
 

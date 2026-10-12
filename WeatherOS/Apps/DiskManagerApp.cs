@@ -521,9 +521,33 @@ namespace WeatherOS.Apps
                 if (_selectedIndex >= 0 && _selectedIndex < _items.Count && !_items[_selectedIndex].IsDirectory)
                 {
                     var sel = _items[_selectedIndex];
-                    string content;
-                    string stat;
-                    if (StorageService.LoadFile(sel.Name, out content, out stat))
+                    string content = "";
+                    string stat = "";
+                    bool loaded = false;
+
+                    if (string.Equals(_currentDrive, "RAM:\\", StringComparison.OrdinalIgnoreCase))
+                    {
+                        var memStore = StorageService.GetMemoryStore();
+                        if (memStore != null)
+                        {
+                            for (int m = 0; m < memStore.Count; m++)
+                            {
+                                if (string.Equals(memStore[m].Name, sel.Name, StringComparison.OrdinalIgnoreCase))
+                                {
+                                    content = memStore[m].Content ?? "";
+                                    loaded = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    if (!loaded)
+                    {
+                        loaded = StorageService.LoadFile(sel.Name, out content, out stat);
+                    }
+
+                    if (loaded)
                     {
                         var np = desktop.GetApp("notepad") as NotepadApp;
                         if (np != null)
@@ -592,6 +616,25 @@ namespace WeatherOS.Apps
             _previewScroll = 0;
             string content;
             string status;
+
+            // Direct RAM read when browsing RAM drive
+            if (string.Equals(_currentDrive, "RAM:\\", StringComparison.OrdinalIgnoreCase))
+            {
+                var memStore = StorageService.GetMemoryStore();
+                if (memStore != null)
+                {
+                    for (int m = 0; m < memStore.Count; m++)
+                    {
+                        if (string.Equals(memStore[m].Name, item.Name, StringComparison.OrdinalIgnoreCase))
+                        {
+                            _previewLines = (memStore[m].Content ?? "").Split('\n');
+                            _isPreviewActive = true;
+                            _statusMessage = $"Previewing RAM:\\{item.Name} ({memStore[m].Content?.Length ?? 0} bytes)";
+                            return;
+                        }
+                    }
+                }
+            }
 
             if (StorageService.LoadFile(item.Name, out content, out status))
             {
