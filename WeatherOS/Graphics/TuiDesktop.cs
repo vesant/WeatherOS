@@ -7,6 +7,14 @@ using WeatherOS.Services;
 
 namespace WeatherOS.Graphics
 {
+    public class LauncherAppEntry
+    {
+        public string Id { get; set; } = "";
+        public string Name { get; set; } = "";
+        public string Description { get; set; } = "";
+        public string Category { get; set; } = "";
+    }
+
     public class TuiDesktop
     {
         public static bool IsGuiActive = false;
@@ -18,8 +26,11 @@ namespace WeatherOS.Graphics
         // App Registry
         private Dictionary<string, IApp> _registeredApps = new Dictionary<string, IApp>();
 
-        // Launcher State
+        // Launcher Categorized State
         private int _selectedAppIndex = 0;
+        private int _launcherColumn = 0; // 0=Left, 1=Right
+        private int _launcherLeftIndex = 0;
+        private int _launcherRightIndex = 0;
         private string[] _apps = { "Weather Dashboard", "7-Day Weather Forecast", "Lunar Observatory", "Change City", "Digital Clock", "Calculator", "Notepad", "File & Storage Explorer", "System Information", "Network Config", "Settings", "Reboot System", "Poweroff System" };
         private string[] _appIds = { "weather", "forecast_7d", "lunar_forecast", "change_city", "clock", "calculator", "notepad", "diskmgr", "about", "ipconfig", "settings", "reboot", "poweroff" };
 
@@ -292,28 +303,116 @@ namespace WeatherOS.Graphics
             }
         }
 
+        public List<LauncherAppEntry> GetLeftLauncherItems()
+        {
+            var list = new List<LauncherAppEntry>();
+            // Category: Meteorology & Forecast
+            list.Add(new LauncherAppEntry { Id = "weather", Name = "Weather Dashboard", Description = "Real-time weather station telemetry, temp & humidity.", Category = "METEOROLOGY" });
+            list.Add(new LauncherAppEntry { Id = "forecast_7d", Name = "7-Day Forecast", Description = "Multi-day meteorological forecast and climate trends.", Category = "METEOROLOGY" });
+            list.Add(new LauncherAppEntry { Id = "lunar_forecast", Name = "Lunar Observatory", Description = "Astronomical calculations, lunar phases and illumination.", Category = "METEOROLOGY" });
+            list.Add(new LauncherAppEntry { Id = "change_city", Name = "Change Location", Description = "Configure target city and station coordinates.", Category = "METEOROLOGY" });
+
+            // Category: Utilities & Tools
+            list.Add(new LauncherAppEntry { Id = "notepad", Name = "Notepad (Editor)", Description = "Text editor with direct FAT32 disk & RAM store support.", Category = "UTILITIES" });
+            list.Add(new LauncherAppEntry { Id = "calculator", Name = "Calculator", Description = "Arithmetic calculations, trigonometry & scientific math.", Category = "UTILITIES" });
+            list.Add(new LauncherAppEntry { Id = "clock", Name = "Digital Clock", Description = "Live hardware RTC real-time clock and calendar display.", Category = "UTILITIES" });
+            list.Add(new LauncherAppEntry { Id = "ipconfig", Name = "Network Config", Description = "Ethernet NIC configuration, IP, gateway and DNS info.", Category = "UTILITIES" });
+            list.Add(new LauncherAppEntry { Id = "settings", Name = "System Settings", Description = "Configure dark mode theme, default station and options.", Category = "UTILITIES" });
+
+            if (_showDebugLogs)
+            {
+                list.Add(new LauncherAppEntry { Id = "debug_menu", Name = "Debug Menu & Logs", Description = "Low-level system diagnostics, driver tests & kernel logs.", Category = "UTILITIES" });
+            }
+
+            return list;
+        }
+
+        public List<LauncherAppEntry> GetRightLauncherItems()
+        {
+            var list = new List<LauncherAppEntry>();
+            // Category: Storage & System
+            list.Add(new LauncherAppEntry { Id = "diskmgr", Name = "File Explorer", Description = "Browse FAT32 disk partitions, files & RAM virtual store.", Category = "STORAGE & SYSTEM" });
+            list.Add(new LauncherAppEntry { Id = "diskdiag", Name = "Storage Diagnostics", Description = "Hardware ATA/AHCI scan, automated self-test & partition info.", Category = "STORAGE & SYSTEM" });
+            list.Add(new LauncherAppEntry { Id = "resources", Name = "System Resources", Description = "Real-time CPU telemetry, memory heap and system load.", Category = "STORAGE & SYSTEM" });
+            list.Add(new LauncherAppEntry { Id = "battery", Name = "Battery & Power", Description = "AC adapter status, battery percentage & power health.", Category = "STORAGE & SYSTEM" });
+            list.Add(new LauncherAppEntry { Id = "about", Name = "System Information", Description = "Cosmos kernel specifications, OS build & hardware summary.", Category = "STORAGE & SYSTEM" });
+
+            // Category: System Power
+            list.Add(new LauncherAppEntry { Id = "reboot", Name = "Reboot System", Description = "Safely restart the computer and reload WeatherOS.", Category = "POWER & SYSTEM" });
+            list.Add(new LauncherAppEntry { Id = "poweroff", Name = "Power Off Computer", Description = "Safely shut down computer via ACPI power control.", Category = "POWER & SYSTEM" });
+
+            return list;
+        }
+
         private void HandleLauncherInput(KeyEvent keyEvent)
         {
-            var apps = GetAppNames();
-            var appIds = GetAppIds();
+            var leftItems = GetLeftLauncherItems();
+            var rightItems = GetRightLauncherItems();
 
-            if (keyEvent.Key == ConsoleKeyEx.Tab || keyEvent.Key == ConsoleKeyEx.DownArrow)
+            if (keyEvent.Key == ConsoleKeyEx.UpArrow)
             {
-                _selectedAppIndex++;
-                if (_selectedAppIndex >= apps.Length) _selectedAppIndex = 0;
+                if (_launcherColumn == 0)
+                {
+                    _launcherLeftIndex--;
+                    if (_launcherLeftIndex < 0) _launcherLeftIndex = leftItems.Count - 1;
+                }
+                else
+                {
+                    _launcherRightIndex--;
+                    if (_launcherRightIndex < 0) _launcherRightIndex = rightItems.Count - 1;
+                }
             }
-            else if (keyEvent.Key == ConsoleKeyEx.UpArrow)
+            else if (keyEvent.Key == ConsoleKeyEx.DownArrow)
             {
-                _selectedAppIndex--;
-                if (_selectedAppIndex < 0) _selectedAppIndex = apps.Length - 1;
+                if (_launcherColumn == 0)
+                {
+                    _launcherLeftIndex++;
+                    if (_launcherLeftIndex >= leftItems.Count) _launcherLeftIndex = 0;
+                }
+                else
+                {
+                    _launcherRightIndex++;
+                    if (_launcherRightIndex >= rightItems.Count) _launcherRightIndex = 0;
+                }
+            }
+            else if (keyEvent.Key == ConsoleKeyEx.Tab)
+            {
+                _launcherColumn = 1 - _launcherColumn;
+            }
+            else if (keyEvent.Key == ConsoleKeyEx.RightArrow)
+            {
+                if (_launcherColumn == 0)
+                {
+                    _launcherColumn = 1;
+                    if (_launcherRightIndex >= rightItems.Count) _launcherRightIndex = rightItems.Count - 1;
+                }
+            }
+            else if (keyEvent.Key == ConsoleKeyEx.LeftArrow)
+            {
+                if (_launcherColumn == 1)
+                {
+                    _launcherColumn = 0;
+                    if (_launcherLeftIndex >= leftItems.Count) _launcherLeftIndex = leftItems.Count - 1;
+                }
             }
             else if (keyEvent.Key == ConsoleKeyEx.Enter)
             {
-                if (_selectedAppIndex >= appIds.Length) _selectedAppIndex = 0;
-                string selected = appIds[_selectedAppIndex];
-                if (selected == "reboot") Cosmos.System.Power.Reboot();
-                else if (selected == "poweroff" || selected == "halt") Cosmos.System.Power.Shutdown();
-                else SetCurrentApp(selected);
+                LauncherAppEntry selected = _launcherColumn == 0
+                    ? leftItems[_launcherLeftIndex]
+                    : rightItems[_launcherRightIndex];
+
+                if (selected.Id == "reboot")
+                {
+                    Cosmos.System.Power.Reboot();
+                }
+                else if (selected.Id == "poweroff" || selected.Id == "halt")
+                {
+                    Cosmos.System.Power.Shutdown();
+                }
+                else
+                {
+                    SetCurrentApp(selected.Id);
+                }
             }
         }
 
@@ -332,7 +431,7 @@ namespace WeatherOS.Graphics
             string topText;
             if (_currentApp == "launcher")
             {
-                topText = "WeatherOS Desktop  |  Standalone Meteorological System";
+                topText = "WeatherOS Desktop  |  Categorized Meteorological System";
             }
             else if (_currentApp == "notepad")
             {
@@ -379,7 +478,7 @@ namespace WeatherOS.Graphics
             string btmText;
             if (_currentApp == "launcher")
             {
-                btmText = "[Up/Down/Tab] Navigate  |  [Enter] Open Application";
+                btmText = "[Arrows/Tab] Navigate Categories  |  [Enter] Open Application  |  [ESC] Exit";
             }
             else
             {
@@ -392,35 +491,152 @@ namespace WeatherOS.Graphics
 
         private void DrawLauncher()
         {
-            var apps = GetAppNames();
-            if (_selectedAppIndex >= apps.Length) _selectedAppIndex = 0;
+            var leftItems = GetLeftLauncherItems();
+            var rightItems = GetRightLauncherItems();
 
-            int boxWidth = 48;
-            int boxHeight = apps.Length + 4;
-            int left = (80 - boxWidth) / 2; // 16 (centered on 80 columns)
-            int topY = 1 + (23 - boxHeight) / 2; // Vertically centered
-            if (topY < 2) topY = 2;
+            if (_launcherLeftIndex >= leftItems.Count) _launcherLeftIndex = 0;
+            if (_launcherRightIndex >= rightItems.Count) _launcherRightIndex = 0;
 
-            DrawWindow(left, topY, boxWidth, boxHeight, "MAIN MENU");
+            int left = 3;
+            int top = 1;
+            int width = 74;
+            int height = 22;
+
+            DrawWindow(left, top, width, height, "WEATHEROS WORKSPACE  |  APPLICATION LAUNCHER");
             ConsoleColor winBg = _isDarkMode ? ConsoleColor.Black : ConsoleColor.Blue;
             System.Console.BackgroundColor = winBg;
 
-            for (int i = 0; i < apps.Length; i++)
+            // Subheader
+            System.Console.SetCursorPosition(left + 2, top + 1);
+            System.Console.ForegroundColor = ConsoleColor.White;
+            System.Console.Write("Select an application by category or press [Tab / Arrows] to navigate:");
+
+            // Vertical middle divider
+            for (int y = top + 2; y <= top + 14; y++)
             {
-                System.Console.SetCursorPosition(left + 3, topY + 2 + i);
-                if (i == _selectedAppIndex)
+                System.Console.SetCursorPosition(38, y);
+                System.Console.ForegroundColor = ConsoleColor.DarkCyan;
+                System.Console.Write("|");
+            }
+
+            // --- LEFT COLUMN ---
+            // Category 1: Meteorology (items 0 to 3)
+            System.Console.SetCursorPosition(left + 2, top + 2);
+            System.Console.ForegroundColor = ConsoleColor.Yellow;
+            System.Console.Write("[ METEOROLOGY & FORECAST ]");
+
+            for (int i = 0; i < 4 && i < leftItems.Count; i++)
+            {
+                int rowY = top + 3 + i;
+                System.Console.SetCursorPosition(left + 2, rowY);
+                bool isSel = (_launcherColumn == 0 && _launcherLeftIndex == i);
+                DrawLauncherItemRow(leftItems[i].Name, isSel, 32, winBg);
+            }
+
+            // Category 2: Utilities & Tools (items 4 to end)
+            System.Console.SetCursorPosition(left + 2, top + 8);
+            System.Console.ForegroundColor = ConsoleColor.Yellow;
+            System.Console.Write("[ UTILITIES & TOOLS ]");
+
+            for (int i = 4; i < leftItems.Count; i++)
+            {
+                int rowY = top + 9 + (i - 4);
+                if (rowY <= top + 14)
                 {
-                    System.Console.ForegroundColor = ConsoleColor.Black;
-                    System.Console.BackgroundColor = ConsoleColor.White;
+                    System.Console.SetCursorPosition(left + 2, rowY);
+                    bool isSel = (_launcherColumn == 0 && _launcherLeftIndex == i);
+                    DrawLauncherItemRow(leftItems[i].Name, isSel, 32, winBg);
                 }
-                else
+            }
+
+            // --- RIGHT COLUMN ---
+            // Category 3: Storage & System (items 0 to 4)
+            System.Console.SetCursorPosition(40, top + 2);
+            System.Console.ForegroundColor = ConsoleColor.Yellow;
+            System.Console.Write("[ STORAGE & SYSTEM ]");
+
+            for (int i = 0; i < 5 && i < rightItems.Count; i++)
+            {
+                int rowY = top + 3 + i;
+                System.Console.SetCursorPosition(40, rowY);
+                bool isSel = (_launcherColumn == 1 && _launcherRightIndex == i);
+                DrawLauncherItemRow(rightItems[i].Name, isSel, 32, winBg);
+            }
+
+            // Category 4: System Power (items 5 to end)
+            System.Console.SetCursorPosition(40, top + 9);
+            System.Console.ForegroundColor = ConsoleColor.Yellow;
+            System.Console.Write("[ SYSTEM POWER ]");
+
+            for (int i = 5; i < rightItems.Count; i++)
+            {
+                int rowY = top + 10 + (i - 5);
+                if (rowY <= top + 14)
                 {
-                    System.Console.ForegroundColor = apps[i].Contains("Debug") ? ConsoleColor.Yellow : ConsoleColor.White;
-                    System.Console.BackgroundColor = winBg;
+                    System.Console.SetCursorPosition(40, rowY);
+                    bool isSel = (_launcherColumn == 1 && _launcherRightIndex == i);
+                    DrawLauncherItemRow(rightItems[i].Name, isSel, 32, winBg);
                 }
-                string appItem = $" {(apps[i].Length > 0 ? "> " : "")}{apps[i]} ";
-                if (appItem.Length > boxWidth - 6) appItem = appItem.Substring(0, boxWidth - 6);
-                System.Console.Write(appItem.PadRight(boxWidth - 6));
+            }
+
+            // Horizontal Divider before details
+            System.Console.BackgroundColor = winBg;
+            System.Console.SetCursorPosition(left + 1, top + 15);
+            System.Console.ForegroundColor = ConsoleColor.DarkCyan;
+            System.Console.Write(new string('-', width - 2));
+
+            // Selected App Details Box
+            LauncherAppEntry currentSelected = _launcherColumn == 0
+                ? leftItems[_launcherLeftIndex]
+                : rightItems[_launcherRightIndex];
+
+            System.Console.SetCursorPosition(left + 2, top + 16);
+            System.Console.ForegroundColor = ConsoleColor.Yellow;
+            System.Console.Write("Selected: ");
+            System.Console.ForegroundColor = ConsoleColor.White;
+            System.Console.Write(currentSelected.Name);
+            System.Console.ForegroundColor = ConsoleColor.Cyan;
+            string catTag = $"  [{currentSelected.Category}]";
+            int remSpace = width - 14 - currentSelected.Name.Length;
+            if (remSpace > 0)
+            {
+                System.Console.Write(catTag.PadRight(remSpace));
+            }
+
+            System.Console.SetCursorPosition(left + 2, top + 17);
+            System.Console.ForegroundColor = ConsoleColor.Gray;
+            string desc = currentSelected.Description;
+            if (desc.Length > width - 4) desc = desc.Substring(0, width - 7) + "...";
+            System.Console.Write(desc.PadRight(width - 4));
+
+            // Horizontal Divider before controls
+            System.Console.SetCursorPosition(left + 1, top + 18);
+            System.Console.ForegroundColor = ConsoleColor.DarkCyan;
+            System.Console.Write(new string('-', width - 2));
+
+            // Bottom Navigation Help
+            System.Console.SetCursorPosition(left + 2, top + 19);
+            System.Console.ForegroundColor = ConsoleColor.Yellow;
+            System.Console.Write("[▲/▼] Select Item  |  [Tab/◄/►] Switch Column  |  [Enter] Launch  |  [ESC] Exit");
+        }
+
+        private void DrawLauncherItemRow(string text, bool isSelected, int maxWidth, ConsoleColor defaultBg)
+        {
+            if (isSelected)
+            {
+                System.Console.BackgroundColor = ConsoleColor.White;
+                System.Console.ForegroundColor = ConsoleColor.Black;
+                string line = " > " + text + " ";
+                if (line.Length > maxWidth) line = line.Substring(0, maxWidth);
+                System.Console.Write(line.PadRight(maxWidth));
+            }
+            else
+            {
+                System.Console.BackgroundColor = defaultBg;
+                System.Console.ForegroundColor = text.Contains("Debug") ? ConsoleColor.Yellow : ConsoleColor.White;
+                string line = "   " + text;
+                if (line.Length > maxWidth) line = line.Substring(0, maxWidth);
+                System.Console.Write(line.PadRight(maxWidth));
             }
         }
 

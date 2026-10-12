@@ -13,7 +13,7 @@ namespace WeatherOS.Apps
 
         public void Draw(TuiDesktop desktop)
         {
-            desktop.DrawWindow(2, 2, 76, 20, "7-DAY EXTENDED WEATHER & LUNAR FORECAST");
+            desktop.DrawWindow(2, 2, 76, 20, "7-DAY EXTENDED WEATHER FORECAST");
             ConsoleColor winBg = desktop.IsDarkMode ? ConsoleColor.Black : ConsoleColor.Blue;
             System.Console.BackgroundColor = winBg;
 
@@ -56,53 +56,76 @@ namespace WeatherOS.Apps
                     System.Console.Write(dayHeader.PadRight(9));
                 }
 
-                // Divider
+                // Date line (e.g. "  12/10  ")
                 System.Console.SetCursorPosition(colX, 5);
                 System.Console.ForegroundColor = ConsoleColor.DarkGray;
+                string dateStr = FormatDateLabel(day.Date);
+                System.Console.Write(dateStr.PadRight(9));
+
+                // Divider
+                System.Console.SetCursorPosition(colX, 6);
+                System.Console.ForegroundColor = ConsoleColor.DarkCyan;
                 System.Console.Write("---------");
 
-                // 2. Mini ASCII Weather Icon (3 lines high, 9 chars wide)
-                DrawMiniWeatherIcon(day.Condition, colX, 6);
+                // 2. Mini ASCII Weather Icon (3 lines high: y = 7, 8, 9)
+                DrawMiniWeatherIcon(day.Condition, colX, 7);
 
                 // 3. Condition name (shortened)
-                System.Console.SetCursorPosition(colX, 9);
+                System.Console.SetCursorPosition(colX, 10);
                 System.Console.ForegroundColor = ConsoleColor.White;
                 string condShort = ShortenCondition(day.Condition);
                 System.Console.Write(condShort.PadRight(9));
 
-                // 4. Max & Min Temperatures
-                System.Console.SetCursorPosition(colX, 10);
-                System.Console.ForegroundColor = ConsoleColor.Yellow;
-                System.Console.Write($"Max: {((int)day.MaxTempC)}C".PadRight(9));
-
-                System.Console.SetCursorPosition(colX, 11);
-                System.Console.ForegroundColor = ConsoleColor.Cyan;
-                System.Console.Write($"Min: {((int)day.MinTempC)}C".PadRight(9));
-
-                // 5. Rain Probability
-                System.Console.SetCursorPosition(colX, 12);
-                System.Console.ForegroundColor = day.ChanceOfRain > 40 ? ConsoleColor.Yellow : ConsoleColor.DarkCyan;
-                System.Console.Write($"R: {day.ChanceOfRain}%".PadRight(9));
-
                 // Divider
-                System.Console.SetCursorPosition(colX, 13);
-                System.Console.ForegroundColor = ConsoleColor.DarkGray;
+                System.Console.SetCursorPosition(colX, 11);
+                System.Console.ForegroundColor = ConsoleColor.DarkCyan;
                 System.Console.Write("---------");
 
-                // 6. Mini Moon Icon (2 lines high)
-                DrawMiniMoonIcon(day.MoonPhase, colX, 14);
+                // 4. Max & Min Temperatures
+                System.Console.SetCursorPosition(colX, 12);
+                System.Console.ForegroundColor = ConsoleColor.Yellow;
+                System.Console.Write($"Max: {((int)day.MaxTempC)} C".PadRight(9));
 
-                // 7. Moon Phase Name
-                System.Console.SetCursorPosition(colX, 16);
+                System.Console.SetCursorPosition(colX, 13);
                 System.Console.ForegroundColor = ConsoleColor.Cyan;
-                string phaseShort = ShortenMoonPhase(day.MoonPhase);
-                System.Console.Write(phaseShort.PadRight(9));
+                System.Console.Write($"Min: {((int)day.MinTempC)} C".PadRight(9));
 
-                // 8. Moon Illumination
-                System.Console.SetCursorPosition(colX, 17);
+                // 5. Rain Probability
+                System.Console.SetCursorPosition(colX, 14);
+                System.Console.ForegroundColor = day.ChanceOfRain > 40 ? ConsoleColor.Yellow : ConsoleColor.White;
+                System.Console.Write($"Rain:{day.ChanceOfRain,3}%".PadRight(9));
+
+                // 6. Precipitation outlook / summary badge
+                System.Console.SetCursorPosition(colX, 15);
+                if (day.ChanceOfRain >= 60)
+                {
+                    System.Console.ForegroundColor = ConsoleColor.Cyan;
+                    System.Console.Write(" [WET]   ");
+                }
+                else if (day.MaxTempC >= 25)
+                {
+                    System.Console.ForegroundColor = ConsoleColor.Yellow;
+                    System.Console.Write(" [WARM]  ");
+                }
+                else if (day.MinTempC <= 5)
+                {
+                    System.Console.ForegroundColor = ConsoleColor.Blue;
+                    System.Console.Write(" [COLD]  ");
+                }
+                else
+                {
+                    System.Console.ForegroundColor = ConsoleColor.Green;
+                    System.Console.Write(" [MILD]  ");
+                }
+
+                // Divider at bottom of card
+                System.Console.SetCursorPosition(colX, 16);
                 System.Console.ForegroundColor = ConsoleColor.DarkCyan;
-                string illum = !string.IsNullOrEmpty(day.MoonIllumination) ? day.MoonIllumination : "";
-                System.Console.Write(illum.PadRight(9));
+                System.Console.Write("---------");
+
+                // Clear row 17
+                System.Console.SetCursorPosition(colX, 17);
+                System.Console.Write("         ");
             }
 
             // Bottom telemetry status bar
@@ -117,6 +140,17 @@ namespace WeatherOS.Apps
             System.Console.BackgroundColor = winBg;
             System.Console.ForegroundColor = ConsoleColor.White;
             System.Console.Write("[ESC] Return  |  [C] Change City  |  [W] Dashboard  |  [R] Refresh");
+        }
+
+        private static string FormatDateLabel(string dateStr)
+        {
+            if (!string.IsNullOrEmpty(dateStr) && dateStr.Length >= 10)
+            {
+                string m = dateStr.Substring(5, 2);
+                string d = dateStr.Substring(8, 2);
+                return $"  {d}/{m}  ";
+            }
+            return "   ---   ";
         }
 
         private static string FormatDayHeader(string dateStr, string dayOfWeek)
@@ -156,21 +190,6 @@ namespace WeatherOS.Apps
             if (c.Contains("clear") || c.Contains("limpo")) return "Clear";
             if (c.Contains("sun") || c.Contains("sol")) return "Sunny";
             return cond.Length > 8 ? cond.Substring(0, 8) : cond;
-        }
-
-        private static string ShortenMoonPhase(string phase)
-        {
-            if (string.IsNullOrEmpty(phase)) return "Moon";
-            string p = phase.ToLower();
-            if (p.Contains("new")) return "New Moon";
-            if (p.Contains("waxing crescent")) return "Wax.Cres";
-            if (p.Contains("first quarter")) return "1st Qtr";
-            if (p.Contains("waxing gibbous")) return "Wax.Gib";
-            if (p.Contains("full")) return "Full Moon";
-            if (p.Contains("waning gibbous")) return "Wan.Gib";
-            if (p.Contains("last quarter") || p.Contains("third")) return "Last Qtr";
-            if (p.Contains("waning crescent")) return "Wan.Cres";
-            return phase.Length > 8 ? phase.Substring(0, 8) : phase;
         }
 
         private static void DrawMiniWeatherIcon(string condition, int left, int top)
@@ -231,71 +250,21 @@ namespace WeatherOS.Apps
             }
         }
 
-        private static void DrawMiniMoonIcon(string phase, int left, int top)
-        {
-            string p = (phase ?? "").ToLower();
-            if (p.Contains("new"))
-            {
-                System.Console.ForegroundColor = ConsoleColor.DarkGray;
-                System.Console.SetCursorPosition(left, top);     System.Console.Write("  ( . )  ");
-                System.Console.SetCursorPosition(left, top + 1); System.Console.Write("  `---'  ");
-            }
-            else if (p.Contains("waxing crescent"))
-            {
-                System.Console.ForegroundColor = ConsoleColor.Cyan;
-                System.Console.SetCursorPosition(left, top);     System.Console.Write("  (  )   ");
-                System.Console.SetCursorPosition(left, top + 1); System.Console.Write("   --)   ");
-            }
-            else if (p.Contains("first quarter"))
-            {
-                System.Console.ForegroundColor = ConsoleColor.Cyan;
-                System.Console.SetCursorPosition(left, top);     System.Console.Write("  (|##)  ");
-                System.Console.SetCursorPosition(left, top + 1); System.Console.Write("  `|##'  ");
-            }
-            else if (p.Contains("waxing gibbous"))
-            {
-                System.Console.ForegroundColor = ConsoleColor.Yellow;
-                System.Console.SetCursorPosition(left, top);     System.Console.Write("  (###)  ");
-                System.Console.SetCursorPosition(left, top + 1); System.Console.Write("  `---'  ");
-            }
-            else if (p.Contains("full"))
-            {
-                System.Console.ForegroundColor = ConsoleColor.Yellow;
-                System.Console.SetCursorPosition(left, top);     System.Console.Write("  ( O )  ");
-                System.Console.SetCursorPosition(left, top + 1); System.Console.Write("  `---'  ");
-            }
-            else if (p.Contains("waning gibbous"))
-            {
-                System.Console.ForegroundColor = ConsoleColor.Yellow;
-                System.Console.SetCursorPosition(left, top);     System.Console.Write("  (###)  ");
-                System.Console.SetCursorPosition(left, top + 1); System.Console.Write("  `---'  ");
-            }
-            else if (p.Contains("last quarter") || p.Contains("third"))
-            {
-                System.Console.ForegroundColor = ConsoleColor.Cyan;
-                System.Console.SetCursorPosition(left, top);     System.Console.Write("  (##|)  ");
-                System.Console.SetCursorPosition(left, top + 1); System.Console.Write("  `##|'  ");
-            }
-            else
-            {
-                // Waning Crescent
-                System.Console.ForegroundColor = ConsoleColor.Cyan;
-                System.Console.SetCursorPosition(left, top);     System.Console.Write("   (  )  ");
-                System.Console.SetCursorPosition(left, top + 1); System.Console.Write("   (--   ");
-            }
-        }
-
         public void HandleInput(TuiDesktop desktop, KeyEvent keyEvent)
         {
-            if (keyEvent.Key == ConsoleKeyEx.R)
+            if (keyEvent.Key == ConsoleKeyEx.Escape)
+            {
+                desktop.SetCurrentApp("launcher");
+            }
+            else if (keyEvent.Key == ConsoleKeyEx.R || keyEvent.KeyChar == 'r' || keyEvent.KeyChar == 'R')
             {
                 desktop.WeatherService.FetchOpenWeather(desktop.DefaultCity, desktop.ApiKey);
             }
-            else if (keyEvent.Key == ConsoleKeyEx.C)
+            else if (keyEvent.Key == ConsoleKeyEx.C || keyEvent.KeyChar == 'c' || keyEvent.KeyChar == 'C')
             {
                 desktop.SetCurrentApp("change_city");
             }
-            else if (keyEvent.Key == ConsoleKeyEx.W)
+            else if (keyEvent.Key == ConsoleKeyEx.W || keyEvent.KeyChar == 'w' || keyEvent.KeyChar == 'W')
             {
                 desktop.SetCurrentApp("weather");
             }

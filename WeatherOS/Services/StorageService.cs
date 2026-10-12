@@ -48,6 +48,14 @@ namespace WeatherOS.Services
         public string Content { get; set; } = "";
     }
 
+    public class StorageFileInfo
+    {
+        public string Name { get; set; } = "";
+        public long Size { get; set; } = 0;
+        public string LocationId { get; set; } = "";
+        public string LocationName { get; set; } = "";
+    }
+
     public static class StorageService
     {
         private static List<StoredFile> _memoryFiles = new List<StoredFile>();
@@ -141,19 +149,6 @@ namespace WeatherOS.Services
                 }
                 if (diskIdx < 0 || diskIdx >= physDrives.Count) diskIdx = 0;
 
-                // Safety: If the requested disk is Live USB (read-only) and another fixed drive exists, redirect to fixed drive
-                if (physDrives.Count > 1 && (physDrives[diskIdx].SectorCount > 0 && physDrives[diskIdx].SectorCount < 10000000UL))
-                {
-                    for (int alt = 0; alt < physDrives.Count; alt++)
-                    {
-                        if (physDrives[alt].SectorCount >= 10000000UL)
-                        {
-                            diskIdx = alt;
-                            break;
-                        }
-                    }
-                }
-
                 diskName = physDrives[diskIdx].Name;
                 return physDrives[diskIdx].Device;
             }
@@ -163,18 +158,17 @@ namespace WeatherOS.Services
             {
                 if (BlockDevice.Devices != null && BlockDevice.Devices.Count > 0)
                 {
-                    int bestIdx = 0;
                     for (int i = 0; i < BlockDevice.Devices.Count; i++)
                     {
                         var d = BlockDevice.Devices[i];
-                        if (d != null && !(d is Partition) && d.BlockCount >= 10000000UL)
+                        if (d != null && !(d is Partition) && d.BlockSize == 512)
                         {
-                            bestIdx = i;
-                            break;
+                            diskName = $"Hardware Dev #{i}";
+                            return d;
                         }
                     }
-                    diskName = $"Hardware Dev #{bestIdx}";
-                    return BlockDevice.Devices[bestIdx];
+                    diskName = "Hardware Dev #0";
+                    return BlockDevice.Devices[0];
                 }
             }
             catch { }
@@ -194,12 +188,8 @@ namespace WeatherOS.Services
                     for (int i = 0; i < physDrives.Count; i++)
                     {
                         var d = physDrives[i];
-                        bool isUsbLive = (d.SectorCount > 0 && d.SectorCount < 10000000UL);
+                        bool isCdOrIso = (d.Device != null && d.Device.BlockSize == 2048);
                         string dName = !string.IsNullOrEmpty(d.Name) ? d.Name : $"Disk {d.Index} (Storage Drive)";
-                        if (isUsbLive && !dName.Contains("USB"))
-                        {
-                            dName += " [Live USB]";
-                        }
                         list.Add(new StorageLocation
                         {
                             Id = $"disk{d.Index}",
@@ -207,7 +197,7 @@ namespace WeatherOS.Services
                             FileSystem = "FAT32 Storage",
                             TotalSize = (long)d.SizeBytes,
                             FreeSpace = (long)d.SizeBytes > 1048576 ? (long)d.SizeBytes - 1048576 : 0,
-                            IsReadOnly = isUsbLive,
+                            IsReadOnly = isCdOrIso,
                             IsLinuxSystem = false
                         });
                     }
@@ -228,6 +218,89 @@ namespace WeatherOS.Services
             });
 
             return list;
+        }
+
+        public static List<StorageFileInfo> GetFilesForLocation(string locationId)
+        {
+            var list = new List<StorageFileInfo>();
+
+            if (string.Equals(locationId, "ram", StringComparison.OrdinalIgnoreCase))
+            {
+                for (int i = 0; i < _memoryFiles.Count; i++)
+                {
+                    list.Add(new StorageFileInfo
+                    {
+                        Name = _memoryFiles[i].Name,
+                        Size = _memoryFiles[i].Content.Length,
+                        LocationId = "ram",
+                        LocationName = "RAM Store"
+                    });
+                }
+                return list;
+            }
+
+            try
+            {
+                string diskName;
+                var dev = GetTargetDisk(locationId, out diskName);
+                if (dev != null)
+                {
+                    var diskFiles = DiskWipeService.ListFilesDetailedDirectFromFat32(dev);
+                    if (diskFiles != null)
+                    {
+                        for (int i = 0; i < diskFiles.Count; i++)
+                        {
+                            list.Add(new StorageFileInfo
+                            {
+                                Name = diskFiles[i].Name,
+                                Size = diskFiles[i].Size,
+                                LocationId = locationId ?? "disk0",
+                                LocationName = diskName
+                            });
+                        }
+                    }
+                }
+            }
+            catch { }
+
+            return list;
+        }
+
+        public static bool LoadFileFromLocation(string filename, string locationId, out string content, out string status)
+        {
+            filename = NormalizeFilename(filename);
+            content = "";
+
+            if (string.Equals(locationId, "ram", StringComparison.OrdinalIgnoreCase))
+            {
+                if (TryGetMemoryFile(filename, out var ramContent))
+                {
+                    content = ramContent;
+                    status = $"Loaded from RAM Storage: {filename} ({content.Length} chars) [OK]";
+                    return true;
+                }
+                status = $"File '{filename}' not found in RAM.";
+                return false;
+            }
+
+            try
+            {
+                string diskName;
+                var dev = GetTargetDisk(locationId, out diskName);
+                if (dev != null)
+                {
+                    string readStatus;
+                    if (DiskWipeService.ReadFileDirectFromFat32(dev, filename, out content, out readStatus))
+                    {
+                        status = $"Loaded from {diskName}: {filename} ({(content != null ? content.Length : 0)} bytes) [OK]";
+                        PutMemoryFile(filename, content ?? "");
+                        return true;
+                    }
+                }
+            }
+            catch { }
+
+            return LoadFile(filename, out content, out status);
         }
 
         public static bool SaveFileToLocation(string filename, string content, string locationId, out string status)
@@ -289,30 +362,19 @@ namespace WeatherOS.Services
                     string readStatus;
                     if (DiskWipeService.ReadFileDirectFromFat32(dev, filename, out content, out readStatus))
                     {
-                        if (!string.IsNullOrEmpty(content))
-                        {
-                            status = $"Loaded from {diskName}: {filename} ({content.Length} bytes) [OK]";
-                            PutMemoryFile(filename, content); // Keep RAM in sync
-                            return true;
-                        }
+                        status = $"Loaded from {diskName}: {filename} ({(content != null ? content.Length : 0)} bytes) [OK]";
+                        PutMemoryFile(filename, content ?? ""); // Keep RAM in sync
+                        return true;
                     }
                 }
             }
             catch { }
 
             // 2. Check RAM store fallback
-            if (TryGetMemoryFile(filename, out var ramContent) && !string.IsNullOrEmpty(ramContent))
+            if (TryGetMemoryFile(filename, out var ramContent))
             {
-                content = ramContent;
+                content = ramContent ?? "";
                 status = $"Loaded from RAM Storage: {filename} ({content.Length} chars) [OK]";
-                return true;
-            }
-
-            // 3. Empty file on disk or RAM
-            if (TryGetMemoryFile(filename, out _))
-            {
-                content = "";
-                status = $"Loaded: {filename} (0 bytes) [OK]";
                 return true;
             }
 

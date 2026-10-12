@@ -12,7 +12,7 @@ namespace WeatherOS.Apps
         public string Name => "Notepad";
         public bool IsRealTime => false;
 
-        private int _notepadState = 0; // 0=Menu, 1=Editor, 2=PromptOpen, 3=PromptSave, 4=PromptDelete, 5=ListFiles, 6=SelectStorageDestination
+        private int _notepadState = 0; // 0=Menu, 1=Editor, 2=PromptOpen/WindowsPicker, 3=PromptSave, 4=PromptDelete, 5=ListFiles, 6=SelectStorageDestination
         private string _notepadFilename = "untitled.txt";
         private string _lastStatus = "Storage Ready (RAM & VFS Storage)";
 
@@ -20,8 +20,22 @@ namespace WeatherOS.Apps
         private TextEditorState _promptEditor = new TextEditorState { AllowMultiline = false, MaxLength = 40 };
         private int _selectedLocationIndex = 0;
 
+        // Windows-like Open File Picker State
+        private int _openDialogLocationIndex = 0;
+        private int _openDialogSelectedFileIndex = 0;
+        private int _openDialogScrollOffset = 0;
+        private List<StorageFileInfo> _openDialogFiles = new List<StorageFileInfo>();
+        private List<StorageLocation> _cachedLocations = new List<StorageLocation>();
+        private int _openPreviousState = 0; // 0=Menu, 1=Editor
+
         public void Draw(TuiDesktop desktop)
         {
+            if (_notepadState == 2)
+            {
+                DrawOpenFileDialog(desktop);
+                return;
+            }
+
             string title;
             if (_notepadState == 1)
                 title = $"NOTEPAD: {_notepadFilename}  |  [F2] Save  [ESC] Menu";
@@ -115,7 +129,7 @@ namespace WeatherOS.Apps
                 System.Console.SetCursorPosition(7, 18);
                 System.Console.BackgroundColor = winBg;
                 System.Console.ForegroundColor = ConsoleColor.Yellow;
-                System.Console.Write("[F2] Save Note  |  [ESC] Menu / Exit");
+                System.Console.Write("[F2] Save Note  |  [Ctrl+O] Open Note  |  [ESC] Menu");
 
                 // File metrics and status
                 System.Console.SetCursorPosition(7, 19);
@@ -167,7 +181,7 @@ namespace WeatherOS.Apps
                 System.Console.Write("Available Storage Devices & Partitions:");
 
                 var locations = StorageService.GetStorageLocations();
-                for (int i = 0; i < locations.Count && i < 3; i++)
+                for (int i = 0; i < locations.Count && i < 4; i++)
                 {
                     System.Console.SetCursorPosition(8, 10 + i * 2);
                     if (i == _selectedLocationIndex)
@@ -186,7 +200,7 @@ namespace WeatherOS.Apps
                 }
 
                 System.Console.BackgroundColor = winBg;
-                System.Console.SetCursorPosition(8, 16);
+                System.Console.SetCursorPosition(8, 17);
                 System.Console.ForegroundColor = ConsoleColor.DarkCyan;
                 string stDisp = "Status: " + _lastStatus;
                 if (stDisp.Length > 62) stDisp = stDisp.Substring(0, 59) + "...";
@@ -194,14 +208,13 @@ namespace WeatherOS.Apps
 
                 System.Console.SetCursorPosition(8, 18);
                 System.Console.ForegroundColor = ConsoleColor.Yellow;
-                int maxOpt = Math.Min(locations.Count, 3);
+                int maxOpt = Math.Min(locations.Count, 4);
                 System.Console.Write($"[Enter / 1-{maxOpt}] Save to Target  |  [ESC] Return to Editor");
             }
-            else // Prompts (2=Open, 3=Save Filename, 4=Delete)
+            else // Prompts (3=Save Filename, 4=Delete)
             {
                 string prompt = "";
-                if (_notepadState == 2) prompt = "ENTER FILENAME TO OPEN:";
-                else if (_notepadState == 3) prompt = "ENTER FILENAME TO SAVE:";
+                if (_notepadState == 3) prompt = "ENTER FILENAME TO SAVE:";
                 else if (_notepadState == 4) prompt = "ENTER FILENAME TO DELETE:";
 
                 System.Console.SetCursorPosition(10, 8);
@@ -233,10 +246,8 @@ namespace WeatherOS.Apps
                 }
                 else if (keyEvent.KeyChar == '2')
                 {
-                    _promptEditor.Text = _notepadFilename;
-                    _promptEditor.CursorPos = _promptEditor.Text.Length;
-                    _promptEditor.ClearSelection();
-                    _notepadState = 2;
+                    _openPreviousState = 0;
+                    OpenFileDialogStart();
                 }
                 else if (keyEvent.KeyChar == '3')
                 {
@@ -268,9 +279,18 @@ namespace WeatherOS.Apps
                               (isCtrl && (keyEvent.Key == ConsoleKeyEx.S || keyEvent.KeyChar == 's' || keyEvent.KeyChar == 'S')) ||
                               keyEvent.KeyChar == 19; // ASCII 19 = Ctrl+S
 
+                bool isOpen = keyEvent.Key == ConsoleKeyEx.F3 ||
+                              (isCtrl && (keyEvent.Key == ConsoleKeyEx.O || keyEvent.KeyChar == 'o' || keyEvent.KeyChar == 'O')) ||
+                              keyEvent.KeyChar == 15; // ASCII 15 = Ctrl+O
+
                 if (keyEvent.Key == ConsoleKeyEx.Escape)
                 {
                     _notepadState = 0;
+                }
+                else if (isOpen)
+                {
+                    _openPreviousState = 1;
+                    OpenFileDialogStart();
                 }
                 else if (isSave)
                 {
@@ -330,7 +350,82 @@ namespace WeatherOS.Apps
                     }
                 }
             }
-            else if (_notepadState == 2 || _notepadState == 3 || _notepadState == 4) // Prompts
+            else if (_notepadState == 2) // Windows-like Open File Dialog
+            {
+                if (keyEvent.Key == ConsoleKeyEx.Escape)
+                {
+                    _notepadState = _openPreviousState;
+                }
+                else if (keyEvent.Key == ConsoleKeyEx.UpArrow)
+                {
+                    if (_openDialogFiles != null && _openDialogFiles.Count > 0)
+                    {
+                        if (_openDialogSelectedFileIndex > 0)
+                        {
+                            _openDialogSelectedFileIndex--;
+                            if (_openDialogSelectedFileIndex < _openDialogScrollOffset)
+                            {
+                                _openDialogScrollOffset = _openDialogSelectedFileIndex;
+                            }
+                        }
+                    }
+                }
+                else if (keyEvent.Key == ConsoleKeyEx.DownArrow)
+                {
+                    if (_openDialogFiles != null && _openDialogFiles.Count > 0)
+                    {
+                        if (_openDialogSelectedFileIndex < _openDialogFiles.Count - 1)
+                        {
+                            _openDialogSelectedFileIndex++;
+                            if (_openDialogSelectedFileIndex >= _openDialogScrollOffset + 8)
+                            {
+                                _openDialogScrollOffset = _openDialogSelectedFileIndex - 7;
+                            }
+                        }
+                    }
+                }
+                else if (keyEvent.Key == ConsoleKeyEx.Tab || keyEvent.Key == ConsoleKeyEx.RightArrow)
+                {
+                    if (_cachedLocations != null && _cachedLocations.Count > 0)
+                    {
+                        _openDialogLocationIndex = (_openDialogLocationIndex + 1) % _cachedLocations.Count;
+                        RefreshOpenDialogFiles();
+                    }
+                }
+                else if (keyEvent.Key == ConsoleKeyEx.LeftArrow)
+                {
+                    if (_cachedLocations != null && _cachedLocations.Count > 0)
+                    {
+                        _openDialogLocationIndex = (_openDialogLocationIndex - 1 + _cachedLocations.Count) % _cachedLocations.Count;
+                        RefreshOpenDialogFiles();
+                    }
+                }
+                else if (keyEvent.Key == ConsoleKeyEx.Enter)
+                {
+                    if (_openDialogFiles != null && _openDialogFiles.Count > 0 &&
+                        _openDialogSelectedFileIndex >= 0 && _openDialogSelectedFileIndex < _openDialogFiles.Count)
+                    {
+                        var picked = _openDialogFiles[_openDialogSelectedFileIndex];
+                        string content;
+                        string status;
+                        bool ok = StorageService.LoadFileFromLocation(picked.Name, picked.LocationId, out content, out status);
+                        _lastStatus = status;
+                        if (ok)
+                        {
+                            _notepadFilename = picked.Name;
+                            _editorState.Text = content ?? "";
+                            _editorState.CursorPos = _editorState.Text.Length;
+                            _editorState.ClearSelection();
+                            _notepadState = 1; // Opens directly in editor!
+                        }
+                    }
+                    else
+                    {
+                        _lastStatus = "No file available to open on this drive.";
+                    }
+                }
+            }
+            else if (_notepadState == 3 || _notepadState == 4) // Prompts (3=Save Filename, 4=Delete)
             {
                 if (keyEvent.Key == ConsoleKeyEx.Escape)
                 {
@@ -340,26 +435,7 @@ namespace WeatherOS.Apps
                 {
                     string targetFile = StorageService.NormalizeFilename(_promptEditor.Text);
 
-                    if (_notepadState == 2) // Open File
-                    {
-                        string content;
-                        string status;
-                        bool ok = StorageService.LoadFile(targetFile, out content, out status);
-                        _lastStatus = status;
-                        if (ok)
-                        {
-                            _notepadFilename = targetFile;
-                            _editorState.Text = content;
-                            _editorState.CursorPos = content.Length;
-                            _editorState.ClearSelection();
-                            _notepadState = 1; // Open directly in editor!
-                        }
-                        else
-                        {
-                            _notepadState = 0;
-                        }
-                    }
-                    else if (_notepadState == 3) // Save Prompt -> Select Destination Menu
+                    if (_notepadState == 3) // Save Prompt -> Select Destination Menu
                     {
                         _notepadFilename = targetFile;
                         _selectedLocationIndex = GetDefaultWritableLocationIndex();
@@ -385,6 +461,198 @@ namespace WeatherOS.Apps
                     _promptEditor.HandleKey(keyEvent);
                 }
             }
+        }
+
+        private void OpenFileDialogStart()
+        {
+            _cachedLocations = StorageService.GetStorageLocations();
+            if (_cachedLocations == null || _cachedLocations.Count == 0)
+            {
+                _cachedLocations = new List<StorageLocation>();
+            }
+            if (_openDialogLocationIndex >= _cachedLocations.Count)
+            {
+                _openDialogLocationIndex = 0;
+            }
+            RefreshOpenDialogFiles();
+            _notepadState = 2;
+        }
+
+        private void RefreshOpenDialogFiles()
+        {
+            string locId = "disk0";
+            if (_cachedLocations != null && _openDialogLocationIndex >= 0 && _openDialogLocationIndex < _cachedLocations.Count)
+            {
+                locId = _cachedLocations[_openDialogLocationIndex].Id;
+            }
+            _openDialogFiles = StorageService.GetFilesForLocation(locId);
+            _openDialogSelectedFileIndex = 0;
+            _openDialogScrollOffset = 0;
+
+            if (_openDialogFiles != null && !string.IsNullOrEmpty(_notepadFilename))
+            {
+                for (int i = 0; i < _openDialogFiles.Count; i++)
+                {
+                    if (string.Equals(_openDialogFiles[i].Name, _notepadFilename, StringComparison.OrdinalIgnoreCase))
+                    {
+                        _openDialogSelectedFileIndex = i;
+                        if (_openDialogSelectedFileIndex >= 8) _openDialogScrollOffset = _openDialogSelectedFileIndex - 7;
+                        break;
+                    }
+                }
+            }
+        }
+
+        private void DrawOpenFileDialog(TuiDesktop desktop)
+        {
+            desktop.DrawWindow(4, 2, 72, 20, "OPEN FILE  |  WINDOWS FILE PICKER");
+            ConsoleColor winBg = desktop.IsDarkMode ? ConsoleColor.Black : ConsoleColor.Blue;
+            System.Console.BackgroundColor = winBg;
+
+            // Header / Look In:
+            System.Console.SetCursorPosition(6, 4);
+            System.Console.ForegroundColor = ConsoleColor.Yellow;
+            System.Console.Write("Look in: ");
+
+            string driveName = "Disk 0";
+            if (_cachedLocations != null && _openDialogLocationIndex >= 0 && _openDialogLocationIndex < _cachedLocations.Count)
+            {
+                driveName = _cachedLocations[_openDialogLocationIndex].GetDescription();
+            }
+            string driveBox = $"[ < {driveName} > ]";
+            if (driveBox.Length > 44) driveBox = driveBox.Substring(0, 41) + "... > ]";
+
+            System.Console.BackgroundColor = ConsoleColor.DarkGray;
+            System.Console.ForegroundColor = ConsoleColor.White;
+            System.Console.Write(driveBox);
+
+            System.Console.BackgroundColor = winBg;
+            System.Console.ForegroundColor = ConsoleColor.Cyan;
+            System.Console.Write("  [Tab: Switch Drive]");
+
+            // File table header
+            System.Console.SetCursorPosition(6, 6);
+            System.Console.ForegroundColor = ConsoleColor.Yellow;
+            string th = "  Name                    Size        Type            Location        ";
+            System.Console.Write(th.PadRight(68));
+
+            System.Console.SetCursorPosition(6, 7);
+            System.Console.ForegroundColor = ConsoleColor.DarkCyan;
+            System.Console.Write(new string('-', 68));
+
+            // File list (8 visible rows: y = 8 to 15)
+            int visibleRows = 8;
+            if (_openDialogFiles == null || _openDialogFiles.Count == 0)
+            {
+                System.Console.SetCursorPosition(6, 10);
+                System.Console.ForegroundColor = ConsoleColor.Yellow;
+                System.Console.Write("  (No files found on this drive. Press [Tab] to switch drive)");
+
+                for (int r = 1; r < visibleRows; r++)
+                {
+                    System.Console.SetCursorPosition(6, 8 + r);
+                    if (8 + r != 10) System.Console.Write(new string(' ', 68));
+                }
+            }
+            else
+            {
+                for (int r = 0; r < visibleRows; r++)
+                {
+                    int fileIdx = _openDialogScrollOffset + r;
+                    System.Console.SetCursorPosition(6, 8 + r);
+
+                    if (fileIdx < _openDialogFiles.Count)
+                    {
+                        var f = _openDialogFiles[fileIdx];
+                        bool isSelected = (fileIdx == _openDialogSelectedFileIndex);
+
+                        if (isSelected)
+                        {
+                            System.Console.BackgroundColor = ConsoleColor.White;
+                            System.Console.ForegroundColor = ConsoleColor.Black;
+                        }
+                        else
+                        {
+                            System.Console.BackgroundColor = winBg;
+                            System.Console.ForegroundColor = ConsoleColor.White;
+                        }
+
+                        string marker = isSelected ? "> " : "  ";
+                        string namePart = f.Name;
+                        if (namePart.Length > 20) namePart = namePart.Substring(0, 17) + "...";
+
+                        string sizePart = FormatFileSize(f.Size);
+                        string typePart = FormatFileType(f.Name);
+                        string locPart = f.LocationName;
+                        if (locPart.Length > 14) locPart = locPart.Substring(0, 12) + "..";
+
+                        string rowText = marker + namePart.PadRight(22) + sizePart.PadRight(12) + typePart.PadRight(16) + locPart.PadRight(16);
+                        if (rowText.Length > 68) rowText = rowText.Substring(0, 68);
+                        System.Console.Write(rowText.PadRight(68));
+                    }
+                    else
+                    {
+                        System.Console.BackgroundColor = winBg;
+                        System.Console.Write(new string(' ', 68));
+                    }
+                }
+            }
+
+            System.Console.BackgroundColor = winBg;
+            System.Console.SetCursorPosition(6, 16);
+            System.Console.ForegroundColor = ConsoleColor.DarkCyan;
+            System.Console.Write(new string('-', 68));
+
+            // Bottom Selected File Box
+            string selectedFileName = "";
+            if (_openDialogFiles != null && _openDialogSelectedFileIndex >= 0 && _openDialogSelectedFileIndex < _openDialogFiles.Count)
+            {
+                selectedFileName = _openDialogFiles[_openDialogSelectedFileIndex].Name;
+            }
+            System.Console.SetCursorPosition(6, 17);
+            System.Console.ForegroundColor = ConsoleColor.Yellow;
+            System.Console.Write("File name:     ");
+            System.Console.ForegroundColor = ConsoleColor.White;
+            System.Console.Write($"[ {selectedFileName.PadRight(47)} ]");
+
+            System.Console.SetCursorPosition(6, 18);
+            System.Console.ForegroundColor = ConsoleColor.Yellow;
+            System.Console.Write("Files of type: ");
+            System.Console.ForegroundColor = ConsoleColor.Gray;
+            System.Console.Write($"[ All Files (*.*, *.txt, *.ini, *.log)          ]");
+
+            // Status / instructions bar
+            System.Console.SetCursorPosition(6, 20);
+            System.Console.ForegroundColor = ConsoleColor.Yellow;
+            System.Console.Write("[▲/▼] Select  |  [Tab/◄/►] Switch Drive  |  [Enter] Open  |  [ESC] Cancel");
+
+            if (!string.IsNullOrEmpty(_lastStatus))
+            {
+                System.Console.SetCursorPosition(6, 21);
+                System.Console.ForegroundColor = ConsoleColor.Cyan;
+                string st = "Status: " + _lastStatus;
+                if (st.Length > 68) st = st.Substring(0, 65) + "...";
+                System.Console.Write(st.PadRight(68));
+            }
+        }
+
+        private static string FormatFileSize(long bytes)
+        {
+            if (bytes <= 0) return "0 B";
+            if (bytes < 1024) return $"{bytes} B";
+            if (bytes < 1024 * 1024) return $"{bytes / 1024} KB";
+            return $"{bytes / (1024 * 1024)} MB";
+        }
+
+        private static string FormatFileType(string filename)
+        {
+            if (string.IsNullOrEmpty(filename)) return "File";
+            string u = filename.ToUpper();
+            if (u.EndsWith(".TXT")) return "Text Document";
+            if (u.EndsWith(".INI") || u.EndsWith(".CFG")) return "Configuration";
+            if (u.EndsWith(".LOG")) return "Log File";
+            if (u.EndsWith(".DAT") || u.EndsWith(".BIN")) return "Binary Data";
+            return "Document";
         }
 
         private int GetDefaultWritableLocationIndex()
