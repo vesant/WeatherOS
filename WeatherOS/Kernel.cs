@@ -83,6 +83,9 @@ namespace WeatherOS
 
             InitializeCommandManager();
 
+            // Pre-seed default cumulative update package in memory store for simulation/testing
+            UpdateManagerService.InitDefaultUpdatePackage();
+
             // Show Boot Menu selection only if OS is NOT installed on disk.
             // If already installed, the boot menu is bypassed and boots directly from hard disk.
             if (UpdateManagerService.IsInstalledOnDisk())

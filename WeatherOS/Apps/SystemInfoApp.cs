@@ -494,7 +494,7 @@ namespace WeatherOS.Apps
             }
             else if (lower.EndsWith(".pkg") || lower.EndsWith(".wos"))
             {
-                _stagedPackageType = "WeatherOS Signed Firmware Package";
+                _stagedPackageType = "WeatherOS 3-in-1 Cumulative Package (Kernel + Clock v2 + Commits)";
             }
             else if (lower.EndsWith(".zip") || lower.EndsWith(".tar"))
             {

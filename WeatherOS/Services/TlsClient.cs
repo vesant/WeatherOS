@@ -659,43 +659,82 @@ namespace WeatherOS.Services
                 RawTcpHttp.SendTcpData(appRecord);
 
                 // 12. Read and Decrypt Encrypted Application Data
-                byte[] encResp = new byte[32768];
+                byte[] encResp = new byte[65536];
                 int encTotal = 0;
                 int appWait = 0;
 
-                while (encTotal < 2000 && appWait < 3000)
+                while (appWait < 2000 && encTotal < encResp.Length - 1024)
                 {
                     int r = RawTcpHttp.ReadTcpData(encResp, encTotal, encResp.Length - encTotal, 200);
                     if (r > 0)
                     {
                         encTotal += r;
+                        appWait = 0;
+                        if (encTotal > 15000) break; // Plenty of commits received
                     }
                     else
                     {
-                        appWait += 200;
+                        if (encTotal > 0) appWait += 400;
+                        else appWait += 200;
                     }
                 }
 
-                if (encTotal > 5 && encResp[0] == 0x17)
+                if (encTotal > 5)
                 {
-                    int appLen = (encResp[3] << 8) | encResp[4];
-                    if (appLen > encTotal - 5) appLen = encTotal - 5;
+                    var fullPlain = new StringBuilder();
+                    int recOffset = 0;
 
-                    byte[] iv = new byte[16];
-                    Array.Copy(encResp, 5, iv, 0, 16);
-                    byte[] cipherText = new byte[appLen - 16];
-                    Array.Copy(encResp, 21, cipherText, 0, cipherText.Length);
-
-                    byte[] decrypted = MiniAes128.DecryptCbc(serverWriteKey, iv, cipherText);
-                    string plainHttp = Encoding.ASCII.GetString(decrypted);
-
-                    // Extract body after \r\n\r\n
-                    int bodyIdx = plainHttp.IndexOf("\r\n\r\n");
-                    if (bodyIdx >= 0)
+                    while (recOffset + 5 < encTotal)
                     {
-                        return plainHttp.Substring(bodyIdx + 4);
+                        byte recType = encResp[recOffset];
+                        if (recType != 0x17) break;
+
+                        int appLen = (encResp[recOffset + 3] << 8) | encResp[recOffset + 4];
+                        if (recOffset + 5 + appLen > encTotal)
+                        {
+                            appLen = encTotal - (recOffset + 5);
+                        }
+
+                        if (appLen > 16)
+                        {
+                            byte[] iv = new byte[16];
+                            Array.Copy(encResp, recOffset + 5, iv, 0, 16);
+                            byte[] cipherText = new byte[appLen - 16];
+                            Array.Copy(encResp, recOffset + 21, cipherText, 0, cipherText.Length);
+
+                            byte[] decrypted = MiniAes128.DecryptCbc(serverWriteKey, iv, cipherText);
+                            if (decrypted != null && decrypted.Length > 0)
+                            {
+                                int padVal = decrypted[decrypted.Length - 1];
+                                int plainLen = decrypted.Length;
+                                if (padVal > 0 && padVal <= 16 && padVal < decrypted.Length)
+                                {
+                                    plainLen -= (padVal + 1);
+                                }
+                                if (plainLen > 32)
+                                {
+                                    plainLen -= 32;
+                                }
+                                if (plainLen > 0)
+                                {
+                                    fullPlain.Append(Encoding.ASCII.GetString(decrypted, 0, plainLen));
+                                }
+                            }
+                        }
+
+                        recOffset += 5 + appLen;
                     }
-                    return plainHttp;
+
+                    string plainHttp = fullPlain.ToString();
+                    if (!string.IsNullOrEmpty(plainHttp))
+                    {
+                        int bodyIdx = plainHttp.IndexOf("\r\n\r\n");
+                        if (bodyIdx >= 0)
+                        {
+                            return plainHttp.Substring(bodyIdx + 4);
+                        }
+                        return plainHttp;
+                    }
                 }
 
                 return null;

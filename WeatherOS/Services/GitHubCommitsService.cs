@@ -83,9 +83,13 @@ namespace WeatherOS.Services
                 string fullSha = json.Substring(shaValStart + 1, shaValEnd - shaValStart - 1);
                 string sha = fullSha.Length > 7 ? fullSha.Substring(0, 7) : fullSha;
 
+                // Locate the commit message block
+                int commitBlockIdx = json.IndexOf("\"commit\":", shaValEnd);
+                if (commitBlockIdx < 0) break;
+
                 string title = "Update";
                 string desc = "";
-                int msgIdx = json.IndexOf("\"message\":", shaValEnd);
+                int msgIdx = json.IndexOf("\"message\":", commitBlockIdx);
                 if (msgIdx >= 0)
                 {
                     int msgStart = json.IndexOf('"', msgIdx + 10);
@@ -113,7 +117,7 @@ namespace WeatherOS.Services
                 }
 
                 string date = "2026-10-13";
-                int dateIdx = json.IndexOf("\"date\":", shaValEnd);
+                int dateIdx = json.IndexOf("\"date\":", commitBlockIdx);
                 if (dateIdx >= 0)
                 {
                     int dateStart = json.IndexOf('"', dateIdx + 7);
@@ -128,16 +132,43 @@ namespace WeatherOS.Services
                     }
                 }
 
+                string author = "Vicente";
+                int authorIdx = json.IndexOf("\"author\":", commitBlockIdx);
+                if (authorIdx >= 0)
+                {
+                    int nameIdx = json.IndexOf("\"name\":", authorIdx);
+                    if (nameIdx >= 0 && nameIdx < authorIdx + 100)
+                    {
+                        int nameStart = json.IndexOf('"', nameIdx + 7);
+                        if (nameStart >= 0)
+                        {
+                            int nameEnd = json.IndexOf('"', nameStart + 1);
+                            if (nameEnd > 0) author = json.Substring(nameStart + 1, nameEnd - nameStart - 1);
+                        }
+                    }
+                }
+
                 list.Add(new GitHubCommit
                 {
                     Sha = sha,
                     Date = date,
-                    Author = "Vicente",
+                    Author = author,
                     Title = title,
                     Description = desc
                 });
 
-                cur = shaValEnd + 1;
+                // Jump past "parents": [...] so tree.sha and parents.sha are NEVER matched as fake commits
+                int parentsIdx = json.IndexOf("\"parents\":", shaValEnd);
+                if (parentsIdx >= 0)
+                {
+                    int bracketEnd = json.IndexOf(']', parentsIdx);
+                    if (bracketEnd > 0) cur = bracketEnd + 1;
+                    else cur = shaValEnd + 1;
+                }
+                else
+                {
+                    cur = shaValEnd + 1;
+                }
             }
 
             return list;
@@ -146,6 +177,20 @@ namespace WeatherOS.Services
         private static List<GitHubCommit> LoadEmbeddedCommits()
         {
             var list = new List<GitHubCommit>();
+            list.Add(new GitHubCommit {
+                Sha = @"72cd642",
+                Date = @"2026-10-13",
+                Author = @"Vicente",
+                Title = @"Add installer, OTA update, and live changelog features",
+                Description = @"- Add interactive hard disk installer app with multi-step UI
+- Refactor SystemInfoApp: live GitHub changelog, file picker, OTA update
+- Implement UpdateManagerService for install, update, rollback, CRC32
+- Add GitHubCommitsService for commit history (TLS 1.2 support)
+- Integrate pure C# SHA-256 and TLS 1.2 client for secure updates
+- Enhance BootMenu for disk/live/installer boot options
+- Register installer in launcher and desktop; improve ESC handling
+- Enable robust, non-destructive updates and user data protection"
+            });
             list.Add(new GitHubCommit {
                 Sha = @"1a0e632",
                 Date = @"2026-10-13",
