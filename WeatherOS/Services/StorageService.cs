@@ -69,7 +69,7 @@ namespace WeatherOS.Services
             return filename;
         }
 
-        private static void PutMemoryFile(string filename, string content)
+        public static void PutMemoryFile(string filename, string content)
         {
             filename = NormalizeFilename(filename);
             for (int i = 0; i < _memoryFiles.Count; i++)
@@ -83,7 +83,7 @@ namespace WeatherOS.Services
             _memoryFiles.Add(new StoredFile { Name = filename, Content = content ?? "" });
         }
 
-        private static bool TryGetMemoryFile(string filename, out string content)
+        public static bool TryGetMemoryFile(string filename, out string content)
         {
             filename = NormalizeFilename(filename);
             for (int i = 0; i < _memoryFiles.Count; i++)
@@ -96,6 +96,86 @@ namespace WeatherOS.Services
             }
             content = "";
             return false;
+        }
+
+        public static void InitDefaultMemoryFiles()
+        {
+            if (_memoryFiles.Count > 0) return; // Already initialized
+
+            // 1. Welcome Guide in Memory
+            string welcome =
+                "==============================================================================\n" +
+                "               Welcome to WeatherOS (High-Speed RAM Mode)             \n" +
+                "==============================================================================\n" +
+                "WeatherOS is operating in full Memory Mode (RAM-FS Session Store)!\n\n" +
+                "SYSTEM STATUS & MEMORY STORAGE:\n" +
+                "- All utilities, apps, and services are loaded directly in memory.\n" +
+                "- Notepad: Notes are saved instantly to RAM Virtual Store (no disk lag/errors).\n" +
+                "- File Explorer: Browse, view, and manage all memory files under RAM:\\\n" +
+                "- Network Transfer: Receive and send files via WeatherTransfer (port 7331).\n" +
+                "- Weather & Astronomy: Real-time telemetry, 7-day forecast & lunar observatory.\n" +
+                "- System Updates: Stage and test firmware packages (.pkg) seamlessly in RAM.\n\n" +
+                "Enjoy full system functionality with maximum speed and zero hardware conflicts!\n" +
+                "==============================================================================\n";
+            PutMemoryFile("welcome.txt", welcome);
+
+            // 2. Personal Notes in Memory
+            string notes =
+                "WeatherOS Personal Notes\n" +
+                "------------------------\n" +
+                "Location: RAM Virtual Store\n" +
+                "Status  : Loaded in Memory\n\n" +
+                "- Tested 7-Day weather forecast & lunar observatory.\n" +
+                "- Tested TLS 1.2 bare-metal HTTPS client.\n" +
+                "- Fast in-memory editing with [F2] Save.\n";
+            PutMemoryFile("notes.txt", notes);
+
+            // 3. Settings Configuration in Memory
+            string settings =
+                "DarkMode=false\n" +
+                "AutoLoc=false\n" +
+                "DefaultCity=Setubal\n" +
+                "DebugLog=false\n" +
+                "CustomKey=\n";
+            PutMemoryFile("settings.ini", settings);
+
+            // 4. System Version Manifest in Memory
+            string version =
+                "[WeatherOS]\n" +
+                "Version=3.1.2-release\n" +
+                "BuildDate=2026-10-13\n" +
+                "Branch=32bit\n" +
+                "LatestCommit=72cd642\n" +
+                "CommitTitle=Add installer, OTA update, and live changelog features\n" +
+                "Status=Loaded_In_Memory_RAM_Mode\n" +
+                "BootTarget=RAM:\\boot\\WeatherOS.bin\n";
+            PutMemoryFile("version.ini", version);
+
+            // 5. Apps Manifest in Memory
+            string apps =
+                "[WeatherOS_Apps]\n" +
+                "WeatherDashboard_Version=3.1\n" +
+                "WeatherForecast_Version=2.0\n" +
+                "LunarForecast_Version=2.0\n" +
+                "ClockApp_Version=2.0\n" +
+                "ClockApp_Engine=CMOS_RTC_Hardware\n" +
+                "NotepadApp_Version=2.5\n" +
+                "NetTransferApp_Version=2.0\n" +
+                "SystemInfoApp_Version=3.1\n";
+            PutMemoryFile("apps.ini", apps);
+
+            // 6. Commits Changelog JSON in Memory
+            string commitsJson =
+                "[\n" +
+                "  {\n" +
+                "    \"sha\": \"72cd642\",\n" +
+                "    \"commit\": {\n" +
+                "      \"author\": { \"name\": \"Vicente\", \"date\": \"2026-10-13T17:50:00Z\" },\n" +
+                "      \"message\": \"Add installer, OTA update, and live changelog features\\n\\n- Add interactive hard disk installer app with multi-step UI\\n- Refactor SystemInfoApp: live GitHub changelog, file picker, OTA update\\n- Implement UpdateManagerService for install, update, rollback, CRC32\\n- Add GitHubCommitsService for commit history (TLS 1.2 support)\\n- Integrate pure C# SHA-256 and TLS 1.2 client for secure updates\\n- Enhance BootMenu for disk/live/installer boot options\\n- Register installer in launcher and desktop; improve ESC handling\\n- Enable robust, non-destructive updates and user data protection\"\n" +
+                "    }\n" +
+                "  }\n" +
+                "]\n";
+            PutMemoryFile("commits.json", commitsJson);
         }
 
         public static void PutMemoryBinaryFile(string filename, byte[] data)
@@ -218,6 +298,19 @@ namespace WeatherOS.Services
         {
             var list = new List<StorageLocation>();
 
+            // 1. RAM Virtual Store (High-Speed Session Storage in Memory) - Primary Default
+            list.Add(new StorageLocation
+            {
+                Id = "ram",
+                Name = "RAM Virtual Store",
+                FileSystem = "RAM-FS Session",
+                TotalSize = 64 * 1024 * 1024,
+                FreeSpace = 64 * 1024 * 1024 - (_memoryFiles.Count * 2048),
+                IsReadOnly = false,
+                IsLinuxSystem = false
+            });
+
+            // 2. Physical Drives (Secondary / Optional)
             try
             {
                 var physDrives = DiskWipeService.GetPhysicalDrives();
@@ -242,18 +335,6 @@ namespace WeatherOS.Services
                 }
             }
             catch { }
-
-            // RAM Virtual Store (High-Speed Session Storage)
-            list.Add(new StorageLocation
-            {
-                Id = "ram",
-                Name = "RAM Virtual Store",
-                FileSystem = "RAM-FS Session",
-                TotalSize = 32 * 1024 * 1024,
-                FreeSpace = 32 * 1024 * 1024 - (_memoryFiles.Count * 2048),
-                IsReadOnly = false,
-                IsLinuxSystem = false
-            });
 
             return list;
         }
@@ -463,7 +544,7 @@ namespace WeatherOS.Services
 
         public static bool SaveFile(string filename, string content, out string status)
         {
-            return SaveFileToLocation(filename, content, "disk0", out status);
+            return SaveFileToLocation(filename, content, "ram", out status);
         }
 
         public static bool LoadFile(string filename, out string content, out string status)
@@ -471,7 +552,15 @@ namespace WeatherOS.Services
             filename = NormalizeFilename(filename);
             content = "";
 
-            // 1. Check physical disk first
+            // 1. Check RAM store first (High-Speed Memory Mode)
+            if (TryGetMemoryFile(filename, out var ramContent))
+            {
+                content = ramContent ?? "";
+                status = $"Loaded from RAM Storage: {filename} ({content.Length} chars) [OK]";
+                return true;
+            }
+
+            // 2. Check physical disk fallback
             try
             {
                 string diskName;
@@ -489,16 +578,18 @@ namespace WeatherOS.Services
             }
             catch { }
 
-            // 2. Check RAM store fallback
-            if (TryGetMemoryFile(filename, out var ramContent))
-            {
-                content = ramContent ?? "";
-                status = $"Loaded from RAM Storage: {filename} ({content.Length} chars) [OK]";
-                return true;
-            }
-
-            status = $"File '{filename}' not found on Disk or RAM.";
+            status = $"File '{filename}' not found on RAM or Disk.";
             return false;
+        }
+
+        public static bool SaveBinaryFile(string filename, byte[] data, out string status)
+        {
+            return SaveBinaryFileToLocation(filename, data, "ram", out status);
+        }
+
+        public static bool LoadBinaryFile(string filename, out byte[] data, out string status)
+        {
+            return LoadBinaryFileFromLocation(filename, "ram", out data, out status);
         }
 
         public static bool DeleteFile(string filename, out string status)

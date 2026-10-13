@@ -84,23 +84,12 @@ namespace WeatherOS
 
             InitializeCommandManager();
 
-            // Pre-seed default cumulative update package in memory store for simulation/testing
+            // Pre-seed all system files, documents, manifests and cumulative package in memory
+            StorageService.InitDefaultMemoryFiles();
             UpdateManagerService.InitDefaultUpdatePackage();
 
-            // Show Boot Menu selection only if OS is NOT installed on disk.
-            // If already installed, the boot menu is bypassed and boots directly from hard disk.
-            if (UpdateManagerService.IsInstalledOnDisk())
-            {
-                UpdateManagerService.SetBootSource(BootSource.HardDisk);
-            }
-            else
-            {
-                var bootChoice = Graphics.BootMenu.Show();
-                if (bootChoice == Graphics.BootMode.InstallToDisk)
-                {
-                    _tuiDesktop.StartApp("installer");
-                }
-            }
+            // Set boot source: High-speed Live RAM Mode (running entirely in memory)
+            UpdateManagerService.SetBootSource(BootSource.LiveRam);
 
             if (_isNetworkConfigured)
             {

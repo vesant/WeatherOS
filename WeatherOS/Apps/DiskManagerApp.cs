@@ -47,28 +47,8 @@ namespace WeatherOS.Apps
 
         private void InitDefaultDrive()
         {
-            try
-            {
-                var drives = VFSManager.GetLogicalDrives();
-                if (drives != null && drives.Count > 0)
-                {
-                    int sel = 0;
-                    if (drives.Count > 1) sel = 1; // Default to Fixed Storage 1:\ if Live USB is 0:\
-                    _currentDrive = drives[sel];
-                    if (!_currentDrive.EndsWith("\\")) _currentDrive += "\\";
-                    _currentPath = _currentDrive;
-                }
-                else
-                {
-                    _currentDrive = "0:\\";
-                    _currentPath = "0:\\";
-                }
-            }
-            catch
-            {
-                _currentDrive = "0:\\";
-                _currentPath = "0:\\";
-            }
+            _currentDrive = "RAM:\\";
+            _currentPath = "RAM:\\";
         }
 
         public void Refresh()
@@ -556,6 +536,8 @@ namespace WeatherOS.Apps
         private void ToggleDrive()
         {
             var driveList = new List<string>();
+            driveList.Add("RAM:\\");
+
             try
             {
                 var vfsDrives = VFSManager.GetLogicalDrives();
@@ -571,7 +553,6 @@ namespace WeatherOS.Apps
             catch { }
 
             if (!driveList.Contains("0:\\")) driveList.Add("0:\\");
-            if (!driveList.Contains("RAM:\\")) driveList.Add("RAM:\\");
 
             int currentIdx = driveList.FindIndex(d => string.Equals(d, _currentDrive, StringComparison.OrdinalIgnoreCase));
             int nextIdx = (currentIdx + 1) % driveList.Count;

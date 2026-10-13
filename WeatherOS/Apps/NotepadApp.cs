@@ -420,7 +420,7 @@ namespace WeatherOS.Apps
 
         private void RefreshOpenDialogFiles()
         {
-            string locId = "disk0";
+            string locId = "ram";
             if (_cachedLocations != null && _openDialogLocationIndex >= 0 && _openDialogLocationIndex < _cachedLocations.Count)
             {
                 locId = _cachedLocations[_openDialogLocationIndex].Id;
@@ -448,7 +448,7 @@ namespace WeatherOS.Apps
             var win = desktop.CreateWindow("OPEN FILE  |  WINDOWS FILE PICKER", WindowSize.FullScreen);
 
             // Header / Look In:
-            string driveName = "Disk 0";
+            string driveName = "RAM Virtual Store";
             if (_cachedLocations != null && _openDialogLocationIndex >= 0 && _openDialogLocationIndex < _cachedLocations.Count)
             {
                 driveName = _cachedLocations[_openDialogLocationIndex].GetDescription();
