@@ -30,17 +30,22 @@ namespace WeatherOS.Services
         {
             if (_forceInstalledFlag) return true;
 
-            // 1. Check via Cosmos VFS standard paths
+            // 1. Check via Cosmos VFS: An installed WeatherOS system ALWAYS has 0:\system\version.ini.
+            // Notice: We strictly do NOT check 0:\boot\WeatherOS.bin because that file exists on the Live USB / ISO medium itself!
             try
             {
-                if (File.Exists("0:\\boot\\WeatherOS.bin") || File.Exists("0:\\system\\version.ini"))
+                if (File.Exists("0:\\system\\version.ini"))
                 {
-                    return true;
+                    string txt = File.ReadAllText("0:\\system\\version.ini");
+                    if (!string.IsNullOrEmpty(txt) && (txt.Contains("Status=Installed") || txt.Contains("Status=Updated")))
+                    {
+                        return true;
+                    }
                 }
             }
             catch { }
 
-            // 2. Check via direct FAT32 inspection on physical drives
+            // 2. Check via direct FAT32 inspection on physical fixed drives (skipping Live USB boot medium)
             try
             {
                 var physDrives = DiskWipeService.GetPhysicalDrives();
@@ -48,15 +53,20 @@ namespace WeatherOS.Services
                 {
                     for (int i = 0; i < physDrives.Count; i++)
                     {
-                        var dev = physDrives[i].Device;
+                        var drv = physDrives[i];
+                        if (drv == null || drv.Name.Contains("Live USB") || drv.Name.Contains("Boot Medium")) continue;
+
+                        var dev = drv.Device;
                         if (dev != null)
                         {
-                            string dummy;
+                            string versionText;
                             string status;
-                            if (DiskWipeService.ReadFileDirectFromFat32(dev, "version.ini", out dummy, out status) ||
-                                DiskWipeService.ReadFileDirectFromFat32(dev, "WeatherOS.bin", out dummy, out status))
+                            if (DiskWipeService.ReadFileDirectFromFat32(dev, "version.ini", out versionText, out status))
                             {
-                                return true;
+                                if (!string.IsNullOrEmpty(versionText) && (versionText.Contains("Status=Installed") || versionText.Contains("Status=Updated")))
+                                {
+                                    return true;
+                                }
                             }
                         }
                     }
@@ -140,11 +150,11 @@ namespace WeatherOS.Services
 
         public static string GetBootTargetDescription()
         {
-            if (_bootSource == BootSource.HardDisk || IsInstalledOnDisk())
+            if (_bootSource == BootSource.HardDisk && IsInstalledOnDisk())
             {
-                return "Slot A [0:\\boot\\WeatherOS.bin] (FAT32 Hard Disk)";
+                return "Slot A [0:\\boot\\WeatherOS.bin] (Installed on Hard Disk)";
             }
-            return "Live OS [RAM Session / ISO9660 Read-Only]";
+            return "Live OS [RAM Session / USB Boot Medium]";
         }
 
         private static string ParseIniKey(string text, string key)
@@ -208,46 +218,53 @@ namespace WeatherOS.Services
                 }
                 catch { }
 
-                // Step 3: Generate and write initial kernel image
-                progressCallback?.Invoke("Deploying WeatherOS Boot Kernel (0:\\boot\\WeatherOS.bin)...", 70);
+                // Step 3: Generate and deploy kernel image directly to target disk
+                progressCallback?.Invoke("Deploying WeatherOS Boot Kernel to target drive...", 70);
                 byte[] kernelPayload = GenerateKernelBootImage();
-                bool kernelSaved = false;
+                string saveStat;
+                bool kernelSaved = DiskWipeService.WriteBinaryFileDirectToFat32(dev, "WeatherOS.bin", kernelPayload, out saveStat);
 
                 try
                 {
+                    if (!Directory.Exists("0:\\boot")) Directory.CreateDirectory("0:\\boot");
                     File.WriteAllBytes("0:\\boot\\WeatherOS.bin", kernelPayload);
-                    kernelSaved = true;
                 }
                 catch { }
 
-                if (!kernelSaved)
-                {
-                    string saveStat;
-                    DiskWipeService.WriteBinaryFileDirectToFat32(dev, "WeatherOS.bin", kernelPayload, out saveStat);
-                }
-
-                // Step 4: Write system version manifest
-                progressCallback?.Invoke("Generating system manifest (0:\\system\\version.ini)...", 85);
+                // Step 4: Write system version manifest directly to target disk
+                progressCallback?.Invoke("Generating system manifest on target drive (version.ini)...", 85);
                 string versionContent =
                     "[WeatherOS]\n" +
                     "Version=3.1.0-release\n" +
                     "InstalledDate=2026-10-13\n" +
                     "Branch=32bit\n" +
-                    "CommitSha=a4f7808\n" +
+                    "CommitSha=72cd642\n" +
                     "BootTarget=0:\\boot\\WeatherOS.bin\n" +
                     "Status=Installed\n" +
                     "Architecture=x86-AOT\n";
 
+                string vStat;
+                bool versionSaved = DiskWipeService.WriteFileDirectToFat32(dev, "version.ini", versionContent, out vStat);
+
                 try
                 {
+                    if (!Directory.Exists("0:\\system")) Directory.CreateDirectory("0:\\system");
                     File.WriteAllText("0:\\system\\version.ini", versionContent);
                 }
                 catch { }
-                string vStat;
-                DiskWipeService.WriteFileDirectToFat32(dev, "version.ini", versionContent, out vStat);
 
-                // Step 5: Write default configuration and welcome document
-                progressCallback?.Invoke("Configuring environment (0:\\settings.ini, 0:\\users\\welcome.txt)...", 95);
+                // Step 5: Write apps manifest, default configuration and welcome document directly to target disk
+                progressCallback?.Invoke("Configuring environment (apps.ini, settings.ini, welcome.txt)...", 95);
+                string appsManifest =
+                    "[WeatherOS_Apps]\n" +
+                    "ClockApp_Version=2.0\n" +
+                    "ClockApp_Engine=CMOS_RTC_Hardware\n" +
+                    "SystemInfoApp_Version=3.1\n" +
+                    "NetTransferApp_Version=2.0\n";
+
+                string aStat;
+                DiskWipeService.WriteFileDirectToFat32(dev, "apps.ini", appsManifest, out aStat);
+
                 string settingsContent =
                     "DarkMode=false\n" +
                     "AutoLoc=true\n" +
@@ -273,15 +290,17 @@ namespace WeatherOS.Services
                     "   your personal files and settings!\n" +
                     "==============================================================================\n";
 
+                string sStat;
+                DiskWipeService.WriteFileDirectToFat32(dev, "settings.ini", settingsContent, out sStat);
+                string wStat;
+                DiskWipeService.WriteFileDirectToFat32(dev, "welcome.txt", welcomeContent, out wStat);
+
                 try
                 {
                     File.WriteAllText("0:\\settings.ini", settingsContent);
                     File.WriteAllText("0:\\users\\welcome.txt", welcomeContent);
                 }
                 catch { }
-                string sStat;
-                DiskWipeService.WriteFileDirectToFat32(dev, "settings.ini", settingsContent, out sStat);
-                DiskWipeService.WriteFileDirectToFat32(dev, "welcome.txt", welcomeContent, out sStat);
 
                 // Register with RAM cache as well
                 StorageService.PutMemoryBinaryFile("WeatherOS.bin", kernelPayload);

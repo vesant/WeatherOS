@@ -81,14 +81,16 @@ namespace WeatherOS.Apps
                 {
                     var d = _availableDrives[i];
                     bool isSel = (i == _selectedDriveIndex);
-                    string line = $"[{i}] {d.Name}  |  Capacity: {d.SizeDisplay}";
+                    bool isUsb = d.Name.Contains("Live USB") || d.Name.Contains("Boot Medium");
+                    string tag = isUsb ? "[BOOT PEN DRIVE]" : "[INTERNAL DISK - RECOMMENDED]";
+                    string line = $"[{i}] {d.Name}  |  {d.SizeDisplay}  {tag}";
                     win.WriteSelectionRow(5 + (i * 2), line, isSel, 2);
                 }
             }
 
             win.WriteSeparator(12);
-            win.WriteRow(13, "[i] ARCHITECTURE NOTE: Once installed to disk, future updates (new apps,", ConsoleColor.DarkCyan, 2, fillRemaining: true);
-            win.WriteRow(14, "    UI changes, services) are applied IN-PLACE without wiping user data!", ConsoleColor.DarkCyan, 2, fillRemaining: true);
+            win.WriteRow(13, "[i] TIP: Choose your internal hard disk (Disk 0) to boot without the pen drive.", ConsoleColor.DarkCyan, 2, fillRemaining: true);
+            win.WriteRow(14, "    Future updates are applied in-place to this drive without wiping data!", ConsoleColor.DarkCyan, 2, fillRemaining: true);
 
             win.WriteFooter("[Up/Dn] Select Drive   |   [ENTER] Next   |   [R] Refresh   |   [ESC] Exit", ConsoleColor.Yellow);
         }
@@ -103,6 +105,7 @@ namespace WeatherOS.Apps
 
             string targetName = d != null ? d.Name : "Target Drive";
             string targetSize = d != null ? d.SizeDisplay : "Unknown";
+            bool isUsbTarget = d != null && (d.Name.Contains("Live USB") || d.Name.Contains("Boot Medium"));
 
             win.WriteRow(0, "STEP 2: CONFIRM PARTITION INITIALIZATION", ConsoleColor.Red, 2, fillRemaining: true);
             win.WriteRow(1, "Review target drive parameters before proceeding with installation:", ConsoleColor.White, 2, fillRemaining: true);
@@ -111,13 +114,23 @@ namespace WeatherOS.Apps
             win.WriteRow(3, $"  Target Drive : {targetName}", ConsoleColor.Yellow, 2, fillRemaining: true);
             win.WriteRow(4, $"  Capacity     : {targetSize}", ConsoleColor.White, 2, fillRemaining: true);
             win.WriteRow(5,  "  File System  : FAT32 LBA Partition (Volume: WEATHEROS)", ConsoleColor.White, 2, fillRemaining: true);
-            win.WriteRow(6,  "  Boot File    : 0:\\boot\\WeatherOS.bin", ConsoleColor.White, 2, fillRemaining: true);
+            win.WriteRow(6,  "  Boot File    : 0:\\boot\\WeatherOS.bin (x86 MBR Bootloader)", ConsoleColor.White, 2, fillRemaining: true);
             win.WriteSeparator(7);
 
-            win.WriteRow(8, "[!] IMPORTANT NOTICE REGARDING STORAGE & FUTURE UPDATES:", ConsoleColor.Yellow, 2, fillRemaining: true);
-            win.WriteRow(9, " - INITIAL INSTALLATION will initialize Partition 1 on this drive.", ConsoleColor.White, 2, fillRemaining: true);
-            win.WriteRow(10, " - SUBSEQUENT OS UPDATES will NEVER wipe this disk! They will only", ConsoleColor.Green, 2, fillRemaining: true);
-            win.WriteRow(11, "   update 0:\\boot\\WeatherOS.bin while preserving all your personal files.", ConsoleColor.Green, 2, fillRemaining: true);
+            if (isUsbTarget)
+            {
+                win.WriteRow(8, "[!] CAUTION: You have selected the Live USB Pen Drive!", ConsoleColor.Red, 2, fillRemaining: true);
+                win.WriteRow(9, "To install permanently to your computer, press [ESC] and choose", ConsoleColor.Yellow, 2, fillRemaining: true);
+                win.WriteRow(10, "the internal Hard Disk (Disk 0) instead of the pen drive.", ConsoleColor.Yellow, 2, fillRemaining: true);
+                win.WriteRow(11, "If you proceed, this will format the Live USB pen drive.", ConsoleColor.Red, 2, fillRemaining: true);
+            }
+            else
+            {
+                win.WriteRow(8, "[!] NOTICE: INITIAL HARD DISK INSTALLATION & BOOTLOADER SETUP:", ConsoleColor.Yellow, 2, fillRemaining: true);
+                win.WriteRow(9, " - Partition 1 will be initialized as FAT32 on this internal disk.", ConsoleColor.White, 2, fillRemaining: true);
+                win.WriteRow(10, " - Executable x86 MBR bootloader written to Sector 0 for PC BIOS boot.", ConsoleColor.Green, 2, fillRemaining: true);
+                win.WriteRow(11, " - Subsequent updates will NEVER wipe this disk! Personal files preserved.", ConsoleColor.Green, 2, fillRemaining: true);
+            }
             win.WriteSeparator(12);
 
             win.WriteRow(13, "Press [Y] or [ENTER] to Proceed with Installation   |   [N / ESC] Cancel", ConsoleColor.Yellow, 2, fillRemaining: true);

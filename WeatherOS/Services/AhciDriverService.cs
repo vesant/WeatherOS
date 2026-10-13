@@ -133,12 +133,21 @@ namespace WeatherOS.Services
                         if (det == 3) // Physical communication established
                         {
                             uint sig = ReadMmio32(portBase + 0x24);
-                            if (sig == 0x00000101u) // SATA Hard Drive / SSD
+                            if (sig == 0x00000101u || sig == 0) // SATA Hard Drive / SSD
                             {
                                 var ahciDev = ConfigurePort(p, portBase);
                                 if (ahciDev != null)
                                 {
                                     _devices.Add(ahciDev);
+                                    bool existsInHal = false;
+                                    for (int ex = 0; ex < BlockDevice.Devices.Count; ex++)
+                                    {
+                                        if (BlockDevice.Devices[ex] == ahciDev) { existsInHal = true; break; }
+                                    }
+                                    if (!existsInHal)
+                                    {
+                                        BlockDevice.Devices.Add(ahciDev);
+                                    }
                                 }
                             }
                         }

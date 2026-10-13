@@ -79,27 +79,35 @@ namespace WeatherOS.Services
             return $"{mb} MB";
         }
 
-        private static bool IsDuplicateOfExisting(List<DiskDriveInfo> existingList, BlockDevice newDev, ulong sectorCount, byte[] sec0)
+        private static bool IsDuplicateOfExisting(List<DiskDriveInfo> existingList, BlockDevice newDev, byte[] sec0)
         {
-            if (existingList == null || existingList.Count == 0) return false;
+            if (existingList == null || existingList.Count == 0 || newDev == null) return false;
             for (int i = 0; i < existingList.Count; i++)
             {
                 var ex = existingList[i];
                 if (ex.Device == newDev) return true;
-                if (sectorCount > 0 && ex.SectorCount == sectorCount) return true;
 
+                // Match identical hardware mirror ONLY if sector 0 has non-zero identical MBR disk signature and partition table
                 if (sec0 != null && sec0.Length >= 512 && sec0[510] == 0x55 && sec0[511] == 0xAA)
                 {
                     byte[] exSec0 = new byte[512];
                     try { ex.Device.ReadBlock(0, 1, ref exSec0); } catch { }
                     if (exSec0[510] == 0x55 && exSec0[511] == 0xAA)
                     {
-                        bool sameMbr = true;
+                        bool hasNonZero = false;
                         for (int b = 440; b < 510; b++)
                         {
-                            if (sec0[b] != exSec0[b]) { sameMbr = false; break; }
+                            if (sec0[b] != 0) { hasNonZero = true; break; }
                         }
-                        if (sameMbr) return true;
+                        if (hasNonZero)
+                        {
+                            bool sameMbr = true;
+                            for (int b = 440; b < 510; b++)
+                            {
+                                if (sec0[b] != exSec0[b]) { sameMbr = false; break; }
+                            }
+                            if (sameMbr) return true;
+                        }
                     }
                 }
             }
@@ -124,7 +132,7 @@ namespace WeatherOS.Services
 
                         byte[] testSec = new byte[512];
                         try { ad.ReadBlock(0, 1, ref testSec); } catch { continue; }
-                        if (IsDuplicateOfExisting(list, ad, ad.BlockCount, testSec)) continue;
+                        if (IsDuplicateOfExisting(list, ad, testSec)) continue;
 
                         var info = new DiskDriveInfo
                         {
@@ -154,7 +162,7 @@ namespace WeatherOS.Services
 
                         byte[] testSec = new byte[512];
                         try { pd.ReadBlock(0, 1, ref testSec); } catch { continue; }
-                        if (IsDuplicateOfExisting(list, pd, pd.BlockCount, testSec)) continue;
+                        if (IsDuplicateOfExisting(list, pd, testSec)) continue;
 
                         bool isUsb = (pd.BlockCount > 0 && pd.BlockCount < 10000000UL);
 
@@ -173,12 +181,10 @@ namespace WeatherOS.Services
             }
             catch { }
 
-            // 2. Fallback: Probe Cosmos BlockDevice.Devices ONLY if bare-metal drivers found no disks
-            if (list.Count == 0)
+            // 2. Always probe Cosmos BlockDevice.Devices to discover IDE, SATA and VM virtual disks
+            try
             {
-                try
-                {
-                    var devices = BlockDevice.Devices;
+                var devices = BlockDevice.Devices;
                 if (devices != null)
                 {
                     for (int i = 0; i < devices.Count; i++)
@@ -186,8 +192,10 @@ namespace WeatherOS.Services
                         var dev = devices[i];
                         if (dev == null) continue;
 
-                        // Only select raw parent drives, not individual partitions, AHCI, or Custom PCI ATA devices
+                        // Only select raw parent drives, not individual partitions, AHCI, or Custom PCI ATA devices already checked
                         if (dev is Partition || dev is AhciBlockDevice || dev is CustomPciAtaBlockDevice) continue;
+
+                        if (list.Exists(x => x.Device == dev)) continue;
 
                         // Verify that reading sector 0 is responsive on this hardware channel
                         byte[] testSec = new byte[512];
@@ -207,6 +215,8 @@ namespace WeatherOS.Services
                             if (testSec[b] != 0xFF) { allFF = false; break; }
                         }
                         if (allFF) continue; // Disconnected port returning floating bus 0xFF
+
+                        if (IsDuplicateOfExisting(list, dev, testSec)) continue;
 
                         // Probe ATA Hardware Port for True Model and 48-bit Capacity
                         ushort ioBase = (i == 0) ? (ushort)0x1F0 : (ushort)0x170;
@@ -272,30 +282,7 @@ namespace WeatherOS.Services
 
                         if (string.IsNullOrEmpty(driveName))
                         {
-                            ulong mb = (safeCount * 512) / (1024UL * 1024);
-                            string szDisplay = "";
-                            if (mb >= 1024)
-                            {
-                                ulong gb = mb / 1024;
-                                ulong dec = ((mb % 1024) * 10) / 1024;
-                                szDisplay = dec > 0 ? $"{gb}.{dec} GB" : $"{gb} GB";
-                            }
-                            else
-                            {
-                                szDisplay = $"{mb} MB";
-                            }
-                            driveName = $"Disk {list.Count} (Hardware Dev #{i} : {szDisplay})";
-                        }
-
-                        // Avoid adding duplicate device (mirrored USB or duplicate sector count)
-                        bool isUsbDev = (safeCount > 0 && safeCount < 10000000UL);
-                        if (isUsbDev && list.Exists(x => x.SectorCount > 0 && x.SectorCount < 10000000UL))
-                        {
-                            continue;
-                        }
-                        if (list.Exists(x => x.SectorCount == safeCount))
-                        {
-                            continue;
+                            driveName = $"Disk {list.Count} (Fixed Storage Dev #{i} : {FormatSectors(safeCount)})";
                         }
 
                         var info = new DiskDriveInfo
@@ -312,7 +299,46 @@ namespace WeatherOS.Services
                 }
             }
             catch { }
+
+            // 3. Fallback: Probe Cosmos VFS Disks & Partitions directly
+            try
+            {
+                var vfsDisks = VFSManager.GetDisks();
+                if (vfsDisks != null && vfsDisks.Count > 0)
+                {
+                    for (int d = 0; d < vfsDisks.Count; d++)
+                    {
+                        var vdisk = vfsDisks[d];
+                        if (vdisk == null || vdisk.Partitions == null) continue;
+
+                        for (int p = 0; p < vdisk.Partitions.Count; p++)
+                        {
+                            var vpart = vdisk.Partitions[p];
+                            if (vpart != null && vpart.Host != null && vpart.Host.BlockCount > 0)
+                            {
+                                if (list.Exists(x => x.Device == vpart.Host)) continue;
+
+                                byte[] testSec = new byte[512];
+                                try { vpart.Host.ReadBlock(0, 1, ref testSec); } catch { continue; }
+                                if (IsDuplicateOfExisting(list, vpart.Host, testSec)) continue;
+
+                                ulong pCount = vpart.Host.BlockCount;
+                                if (pCount > 4000000000UL) pCount = 2097152UL;
+
+                                var info = new DiskDriveInfo
+                                {
+                                    Index = list.Count,
+                                    Device = vpart.Host,
+                                    Name = $"Disk {d} Part {p + 1} ({FormatSectors(pCount)})",
+                                    SectorCount = pCount
+                                };
+                                list.Add(info);
+                            }
+                        }
+                    }
+                }
             }
+            catch { }
 
             // Sort physical drives so that writable storage drives come first, and live USB boot medium comes last
             if (list.Count > 1)
@@ -321,8 +347,8 @@ namespace WeatherOS.Services
                 {
                     for (int j = i + 1; j < list.Count; j++)
                     {
-                        bool aUsb = (list[i].SectorCount > 0 && list[i].SectorCount < 10000000UL);
-                        bool bUsb = (list[j].SectorCount > 0 && list[j].SectorCount < 10000000UL);
+                        bool aUsb = list[i].Name.Contains("Live USB") || list[i].Name.Contains("Boot Medium");
+                        bool bUsb = list[j].Name.Contains("Live USB") || list[j].Name.Contains("Boot Medium");
                         if (aUsb && !bUsb)
                         {
                             var temp = list[i];
@@ -335,45 +361,6 @@ namespace WeatherOS.Services
                 {
                     list[idx].Index = idx;
                 }
-            }
-
-            // 3. Fallback: If raw drives were not found, probe Cosmos VFS Disks & Partitions directly
-            if (list.Count == 0)
-            {
-                try
-                {
-                    var vfsDisks = VFSManager.GetDisks();
-                    if (vfsDisks != null && vfsDisks.Count > 0)
-                    {
-                        for (int d = 0; d < vfsDisks.Count; d++)
-                        {
-                            var vdisk = vfsDisks[d];
-                            if (vdisk == null || vdisk.Partitions == null) continue;
-
-                            for (int p = 0; p < vdisk.Partitions.Count; p++)
-                            {
-                                var vpart = vdisk.Partitions[p];
-                                if (vpart != null && vpart.Host != null && vpart.Host.BlockCount > 0)
-                                {
-                                    ulong pCount = vpart.Host.BlockCount;
-                                    if (pCount > 4000000000UL) pCount = 2097152UL;
-                                    ulong gb = (pCount * 512) / (1024UL * 1024 * 1024);
-                                    string szDisplay = gb >= 1 ? $"{gb}GB" : $"{(pCount * 512) / (1024 * 1024)}MB";
-
-                                    var info = new DiskDriveInfo
-                                    {
-                                        Index = list.Count,
-                                        Device = vpart.Host,
-                                        Name = $"Disk {d} Part {p + 1} ({szDisplay})",
-                                        SectorCount = pCount
-                                    };
-                                    list.Add(info);
-                                }
-                            }
-                        }
-                    }
-                }
-                catch { }
             }
 
             return list;
@@ -462,10 +449,25 @@ namespace WeatherOS.Services
                 if (partSectors > 0xFFFFFFFF) partSectors = 0xFFFFFFFF;
                 uint sectors32 = (uint)partSectors;
 
-                // 1. Write MBR at Sector 0 with 1 clean active FAT32 partition (only on raw parent disk)
+                // 1. Write MBR at Sector 0 with executable bootloader and active FAT32 partition
                 if (!isPartition)
                 {
                     byte[] mbr = new byte[512];
+
+                    // Standard x86 Generic MBR Bootloader (locates active partition 0x80 and boots VBR via INT 13h)
+                    byte[] mbrBootCode = new byte[]
+                    {
+                        0x33, 0xC0, 0x8E, 0xD0, 0xBC, 0x00, 0x7C, 0x8E, 0xC0, 0x8E, 0xD8, 0xBE, 0x00, 0x7C, 0xBF, 0x00,
+                        0x06, 0xB9, 0x00, 0x02, 0xFC, 0xF3, 0xA4, 0xEA, 0x1C, 0x06, 0x00, 0x00, 0xBE, 0xBE, 0x07, 0xB3,
+                        0x04, 0x80, 0x3C, 0x80, 0x74, 0x0E, 0x83, 0xC6, 0x10, 0xFE, 0xCB, 0x75, 0xF5, 0xCD, 0x18, 0xEB,
+                        0xFE, 0xBF, 0xF0, 0x05, 0xC6, 0x05, 0x10, 0xC6, 0x45, 0x01, 0x00, 0xC7, 0x45, 0x02, 0x01, 0x00,
+                        0xC7, 0x45, 0x04, 0x00, 0x7C, 0xC7, 0x45, 0x06, 0x00, 0x00, 0x8B, 0x44, 0x08, 0x89, 0x45, 0x08,
+                        0x8B, 0x44, 0x0A, 0x89, 0x45, 0x0A, 0xC7, 0x45, 0x0C, 0x00, 0x00, 0xC7, 0x45, 0x0E, 0x00, 0x00,
+                        0xB4, 0x42, 0xB2, 0x80, 0x89, 0xFE, 0xCD, 0x13, 0x72, 0x05, 0xEA, 0x00, 0x7C, 0x00, 0x00, 0xCD,
+                        0x18, 0xEB, 0xFE
+                    };
+                    Array.Copy(mbrBootCode, 0, mbr, 0, mbrBootCode.Length);
+
                     // Partition 1 Entry (offset 446 / 0x1BE)
                     mbr[446] = 0x80; // Bootable / Active
                     mbr[447] = 0x00; // Starting CHS

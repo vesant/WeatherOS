@@ -386,13 +386,9 @@ namespace WeatherOS.Services
                         {
                             return; // Same drive already probed
                         }
-                        if (isUsb && (ed.BlockCount > 0 && ed.BlockCount < 10000000UL))
+                        if (isUsb && (ed.BlockCount > 0 && ed.BlockCount < 10000000UL) && ed.CmdBase == cmdBase)
                         {
-                            return; // Skip duplicate USB mirror (BIOS mirrors USB on Slave)
-                        }
-                        if (ed.BlockCount == info.TotalSectors && info.TotalSectors > 0)
-                        {
-                            return; // Duplicate drive with identical sector count
+                            return; // Skip duplicate USB mirror on same channel
                         }
 
                         // Check for identical MBR signature & partition table (bytes 440..510)
