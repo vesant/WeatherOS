@@ -15,9 +15,7 @@ namespace WeatherOS.Apps
 
         public void Draw(TuiDesktop desktop)
         {
-            desktop.DrawWindow(3, 2, 74, 21, "LUNAR OBSERVATORY & ASTRONOMICAL MOON PHASES");
-            ConsoleColor winBg = desktop.IsDarkMode ? ConsoleColor.Black : ConsoleColor.Blue;
-            System.Console.BackgroundColor = winBg;
+            var win = desktop.CreateWindow("LUNAR OBSERVATORY & ASTRONOMICAL MOON PHASES", WindowSize.FullScreen);
 
             var data = desktop.WeatherService.GetLatestReading();
             var days = data.ForecastDays;
@@ -42,101 +40,65 @@ namespace WeatherOS.Apps
             }
 
             // Top day navigation bar
-            System.Console.SetCursorPosition(5, 4);
-            System.Console.ForegroundColor = ConsoleColor.Yellow;
             string topNav = $"[<] DAY {_selectedDay + 1}/7: {dayHeader} [>]  |  Date: {dateStr}  |  {data.Location}";
-            if (topNav.Length > 70) topNav = topNav.Substring(0, 70);
-            System.Console.Write(topNav.PadRight(70));
-
-            System.Console.SetCursorPosition(5, 5);
-            System.Console.ForegroundColor = ConsoleColor.DarkGray;
-            System.Console.Write("----------------------------------------------------------------------");
+            win.WriteRow(1, topNav, ConsoleColor.Yellow, 2);
+            win.WriteSeparator(2);
 
             // Left: Draw High-Detail 8-Line ASCII Moon
-            DrawLargeAsciiMoon(moonPhase, 6, 7);
+            DrawLargeAsciiMoon(moonPhase, win.InnerLeft + 3, win.InnerTop + 4);
 
             // Phase name directly under moon art
-            System.Console.SetCursorPosition(6, 15);
-            System.Console.ForegroundColor = ConsoleColor.Yellow;
             string centerPhase = $"[{moonPhase.ToUpper()}]";
             int pad = (20 - centerPhase.Length) / 2;
             if (pad < 0) pad = 0;
-            System.Console.Write(new string(' ', pad) + centerPhase);
+            win.WriteAt(3, 12, new string(' ', pad) + centerPhase, ConsoleColor.Yellow);
 
             // Right: Detailed Telemetry Panel
-            int infoX = 29;
-            System.Console.SetCursorPosition(infoX, 7);
-            System.Console.ForegroundColor = ConsoleColor.Cyan;
-            System.Console.Write("LUNAR TELEMETRY & OBSERVATION CONDITIONS:");
-
-            System.Console.SetCursorPosition(infoX, 9);
-            System.Console.ForegroundColor = ConsoleColor.White;
-            System.Console.Write($"Phase Type   : {moonPhase}");
-
-            System.Console.SetCursorPosition(infoX, 10);
-            System.Console.ForegroundColor = ConsoleColor.White;
-            System.Console.Write($"Illumination : {moonIllum}");
+            int infoX = 26;
+            win.WriteAt(infoX, 4, "LUNAR TELEMETRY & OBSERVATION CONDITIONS:", ConsoleColor.Cyan);
+            win.WriteAt(infoX, 6, $"Phase Type   : {moonPhase}", ConsoleColor.White);
+            win.WriteAt(infoX, 7, $"Illumination : {moonIllum}", ConsoleColor.White);
 
             // Illumination percentage bar
             int illumPct = ParseIllumInt(moonIllum);
-            desktop.DrawBar(infoX, 11, "Light Level", illumPct, ConsoleColor.Yellow);
+            win.DrawBar(infoX, 8, "Light Level", illumPct, ConsoleColor.Yellow);
 
             // Cycle & Stargazing notes
             string cycleAge = GetCycleAge(moonPhase);
-            System.Console.SetCursorPosition(infoX, 13);
-            System.Console.ForegroundColor = ConsoleColor.White;
-            System.Console.Write($"Lunar Age    : {cycleAge}");
+            win.WriteAt(infoX, 10, $"Lunar Age    : {cycleAge}", ConsoleColor.White);
 
             string tide = GetTideType(moonPhase);
-            System.Console.SetCursorPosition(infoX, 14);
-            System.Console.ForegroundColor = ConsoleColor.White;
-            System.Console.Write($"Tidal Impact : {tide}");
+            win.WriteAt(infoX, 11, $"Tidal Impact : {tide}", ConsoleColor.White);
 
             string stargaze = GetStargazeRating(illumPct);
-            System.Console.SetCursorPosition(infoX, 15);
-            System.Console.ForegroundColor = illumPct < 30 ? ConsoleColor.Green : (illumPct < 70 ? ConsoleColor.Yellow : ConsoleColor.Red);
-            System.Console.Write($"Stargazing   : {stargaze}");
+            win.WriteAt(infoX, 12, $"Stargazing   : {stargaze}", illumPct < 30 ? ConsoleColor.Green : (illumPct < 70 ? ConsoleColor.Yellow : ConsoleColor.Red));
 
             // Bottom: 7-day lunar cycle progression strip
-            System.Console.SetCursorPosition(5, 17);
-            System.Console.ForegroundColor = ConsoleColor.DarkGray;
-            System.Console.Write("----------------------------------------------------------------------");
+            win.WriteSeparator(14);
 
-            System.Console.SetCursorPosition(5, 18);
             for (int d = 0; d < 7; d++)
             {
-                int stripX = 5 + (d * 10);
-                System.Console.SetCursorPosition(stripX, 18);
-
+                int stripRelX = 2 + (d * 10);
+                string dName = d == 0 ? "TODAY" : (d == 1 ? "TMRW" : $"DAY+{d}");
+                
                 if (d == _selectedDay)
                 {
-                    System.Console.BackgroundColor = ConsoleColor.White;
-                    System.Console.ForegroundColor = ConsoleColor.Black;
+                    win.WriteAt(stripRelX, 15, $" {dName.PadRight(7)}", ConsoleColor.Black);
                 }
                 else
                 {
-                    System.Console.BackgroundColor = winBg;
-                    System.Console.ForegroundColor = ConsoleColor.Gray;
+                    win.WriteAt(stripRelX, 15, $" {dName.PadRight(7)}", ConsoleColor.Gray);
                 }
 
-                string dName = d == 0 ? "TODAY" : (d == 1 ? "TMRW" : $"DAY+{d}");
-                System.Console.Write($" {dName.PadRight(7)}");
-
-                System.Console.BackgroundColor = winBg;
-                System.Console.SetCursorPosition(stripX, 19);
                 if (days != null && d < days.Length)
                 {
-                    System.Console.ForegroundColor = ConsoleColor.Cyan;
                     string miniP = ShortPhase(days[d].MoonPhase);
-                    System.Console.Write($" {miniP.PadRight(7)}");
+                    win.WriteAt(stripRelX, 16, $" {miniP.PadRight(7)}", ConsoleColor.Cyan);
                 }
             }
 
             // Bottom controls
-            System.Console.BackgroundColor = winBg;
-            System.Console.SetCursorPosition(5, 21);
-            System.Console.ForegroundColor = ConsoleColor.White;
-            System.Console.Write("[< / >] Prev/Next Day  |  [1-7] Select Day  |  [R] Refresh  |  [ESC] Exit");
+            win.WriteFooter("[< / >] Prev/Next Day  |  [1-7] Select  |  [R] Refresh  |  [ESC] Exit", ConsoleColor.White);
         }
 
         private static int ParseIllumInt(string illumStr)

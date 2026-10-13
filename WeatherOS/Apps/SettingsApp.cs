@@ -32,14 +32,7 @@ namespace WeatherOS.Apps
 
         public void Draw(TuiDesktop desktop)
         {
-            int winWidth = 56;
-            int winHeight = 16;
-            int left = (80 - winWidth) / 2;
-            int top = (24 - winHeight) / 2;
-
-            desktop.DrawWindow(left, top, winWidth, winHeight, "CONTROL PANEL");
-            ConsoleColor winBg = desktop.IsDarkMode ? ConsoleColor.Black : ConsoleColor.Blue;
-            System.Console.BackgroundColor = winBg;
+            var win = desktop.CreateWindow("CONTROL PANEL", WindowSize.Medium);
 
             string keyDisp = string.IsNullOrWhiteSpace(_apiKeyEditor.Text) ? "[Default]" : _apiKeyEditor.Text;
             string cityDisp = string.IsNullOrWhiteSpace(_cityEditor.Text) ? "Setubal" : _cityEditor.Text;
@@ -55,26 +48,10 @@ namespace WeatherOS.Apps
             
             for (int i = 0; i < 6; i++)
             {
-                System.Console.SetCursorPosition(left + 3, top + 2 + i * 2);
-                if (i == _settingsIndex)
-                {
-                    System.Console.ForegroundColor = ConsoleColor.Black;
-                    System.Console.BackgroundColor = ConsoleColor.White;
-                }
-                else
-                {
-                    System.Console.ForegroundColor = ConsoleColor.White;
-                    System.Console.BackgroundColor = winBg;
-                }
-                string item = $" {opts[i]} ";
-                if (item.Length > winWidth - 6) item = item.Substring(0, winWidth - 9) + "... ";
-                System.Console.Write(item.PadRight(winWidth - 6));
+                win.WriteSelectionRow(1 + (i * 2), opts[i], i == _settingsIndex);
             }
 
-            System.Console.SetCursorPosition(left + 3, top + 14);
-            System.Console.BackgroundColor = winBg;
-            System.Console.ForegroundColor = ConsoleColor.Yellow;
-            System.Console.Write("[Up/Down] Select  |  [Enter] Toggle/Save  |  [ESC] Exit");
+            win.WriteFooter("[Up/Dn] Move  |  [Enter] Toggle/Save  |  [ESC] Exit");
         }
 
         public void HandleInput(TuiDesktop desktop, KeyEvent keyEvent)

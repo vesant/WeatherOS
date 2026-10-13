@@ -46,6 +46,7 @@ namespace WeatherOS.Services
     {
         public string Name { get; set; } = "";
         public string Content { get; set; } = "";
+        public byte[] RawBytes { get; set; } = null;
     }
 
     public class StorageFileInfo
@@ -94,6 +95,43 @@ namespace WeatherOS.Services
                 }
             }
             content = "";
+            return false;
+        }
+
+        public static void PutMemoryBinaryFile(string filename, byte[] data)
+        {
+            filename = NormalizeFilename(filename);
+            for (int i = 0; i < _memoryFiles.Count; i++)
+            {
+                if (string.Equals(_memoryFiles[i].Name, filename, StringComparison.OrdinalIgnoreCase))
+                {
+                    _memoryFiles[i].RawBytes = data;
+                    _memoryFiles[i].Content = data != null ? System.Text.Encoding.ASCII.GetString(data) : "";
+                    return;
+                }
+            }
+            _memoryFiles.Add(new StoredFile { Name = filename, RawBytes = data, Content = data != null ? System.Text.Encoding.ASCII.GetString(data) : "" });
+        }
+
+        public static bool TryGetMemoryBinaryFile(string filename, out byte[] data)
+        {
+            filename = NormalizeFilename(filename);
+            for (int i = 0; i < _memoryFiles.Count; i++)
+            {
+                if (string.Equals(_memoryFiles[i].Name, filename, StringComparison.OrdinalIgnoreCase))
+                {
+                    if (_memoryFiles[i].RawBytes != null)
+                    {
+                        data = _memoryFiles[i].RawBytes;
+                    }
+                    else
+                    {
+                        data = System.Text.Encoding.ASCII.GetBytes(_memoryFiles[i].Content ?? "");
+                    }
+                    return true;
+                }
+            }
+            data = null;
             return false;
         }
 
@@ -342,6 +380,87 @@ namespace WeatherOS.Services
             }
         }
 
+        public static bool SaveBinaryFileToLocation(string filename, byte[] data, string locationId, out string status)
+        {
+            filename = NormalizeFilename(filename);
+            if (data == null) data = new byte[0];
+
+            PutMemoryBinaryFile(filename, data);
+
+            if (string.Equals(locationId, "ram", StringComparison.OrdinalIgnoreCase))
+            {
+                status = $"Saved to RAM Storage: {filename} ({data.Length} bytes) [OK]";
+                return true;
+            }
+
+            string diskName;
+            var targetDev = GetTargetDisk(locationId, out diskName);
+            if (targetDev == null)
+            {
+                status = $"[ERR] No physical drive detected. Saved to RAM Virtual Store.";
+                return false;
+            }
+
+            string directStatus;
+            bool directOk = DiskWipeService.WriteBinaryFileDirectToFat32(targetDev, filename, data, out directStatus);
+            if (directOk)
+            {
+                status = $"Saved to {diskName}: {filename} ({data.Length} bytes) [OK]";
+                return true;
+            }
+            else
+            {
+                status = $"Disk save failed: {directStatus}. File saved in RAM temporary store.";
+                return false;
+            }
+        }
+
+        public static bool LoadBinaryFileFromLocation(string filename, string locationId, out byte[] data, out string status)
+        {
+            filename = NormalizeFilename(filename);
+            data = null;
+
+            if (string.Equals(locationId, "ram", StringComparison.OrdinalIgnoreCase))
+            {
+                if (TryGetMemoryBinaryFile(filename, out var ramData))
+                {
+                    data = ramData;
+                    status = $"Loaded from RAM Storage: {filename} ({data.Length} bytes) [OK]";
+                    return true;
+                }
+                status = $"File '{filename}' not found in RAM.";
+                return false;
+            }
+
+            // Check physical disk
+            try
+            {
+                string diskName;
+                var dev = GetTargetDisk(locationId, out diskName);
+                if (dev != null)
+                {
+                    if (DiskWipeService.ReadFileDirectFromFat32(dev, filename, out string strContent, out string readStatus))
+                    {
+                        data = System.Text.Encoding.ASCII.GetBytes(strContent ?? "");
+                        status = $"Loaded from {diskName}: {filename} ({data.Length} bytes) [OK]";
+                        PutMemoryBinaryFile(filename, data);
+                        return true;
+                    }
+                }
+            }
+            catch { }
+
+            if (TryGetMemoryBinaryFile(filename, out var fallbackData))
+            {
+                data = fallbackData;
+                status = $"Loaded from RAM Storage: {filename} ({data.Length} bytes) [OK]";
+                return true;
+            }
+
+            status = $"File '{filename}' not found.";
+            return false;
+        }
+
         public static bool SaveFile(string filename, string content, out string status)
         {
             return SaveFileToLocation(filename, content, "disk0", out status);
@@ -448,6 +567,43 @@ namespace WeatherOS.Services
             catch { }
 
             return files;
+        }
+
+        public static List<string> GetFileNamesOnly()
+        {
+            var list = new List<string>();
+            for (int i = 0; i < _memoryFiles.Count; i++)
+            {
+                string name = _memoryFiles[i].Name;
+                if (!string.IsNullOrWhiteSpace(name) && !list.Contains(name))
+                {
+                    list.Add(name);
+                }
+            }
+
+            try
+            {
+                string diskName;
+                var dev = GetTargetDisk("disk0", out diskName);
+                if (dev != null)
+                {
+                    var diskFiles = DiskWipeService.ListFilesDirectFromFat32(dev);
+                    if (diskFiles != null)
+                    {
+                        for (int i = 0; i < diskFiles.Count; i++)
+                        {
+                            string df = diskFiles[i];
+                            if (!string.IsNullOrWhiteSpace(df) && !list.Contains(df))
+                            {
+                                list.Add(df);
+                            }
+                        }
+                    }
+                }
+            }
+            catch { }
+
+            return list;
         }
 
         public static List<StoredFile> GetMemoryStore()

@@ -739,11 +739,18 @@ namespace WeatherOS.Services
 
         public static bool WriteFileDirectToFat32(BlockDevice dev, string filename, string content, out string status)
         {
+            byte[] bytes = Encoding.ASCII.GetBytes(content ?? "");
+            return WriteBinaryFileDirectToFat32(dev, filename, bytes, out status);
+        }
+
+        public static bool WriteBinaryFileDirectToFat32(BlockDevice dev, string filename, byte[] contentBytes, out string status)
+        {
             if (dev == null)
             {
                 status = "BlockDevice is null.";
                 return false;
             }
+            if (contentBytes == null) contentBytes = new byte[0];
 
             try
             {
@@ -766,7 +773,7 @@ namespace WeatherOS.Services
                 // Format 8.3 filename
                 string rawName = filename.ToUpper();
                 string name8 = "UNTITLED";
-                string ext3 = "TXT";
+                string ext3 = "BIN";
                 int dotIdx = rawName.LastIndexOf('.');
                 if (dotIdx > 0)
                 {
@@ -839,7 +846,6 @@ namespace WeatherOS.Services
                 rootDirSec[entryOffset + 26] = (byte)(targetCluster & 0xFF);         // Cluster Low
                 rootDirSec[entryOffset + 27] = (byte)((targetCluster >> 8) & 0xFF);
 
-                byte[] contentBytes = Encoding.ASCII.GetBytes(content ?? "");
                 uint fileSize = (uint)contentBytes.Length;
                 rootDirSec[entryOffset + 28] = (byte)(fileSize & 0xFF);
                 rootDirSec[entryOffset + 29] = (byte)((fileSize >> 8) & 0xFF);
@@ -868,9 +874,21 @@ namespace WeatherOS.Services
 
                 // Write file content into target cluster
                 ulong clusterLba = vol.GetClusterLba(targetCluster);
-                byte[] dataSec = new byte[512];
-                Array.Copy(contentBytes, 0, dataSec, 0, Math.Min(contentBytes.Length, 512));
-                dev.WriteBlock(clusterLba, 1, ref dataSec);
+                int secCount = (contentBytes.Length + 511) / 512;
+                if (secCount > (int)vol.SectorsPerCluster) secCount = (int)vol.SectorsPerCluster;
+                if (secCount == 0) secCount = 1;
+
+                for (int s = 0; s < secCount; s++)
+                {
+                    byte[] dataSec = new byte[512];
+                    int byteOffset = s * 512;
+                    int toCopy = Math.Min(512, contentBytes.Length - byteOffset);
+                    if (toCopy > 0)
+                    {
+                        Array.Copy(contentBytes, byteOffset, dataSec, 0, toCopy);
+                    }
+                    dev.WriteBlock(clusterLba + (ulong)s, 1, ref dataSec);
+                }
 
                 // Read-back verification with retries to allow write to settle
                 bool verified = false;

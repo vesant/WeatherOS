@@ -16,31 +16,26 @@ namespace WeatherOS.Apps
 
         public void Draw(TuiDesktop desktop)
         {
-            desktop.DrawWindow(24, 3, 32, 18, "CALCULATOR");
+            int winWidth = 34;
+            int winHeight = 18;
+            int left, top;
+            desktop.DrawCenteredWindow(winWidth, winHeight, "CALCULATOR", out left, out top);
             ConsoleColor winBg = desktop.IsDarkMode ? ConsoleColor.Black : ConsoleColor.Blue;
             System.Console.BackgroundColor = winBg;
             System.Console.ForegroundColor = ConsoleColor.White;
 
-            System.Console.SetCursorPosition(27, 5);
-            System.Console.Write($"[{_calcResult.PadLeft(24)}]");
+            string display = $"[{_calcResult.PadLeft(winWidth - 8)}]";
+            desktop.WriteInsideWindow(left, winWidth, top + 2, 2, display, ConsoleColor.White, winBg);
 
-            System.Console.SetCursorPosition(29, 8);
-            System.Console.Write("[7]  [8]  [9]  [/]");
-            System.Console.SetCursorPosition(29, 10);
-            System.Console.Write("[4]  [5]  [6]  [*]");
-            System.Console.SetCursorPosition(29, 12);
-            System.Console.Write("[1]  [2]  [3]  [-]");
-            System.Console.SetCursorPosition(29, 14);
-            System.Console.Write("[0]  [.]  [C]  [+]");
+            desktop.WriteInsideWindow(left, winWidth, top + 5, 4, "[7]  [8]  [9]  [/]", ConsoleColor.White, winBg);
+            desktop.WriteInsideWindow(left, winWidth, top + 7, 4, "[4]  [5]  [6]  [*]", ConsoleColor.White, winBg);
+            desktop.WriteInsideWindow(left, winWidth, top + 9, 4, "[1]  [2]  [3]  [-]", ConsoleColor.White, winBg);
+            desktop.WriteInsideWindow(left, winWidth, top + 11, 4, "[0]  [.]  [C]  [+]", ConsoleColor.White, winBg);
 
-            System.Console.SetCursorPosition(27, 16);
-            System.Console.ForegroundColor = ConsoleColor.Cyan;
-            System.Console.Write("> ");
-            _calcEditor.DrawInline(29, 16, 20, winBg, ConsoleColor.Cyan);
+            desktop.WriteInsideWindow(left, winWidth, top + 13, 2, "> ", ConsoleColor.Cyan, winBg);
+            _calcEditor.DrawInline(left + 5, top + 13, winWidth - 9, winBg, ConsoleColor.Cyan);
 
-            System.Console.SetCursorPosition(26, 19);
-            System.Console.ForegroundColor = ConsoleColor.Yellow;
-            System.Console.Write("[Enter] =  [C] Clr  [ESC] Exit");
+            desktop.WriteInsideWindow(left, winWidth, top + 15, 1, "[Enter]=  [C]Clr  [ESC]Exit", ConsoleColor.Yellow, winBg);
         }
 
         public void HandleInput(TuiDesktop desktop, KeyEvent keyEvent)

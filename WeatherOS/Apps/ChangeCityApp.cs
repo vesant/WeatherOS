@@ -17,24 +17,17 @@ namespace WeatherOS.Apps
         {
             int winWidth = 48;
             int winHeight = 9;
-            int left = (80 - winWidth) / 2;
-            int top = (24 - winHeight) / 2;
-
-            desktop.DrawWindow(left, top, winWidth, winHeight, "CHANGE CITY");
+            int left, top;
+            desktop.DrawCenteredWindow(winWidth, winHeight, "CHANGE CITY", out left, out top);
             ConsoleColor winBg = desktop.IsDarkMode ? ConsoleColor.Black : ConsoleColor.Blue;
             System.Console.BackgroundColor = winBg;
-            System.Console.ForegroundColor = ConsoleColor.White;
 
-            System.Console.SetCursorPosition(left + 4, top + 2);
-            System.Console.Write("Enter new city name:");
+            desktop.WriteInsideWindow(left, winWidth, top + 2, 2, "Enter new city name:", ConsoleColor.White, winBg);
 
-            System.Console.SetCursorPosition(left + 4, top + 4);
-            System.Console.Write("> ");
-            _cityEditor.DrawInline(left + 6, top + 4, 25, winBg, ConsoleColor.White);
+            desktop.WriteInsideWindow(left, winWidth, top + 4, 2, "> ", ConsoleColor.White, winBg);
+            _cityEditor.DrawInline(left + 6, top + 4, winWidth - 10, winBg, ConsoleColor.White);
 
-            System.Console.SetCursorPosition(left + 4, top + 7);
-            System.Console.ForegroundColor = ConsoleColor.Yellow;
-            System.Console.Write("[Enter] Search  |  [ESC] Cancel");
+            desktop.WriteInsideWindow(left, winWidth, top + 6, 2, "[Enter] Search  |  [ESC] Cancel", ConsoleColor.Yellow, winBg);
         }
 
         public void HandleInput(TuiDesktop desktop, KeyEvent keyEvent)

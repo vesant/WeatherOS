@@ -22,42 +22,15 @@ namespace WeatherOS.Apps
 
         public void Draw(TuiDesktop desktop)
         {
-            int winWidth = 56;
-            int winHeight = 13;
-            int left = (80 - winWidth) / 2;
-            int top = (24 - winHeight) / 2;
-
-            desktop.DrawWindow(left, top, winWidth, winHeight, "DEBUG TOOLS & HARDWARE DIAGNOSTICS");
-            ConsoleColor winBg = desktop.IsDarkMode ? ConsoleColor.Black : ConsoleColor.Blue;
-            System.Console.BackgroundColor = winBg;
-
-            System.Console.SetCursorPosition(left + 3, top + 2);
-            System.Console.ForegroundColor = ConsoleColor.Cyan;
-            System.Console.Write("Advanced System Telemetry & Hardware Inspector:");
+            var win = desktop.CreateWindow("DEBUG TOOLS & HARDWARE DIAGNOSTICS", WindowSize.Medium);
+            win.WriteRow(0, "Advanced System Telemetry & Hardware Inspector:", ConsoleColor.Cyan, 1);
 
             for (int i = 0; i < _options.Length; i++)
             {
-                System.Console.SetCursorPosition(left + 3, top + 4 + i);
-                if (i == _selectedIndex)
-                {
-                    System.Console.ForegroundColor = ConsoleColor.Black;
-                    System.Console.BackgroundColor = ConsoleColor.White;
-                }
-                else
-                {
-                    System.Console.ForegroundColor = (i == 0) ? ConsoleColor.Yellow : ConsoleColor.White;
-                    System.Console.BackgroundColor = winBg;
-                }
-
-                string opt = $" > {_options[i]} ";
-                if (opt.Length > winWidth - 6) opt = opt.Substring(0, winWidth - 9) + "... ";
-                System.Console.Write(opt.PadRight(winWidth - 6));
+                win.WriteSelectionRow(2 + i, _options[i], i == _selectedIndex);
             }
 
-            System.Console.SetCursorPosition(left + 3, top + winHeight - 2);
-            System.Console.BackgroundColor = winBg;
-            System.Console.ForegroundColor = ConsoleColor.Yellow;
-            System.Console.Write("[Up/Down] Select  |  [Enter] Open  |  [ESC] Exit");
+            win.WriteFooter("[Up/Dn] Move  |  [Enter] Open  |  [ESC] Exit", ConsoleColor.Yellow);
         }
 
         public void HandleInput(TuiDesktop desktop, KeyEvent keyEvent)

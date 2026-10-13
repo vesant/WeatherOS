@@ -83,6 +83,9 @@ namespace WeatherOS
 
             InitializeCommandManager();
 
+            // Show Boot Menu selection before starting the OS (Live OS vs Install to Disk)
+            Graphics.BootMenu.Show();
+
             if (_isNetworkConfigured)
             {
                 string targetCity = "Setubal";
@@ -140,6 +143,8 @@ namespace WeatherOS
             _commandManager = new CommandManager();
             _commandManager.Register(new HelpCommand(_commandManager, _tuiDesktop));
             _commandManager.Register(new ClearCommand(() => PrintBootBanner()));
+            _commandManager.Register(new BootMenuCommand(() => PrintBootBanner()));
+            _commandManager.Register(new InstallCommand());
             _commandManager.Register(new PingCommand());
             _commandManager.Register(new FetchCommand(_weatherService, () => DecodeApiKey()));
             _commandManager.Register(new SetCityCommand(_weatherService, () => DecodeApiKey()));
@@ -147,6 +152,7 @@ namespace WeatherOS
             _commandManager.Register(new SerialTestCommand());
             _commandManager.Register(new DebugCommand(_weatherService));
             _commandManager.Register(new GuiCommand(() => SwitchToGuiMode()));
+            _commandManager.Register(new TransferCommand(() => LaunchTransferMode()));
             _commandManager.Register(new DisksCommand());
             _commandManager.Register(new DiskDiagCommand());
             _commandManager.Register(new FormatCommand());
@@ -198,6 +204,14 @@ namespace WeatherOS
             {
                 input = "diskdiag";
             }
+            if (command == "boot" || command == "bootmgr")
+            {
+                input = "bootmenu";
+            }
+            if (command == "setup")
+            {
+                input = "install";
+            }
             if (command == "clean" || command == "cls" || command == "clear")
             {
                 System.Console.Clear();
@@ -221,11 +235,18 @@ namespace WeatherOS
             PrintBootBanner();
         }
 
+        private void LaunchTransferMode()
+        {
+            System.Console.Clear();
+            _tuiDesktop.StartApp("transfer");
+            PrintBootBanner();
+        }
+
         private void PrintBootBanner()
         {
             System.Console.Clear();
             System.Console.ForegroundColor = ConsoleColor.Cyan;
-            System.Console.WriteLine("================================================================================");
+            System.Console.WriteLine("==============================================================================");
             System.Console.WriteLine("  __          __         _   _                  ____   _____            ");
             System.Console.WriteLine("  \\ \\        / /        | | | |                / __ \\ / ____|           ");
             System.Console.WriteLine("   \\ \\  /\\  / /__  __ _ | |_| |__   ___ _ __  | |  | | (___             ");
@@ -233,7 +254,7 @@ namespace WeatherOS
             System.Console.WriteLine("     \\  /\\  /  __/ (_| || |_| | | |  __/ |    | |__| |____) |           ");
             System.Console.WriteLine("      \\/  \\/ \\___|\\__,_| \\__|_| |_|\\___|_|     \\____/|_____/            ");
             System.Console.WriteLine("              Dedicated Meteorological x86 Operating System                     ");
-            System.Console.WriteLine("================================================================================");
+            System.Console.WriteLine("==============================================================================");
             System.Console.ResetColor();
 
             System.Console.Write(" [");
@@ -252,9 +273,9 @@ namespace WeatherOS
             System.Console.WriteLine(" [ OK ] Hardware Target    : Standard x86 PC (Standalone Mode)");
 
             System.Console.ForegroundColor = ConsoleColor.DarkGray;
-            System.Console.WriteLine("-------------------------------------------------------------------------------");
-            System.Console.WriteLine(" Type 'help' to view commands or 'gui' to launch the meteorological dashboard. ");
-            System.Console.WriteLine("-------------------------------------------------------------------------------\n");
+            System.Console.WriteLine("------------------------------------------------------------------------------");
+            System.Console.WriteLine(" Type 'help' to view commands or 'gui' to launch the meteorological dashboard.");
+            System.Console.WriteLine("------------------------------------------------------------------------------");
             System.Console.ResetColor();
         }
     }

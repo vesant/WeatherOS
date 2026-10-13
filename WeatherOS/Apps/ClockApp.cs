@@ -12,24 +12,14 @@ namespace WeatherOS.Apps
 
         public void Draw(TuiDesktop desktop)
         {
-            desktop.DrawWindow(25, 8, 30, 8, "DIGITAL CLOCK");
-            ConsoleColor winBg = desktop.IsDarkMode ? ConsoleColor.Black : ConsoleColor.Blue;
-            System.Console.BackgroundColor = winBg;
-            System.Console.ForegroundColor = ConsoleColor.Cyan;
+            var win = desktop.CreateWindow("DIGITAL CLOCK", WindowSize.Small);
             
             string timeStr = DateTime.UtcNow.ToString("HH:mm:ss");
             string dateStr = DateTime.UtcNow.ToString("yyyy-MM-dd");
 
-            System.Console.SetCursorPosition(32, 11);
-            System.Console.Write(timeStr + " UTC");
-            
-            System.Console.ForegroundColor = ConsoleColor.White;
-            System.Console.SetCursorPosition(33, 13);
-            System.Console.Write(dateStr);
-
-            System.Console.SetCursorPosition(28, 14);
-            System.Console.ForegroundColor = ConsoleColor.Yellow;
-            System.Console.Write("[ESC] Return to Desktop");
+            win.WriteRow(1, "Time: " + timeStr + " UTC", ConsoleColor.Cyan, 2);
+            win.WriteRow(3, "Date: " + dateStr, ConsoleColor.White, 2);
+            win.WriteFooter("[ESC] Return to Desktop", ConsoleColor.Yellow);
         }
 
         public void HandleInput(TuiDesktop desktop, KeyEvent keyEvent)

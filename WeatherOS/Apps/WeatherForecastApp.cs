@@ -13,21 +13,16 @@ namespace WeatherOS.Apps
 
         public void Draw(TuiDesktop desktop)
         {
-            desktop.DrawWindow(2, 2, 76, 20, "7-DAY EXTENDED WEATHER FORECAST");
-            ConsoleColor winBg = desktop.IsDarkMode ? ConsoleColor.Black : ConsoleColor.Blue;
-            System.Console.BackgroundColor = winBg;
+            var win = desktop.CreateWindow("7-DAY EXTENDED WEATHER FORECAST", WindowSize.FullScreen);
 
             var data = desktop.WeatherService.GetLatestReading();
             var days = data.ForecastDays;
 
             if (days == null || days.Length < 7)
             {
-                System.Console.SetCursorPosition(6, 6);
-                System.Console.ForegroundColor = ConsoleColor.Yellow;
-                System.Console.Write("Awaiting 7-Day Telemetry from WeatherAPI.com...");
-                System.Console.SetCursorPosition(6, 8);
-                System.Console.ForegroundColor = ConsoleColor.White;
-                System.Console.Write("Press [R] to request forecast or [C] to select another city.");
+                win.WriteRow(3, "Awaiting 7-Day Telemetry from WeatherAPI.com...", ConsoleColor.Yellow, 2);
+                win.WriteRow(5, "Press [R] to request forecast or [C] to select another city.", ConsoleColor.White, 2);
+                win.WriteFooter("[ESC] Return  |  [R] Refresh  |  [C] Change City", ConsoleColor.Yellow);
                 return;
             }
 
@@ -35,10 +30,10 @@ namespace WeatherOS.Apps
             for (int i = 0; i < 7; i++)
             {
                 var day = days[i];
-                int colX = 4 + (i * 10);
+                int colX = win.InnerLeft + 1 + (i * 10);
 
                 // 1. Day of week & date header
-                System.Console.SetCursorPosition(colX, 4);
+                System.Console.SetCursorPosition(colX, win.InnerTop + 1);
                 if (i == 0)
                 {
                     System.Console.ForegroundColor = ConsoleColor.Green;
@@ -57,46 +52,46 @@ namespace WeatherOS.Apps
                 }
 
                 // Date line (e.g. "  12/10  ")
-                System.Console.SetCursorPosition(colX, 5);
+                System.Console.SetCursorPosition(colX, win.InnerTop + 2);
                 System.Console.ForegroundColor = ConsoleColor.DarkGray;
                 string dateStr = FormatDateLabel(day.Date);
                 System.Console.Write(dateStr.PadRight(9));
 
                 // Divider
-                System.Console.SetCursorPosition(colX, 6);
+                System.Console.SetCursorPosition(colX, win.InnerTop + 3);
                 System.Console.ForegroundColor = ConsoleColor.DarkCyan;
                 System.Console.Write("---------");
 
-                // 2. Mini ASCII Weather Icon (3 lines high: y = 7, 8, 9)
-                DrawMiniWeatherIcon(day.Condition, colX, 7);
+                // 2. Mini ASCII Weather Icon (3 lines high: y = 4, 5, 6)
+                DrawMiniWeatherIcon(day.Condition, colX, win.InnerTop + 4);
 
                 // 3. Condition name (shortened)
-                System.Console.SetCursorPosition(colX, 10);
+                System.Console.SetCursorPosition(colX, win.InnerTop + 7);
                 System.Console.ForegroundColor = ConsoleColor.White;
                 string condShort = ShortenCondition(day.Condition);
                 System.Console.Write(condShort.PadRight(9));
 
                 // Divider
-                System.Console.SetCursorPosition(colX, 11);
+                System.Console.SetCursorPosition(colX, win.InnerTop + 8);
                 System.Console.ForegroundColor = ConsoleColor.DarkCyan;
                 System.Console.Write("---------");
 
                 // 4. Max & Min Temperatures
-                System.Console.SetCursorPosition(colX, 12);
+                System.Console.SetCursorPosition(colX, win.InnerTop + 9);
                 System.Console.ForegroundColor = ConsoleColor.Yellow;
                 System.Console.Write($"Max: {((int)day.MaxTempC)} C".PadRight(9));
 
-                System.Console.SetCursorPosition(colX, 13);
+                System.Console.SetCursorPosition(colX, win.InnerTop + 10);
                 System.Console.ForegroundColor = ConsoleColor.Cyan;
                 System.Console.Write($"Min: {((int)day.MinTempC)} C".PadRight(9));
 
                 // 5. Rain Probability
-                System.Console.SetCursorPosition(colX, 14);
+                System.Console.SetCursorPosition(colX, win.InnerTop + 11);
                 System.Console.ForegroundColor = day.ChanceOfRain > 40 ? ConsoleColor.Yellow : ConsoleColor.White;
                 System.Console.Write($"Rain:{day.ChanceOfRain,3}%".PadRight(9));
 
                 // 6. Precipitation outlook / summary badge
-                System.Console.SetCursorPosition(colX, 15);
+                System.Console.SetCursorPosition(colX, win.InnerTop + 12);
                 if (day.ChanceOfRain >= 60)
                 {
                     System.Console.ForegroundColor = ConsoleColor.Cyan;
@@ -119,27 +114,15 @@ namespace WeatherOS.Apps
                 }
 
                 // Divider at bottom of card
-                System.Console.SetCursorPosition(colX, 16);
+                System.Console.SetCursorPosition(colX, win.InnerTop + 13);
                 System.Console.ForegroundColor = ConsoleColor.DarkCyan;
                 System.Console.Write("---------");
-
-                // Clear row 17
-                System.Console.SetCursorPosition(colX, 17);
-                System.Console.Write("         ");
             }
 
             // Bottom telemetry status bar
-            System.Console.SetCursorPosition(4, 19);
-            System.Console.BackgroundColor = ConsoleColor.DarkBlue;
-            System.Console.ForegroundColor = ConsoleColor.Yellow;
             string locInfo = $" Location: {data.Location}  |  Source: WeatherAPI.com CDN Telemetry ";
-            if (locInfo.Length > 72) locInfo = locInfo.Substring(0, 72);
-            System.Console.Write(locInfo.PadRight(72));
-
-            System.Console.SetCursorPosition(4, 20);
-            System.Console.BackgroundColor = winBg;
-            System.Console.ForegroundColor = ConsoleColor.White;
-            System.Console.Write("[ESC] Return  |  [C] Change City  |  [W] Dashboard  |  [R] Refresh");
+            win.WriteRow(15, locInfo, ConsoleColor.Yellow, 1, ConsoleColor.DarkBlue, true);
+            win.WriteFooter("[ESC] Return  |  [C] Change City  |  [W] Dashboard  |  [R] Refresh", ConsoleColor.White);
         }
 
         private static string FormatDateLabel(string dateStr)

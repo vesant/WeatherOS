@@ -68,6 +68,35 @@ namespace WeatherOS.Services
             return $"{_ipSource[0]}.{_ipSource[1]}.***.*** (Secured)";
         }
 
+        public static byte[] GetSourceIpBytes()
+        {
+            byte[] copy = new byte[4];
+            Array.Copy(_ipSource, 0, copy, 0, 4);
+            return copy;
+        }
+
+        public static int CalculateIpChecksum(byte[] buffer, int offset, int length)
+        {
+            return CalculateChecksum(buffer, offset, length);
+        }
+
+        public static void EnsurePacketHandlerActive()
+        {
+            try
+            {
+                if (Cosmos.HAL.NetworkDevice.Devices != null && Cosmos.HAL.NetworkDevice.Devices.Count > 0)
+                {
+                    var nic = Cosmos.HAL.NetworkDevice.Devices[0];
+                    if (nic.DataReceived != CustomDataReceived)
+                    {
+                        _oldHandler = nic.DataReceived;
+                        nic.DataReceived = CustomDataReceived;
+                    }
+                }
+            }
+            catch { }
+        }
+
         public static void DoAutoConfig(Cosmos.HAL.NetworkDevice nic)
         {
             _macSource = nic.MACAddress.bytes;
@@ -689,7 +718,16 @@ namespace WeatherOS.Services
             {
                 int ipHdrLen = (packet[14] & 0x0F) * 4;
                 int udpOff = 14 + ipHdrLen;
-                if (packet.Length >= udpOff + 8 && packet[udpOff + 2] == 0x00 && packet[udpOff + 3] == 0x44)
+                if (packet.Length < udpOff + 8) return;
+
+                int udpDestPort = (packet[udpOff + 2] << 8) | packet[udpOff + 3];
+                if (udpDestPort == FileTransferService.PORT)
+                {
+                    FileTransferService.ProcessIncomingPacket(packet, udpOff);
+                    return;
+                }
+
+                if (packet[udpOff + 2] == 0x00 && packet[udpOff + 3] == 0x44)
                 {
                     int dhcpOff = udpOff + 8;
                     if (packet.Length >= dhcpOff + 240 && packet[dhcpOff + 236] == 0x63 && packet[dhcpOff + 237] == 0x82)

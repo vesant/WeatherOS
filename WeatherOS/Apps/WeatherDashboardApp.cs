@@ -12,111 +12,53 @@ namespace WeatherOS.Apps
 
         public void Draw(TuiDesktop desktop)
         {
-            desktop.DrawWindow(5, 3, 70, 18, "WEATHER APPLICATION");
-            ConsoleColor winBg = desktop.IsDarkMode ? ConsoleColor.Black : ConsoleColor.Blue;
-            System.Console.BackgroundColor = winBg;
+            var win = desktop.CreateWindow("WEATHER APPLICATION", WindowSize.Large);
 
             var data = desktop.WeatherService.GetLatestReading();
 
-            System.Console.ForegroundColor = ConsoleColor.Yellow;
-            System.Console.SetCursorPosition(30, 5);
-            System.Console.Write("LOCATION: " + data.Location);
-
-            System.Console.ForegroundColor = ConsoleColor.White;
-            System.Console.SetCursorPosition(30, 7);
-            System.Console.Write("Condition : " + data.Condition);
-
-            System.Console.SetCursorPosition(30, 9);
-            System.Console.Write("Temp      : " + ((int)data.TemperatureCelsius).ToString() + " C");
-
-            System.Console.SetCursorPosition(30, 11);
-            System.Console.Write("Humidity  : " + ((int)data.HumidityPercent).ToString() + " %");
-
-            System.Console.SetCursorPosition(30, 13);
-            System.Console.Write("Precip    : " + data.PrecipitationMm.ToString() + " mm");
-
-            System.Console.SetCursorPosition(50, 9);
-            System.Console.Write("Pressure : " + ((int)data.PressureHpa).ToString() + " hPa");
-
-            System.Console.SetCursorPosition(50, 11);
-            System.Console.Write("Wind Spd : " + ((int)data.WindSpeedKmh).ToString() + " km/h");
-
-            System.Console.SetCursorPosition(50, 13);
-            System.Console.Write("Wind Dir : " + data.WindDirection);
-
-            desktop.DrawWeatherIcon(data.Condition, data.IsNight, "", 8, 6);
+            desktop.DrawWeatherIcon(data.Condition, data.IsNight, "", win.InnerLeft + 2, win.InnerTop + 1);
 
             // Day/Night indicator and station status under icon
-            System.Console.SetCursorPosition(8, 11);
-            System.Console.ForegroundColor = data.IsNight ? ConsoleColor.Cyan : ConsoleColor.Yellow;
-            System.Console.Write(data.IsNight ? "  [NIGHT TIME]  " : "   [DAYLIGHT]   ");
+            win.WriteAt(2, 6, data.IsNight ? "  [NIGHT TIME]  " : "   [DAYLIGHT]   ", data.IsNight ? ConsoleColor.Cyan : ConsoleColor.Yellow);
+            win.WriteAt(2, 7, "  Station: Live   ", ConsoleColor.White);
+            win.WriteAt(2, 8, "  Telemetry: OK   ", ConsoleColor.Cyan);
 
-            System.Console.SetCursorPosition(8, 12);
-            System.Console.ForegroundColor = ConsoleColor.White;
-            System.Console.Write("  Station: Live   ");
+            // Weather telemetry metrics (Right side)
+            win.WriteAt(24, 1, "LOCATION: " + data.Location, ConsoleColor.Yellow);
+            win.WriteAt(24, 3, "Condition : " + data.Condition, ConsoleColor.White);
+            win.WriteAt(24, 5, "Temp      : " + ((int)data.TemperatureCelsius).ToString() + " C", ConsoleColor.White);
+            win.WriteAt(24, 7, "Humidity  : " + ((int)data.HumidityPercent).ToString() + " %", ConsoleColor.White);
+            win.WriteAt(24, 9, "Precip    : " + data.PrecipitationMm.ToString() + " mm", ConsoleColor.White);
 
-            System.Console.SetCursorPosition(8, 13);
-            System.Console.ForegroundColor = ConsoleColor.Cyan;
-            System.Console.Write("  Telemetry: OK   ");
+            win.WriteAt(44, 5, "Pressure : " + ((int)data.PressureHpa).ToString() + " hPa", ConsoleColor.White);
+            win.WriteAt(44, 7, "Wind Spd : " + ((int)data.WindSpeedKmh).ToString() + " km/h", ConsoleColor.White);
+            win.WriteAt(44, 9, "Wind Dir : " + data.WindDirection, ConsoleColor.White);
 
             // Alert Banner
             if (data.AlertLevel == "RED")
             {
-                System.Console.SetCursorPosition(7, 16);
-                System.Console.BackgroundColor = ConsoleColor.Red;
-                System.Console.ForegroundColor = ConsoleColor.White;
-                
-                string alertText = " [!] SEVERE WARNING: " + data.AlertMessage + " ";
-                if (alertText.Length > 66) alertText = alertText.Substring(0, 66);
-                while (alertText.Length < 66) alertText += " ";
-                System.Console.Write(alertText);
-
-                System.Console.SetCursorPosition(7, 17);
-                string footer = " Take immediate safety precautions. Monitor local authorities. ";
-                if (footer.Length > 66) footer = footer.Substring(0, 66);
-                while (footer.Length < 66) footer += " ";
-                System.Console.Write(footer);
+                string alertText = " [!] SEVERE WARNING: " + data.AlertMessage;
+                string footer = " Take immediate safety precautions. Monitor local authorities.";
+                win.WriteRow(11, alertText, ConsoleColor.White, 1, ConsoleColor.Red, true);
+                win.WriteRow(12, footer, ConsoleColor.White, 1, ConsoleColor.Red, true);
             }
             else if (data.AlertLevel == "YELLOW")
             {
-                System.Console.SetCursorPosition(7, 16);
-                System.Console.BackgroundColor = ConsoleColor.Yellow;
-                System.Console.ForegroundColor = ConsoleColor.Black;
-                
-                string alertText = " [*] WEATHER ADVISORY: " + data.AlertMessage + " ";
-                if (alertText.Length > 66) alertText = alertText.Substring(0, 66);
-                while (alertText.Length < 66) alertText += " ";
-                System.Console.Write(alertText);
-
-                System.Console.SetCursorPosition(7, 17);
-                string footer = " Active regional hazards detected. Stay alert and plan ahead. ";
-                if (footer.Length > 66) footer = footer.Substring(0, 66);
-                while (footer.Length < 66) footer += " ";
-                System.Console.Write(footer);
+                string alertText = " [*] WEATHER ADVISORY: " + data.AlertMessage;
+                string footer = " Active regional hazards detected. Stay alert and plan ahead.";
+                win.WriteRow(11, alertText, ConsoleColor.Black, 1, ConsoleColor.Yellow, true);
+                win.WriteRow(12, footer, ConsoleColor.Black, 1, ConsoleColor.Yellow, true);
             }
             else
             {
-                System.Console.SetCursorPosition(7, 16);
-                System.Console.BackgroundColor = ConsoleColor.DarkGreen;
-                System.Console.ForegroundColor = ConsoleColor.White;
-                
-                string alertText = " [OK] STATUS: All clear. No severe weather hazards reported. ";
-                if (alertText.Length > 66) alertText = alertText.Substring(0, 66);
-                while (alertText.Length < 66) alertText += " ";
-                System.Console.Write(alertText);
-
-                System.Console.SetCursorPosition(7, 17);
-                string footer = " Atmospheric conditions within normal regional safety limits. ";
-                if (footer.Length > 66) footer = footer.Substring(0, 66);
-                while (footer.Length < 66) footer += " ";
-                System.Console.Write(footer);
+                string alertText = " [OK] STATUS: All clear. No severe weather hazards reported.";
+                string footer = " Atmospheric conditions within normal regional safety limits.";
+                win.WriteRow(11, alertText, ConsoleColor.White, 1, ConsoleColor.DarkGreen, true);
+                win.WriteRow(12, footer, ConsoleColor.White, 1, ConsoleColor.DarkGreen, true);
             }
 
             // Essential shortcut bar
-            System.Console.SetCursorPosition(7, 19);
-            System.Console.BackgroundColor = winBg;
-            System.Console.ForegroundColor = ConsoleColor.Yellow;
-            System.Console.Write("[R] Refresh  |  [C] Change City  |  [F] 7-Day Forecast  |  [ESC] Exit");
+            win.WriteFooter("[R] Refresh  |  [C] Change City  |  [F] 7-Day Forecast  |  [ESC] Exit", ConsoleColor.Yellow);
         }
 
         public void HandleInput(TuiDesktop desktop, KeyEvent keyEvent)

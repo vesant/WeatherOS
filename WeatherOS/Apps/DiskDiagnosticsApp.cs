@@ -38,7 +38,7 @@ namespace WeatherOS.Apps
 
         public void Draw(TuiDesktop desktop)
         {
-            desktop.DrawWindow(3, 2, 73, 21, "DISK HARDWARE DIAGNOSTICS & SYSTEM STORAGE");
+            var win = desktop.CreateWindow("DISK HARDWARE DIAGNOSTICS & SYSTEM STORAGE", WindowSize.FullScreen);
             ConsoleColor winBg = desktop.IsDarkMode ? ConsoleColor.Black : ConsoleColor.Blue;
             System.Console.BackgroundColor = winBg;
 
@@ -87,16 +87,13 @@ namespace WeatherOS.Apps
                 DrawHardwareTestTab(winBg);
             }
 
-            System.Console.SetCursorPosition(5, 21);
-            System.Console.BackgroundColor = winBg;
-            System.Console.ForegroundColor = ConsoleColor.Yellow;
             if (_currentTab == 4)
             {
-                System.Console.Write("[A] Auto Test | [1-8] Tests | [T] Dev | [Up/Dn] Scroll | [C] Clr | [ESC]");
+                win.WriteFooter("[A] Auto Test | [1-8] Tests | [Up/Dn] Scroll | [C] Clr | [ESC] Exit", ConsoleColor.Yellow);
             }
             else
             {
-                System.Console.Write("[1-5 / Tab] Switch Tab  |  [R] Refresh  |  [ESC] Exit            ");
+                win.WriteFooter("[1-5 / Tab] Switch Tab  |  [R] Refresh  |  [ESC] Exit", ConsoleColor.Yellow);
             }
         }
 

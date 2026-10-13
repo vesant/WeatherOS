@@ -249,20 +249,14 @@ namespace WeatherOS.Apps
                 Refresh();
             }
 
-            desktop.DrawWindow(3, 2, 74, 21, "WEATHER OS - FILE & STORAGE EXPLORER");
+            var win = desktop.CreateWindow("WEATHER OS - FILE & STORAGE EXPLORER", WindowSize.FullScreen);
             ConsoleColor winBg = desktop.IsDarkMode ? ConsoleColor.Black : ConsoleColor.Blue;
             System.Console.BackgroundColor = winBg;
 
             // Top Status & Navigation Bar
-            System.Console.SetCursorPosition(5, 4);
-            System.Console.ForegroundColor = ConsoleColor.Yellow;
             string topBar = $" Drive: {_currentDrive} | Path: {_currentPath} | Items: {_items.Count}";
-            if (topBar.Length > 70) topBar = topBar.Substring(0, 67) + "...";
-            System.Console.Write(topBar.PadRight(70));
-
-            System.Console.SetCursorPosition(5, 5);
-            System.Console.ForegroundColor = ConsoleColor.DarkCyan;
-            System.Console.Write("----------------------------------------------------------------------");
+            win.WriteRow(1, topBar, ConsoleColor.Yellow, 2);
+            win.WriteSeparator(2);
 
             // Main Items Area (Lines 6 to 16 = 11 visible items)
             int maxVisible = 10;
@@ -350,16 +344,11 @@ namespace WeatherOS.Apps
             }
             else
             {
-                System.Console.BackgroundColor = winBg;
-                System.Console.ForegroundColor = ConsoleColor.Gray;
-                System.Console.Write(" [F2] Partition Diag  |  [Tab] Switch Drive  |  [N] Notepad  |  [R] Reload ".PadRight(70));
+                win.WriteRow(17, "[F2] Partition Diag  |  [Tab] Switch Drive  |  [N] Notepad  |  [R] Reload", ConsoleColor.Gray, 2);
             }
 
             // Controls Footer
-            System.Console.BackgroundColor = winBg;
-            System.Console.SetCursorPosition(5, 20);
-            System.Console.ForegroundColor = ConsoleColor.Yellow;
-            System.Console.Write("[Enter/V] Preview  |  [E] Edit in Notepad  |  [D] Delete  |  [ESC] Exit");
+            win.WriteFooter("[Enter/V] Preview  |  [E] Edit Note  |  [D] Delete  |  [ESC] Exit", ConsoleColor.Yellow);
 
             // Modal Preview Window overlay if active
             if (_isPreviewActive)
@@ -377,45 +366,26 @@ namespace WeatherOS.Apps
 
         private void DrawPreviewModal(TuiDesktop desktop)
         {
-            int pLeft = 8;
-            int pTop = 4;
-            int pWidth = 64;
-            int pHeight = 16;
-
-            desktop.DrawWindow(pLeft, pTop, pWidth, pHeight, $"PREVIEW: {_previewFileName}");
-            ConsoleColor bg = ConsoleColor.DarkBlue;
-            System.Console.BackgroundColor = bg;
-            System.Console.ForegroundColor = ConsoleColor.White;
+            var pWin = desktop.CreateWindow($"PREVIEW: {_previewFileName}", WindowSize.Medium);
 
             if (_previewLines == null || _previewLines.Length == 0)
             {
-                System.Console.SetCursorPosition(pLeft + 3, pTop + 4);
-                System.Console.ForegroundColor = ConsoleColor.Yellow;
-                System.Console.Write("[Empty File or Unreadable Content]");
+                pWin.WriteRow(3, "[Empty File or Unreadable Content]", ConsoleColor.Yellow, 2);
             }
             else
             {
-                for (int l = 0; l < 11; l++)
+                for (int l = 0; l < 9; l++)
                 {
                     int lineIdx = _previewScroll + l;
-                    System.Console.SetCursorPosition(pLeft + 3, pTop + 2 + l);
 
                     if (lineIdx < _previewLines.Length)
                     {
-                        string ln = _previewLines[lineIdx];
-                        if (ln.Length > pWidth - 6) ln = ln.Substring(0, pWidth - 9) + "...";
-                        System.Console.Write(ln.PadRight(pWidth - 6));
-                    }
-                    else
-                    {
-                        System.Console.Write(new string(' ', pWidth - 6));
+                        pWin.WriteRow(1 + l, _previewLines[lineIdx], ConsoleColor.White, 2);
                     }
                 }
             }
 
-            System.Console.SetCursorPosition(pLeft + 3, pTop + 14);
-            System.Console.ForegroundColor = ConsoleColor.Yellow;
-            System.Console.Write("[Up/Down] Scroll  |  [ESC / Enter] Close Preview");
+            pWin.WriteFooter("[Up/Dn] Scroll  |  [ESC/Enter] Close Preview", ConsoleColor.Yellow);
         }
 
         public void HandleInput(TuiDesktop desktop, KeyEvent keyEvent)

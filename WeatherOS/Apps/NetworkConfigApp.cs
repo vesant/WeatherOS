@@ -14,32 +14,17 @@ namespace WeatherOS.Apps
 
         public void Draw(TuiDesktop desktop)
         {
-            desktop.DrawWindow(15, 6, 50, 10, "NETWORK CONFIGURATION");
-            ConsoleColor winBg = desktop.IsDarkMode ? ConsoleColor.Black : ConsoleColor.Blue;
-            System.Console.BackgroundColor = winBg;
-            System.Console.ForegroundColor = ConsoleColor.Cyan;
+            var win = desktop.CreateWindow("NETWORK CONFIGURATION", WindowSize.Medium);
+            win.WriteRow(1, "Adapter    : " + (NetworkDevice.Devices.Count > 0 ? "RTL8102E Bare-Metal" : "None"), ConsoleColor.Cyan, 2);
 
-            System.Console.SetCursorPosition(20, 9);
-            System.Console.Write("Adapter: " + (NetworkDevice.Devices.Count > 0 ? "RTL8102E Bare-Metal" : "None"));
+            string ipText = desktop.ShowDebugLogs ? RawTcpHttp.GetAssignedIp() : RawTcpHttp.GetMaskedIp();
+            win.WriteRow(3, "IP Address : " + ipText, ConsoleColor.Cyan, 2);
 
-            System.Console.SetCursorPosition(20, 11);
-            if (desktop.ShowDebugLogs)
-                System.Console.Write("IP Address : " + RawTcpHttp.GetAssignedIp());
-            else
-                System.Console.Write("IP Address : " + RawTcpHttp.GetMaskedIp());
+            string gwText = desktop.ShowDebugLogs ? RawTcpHttp.GetGatewayIp() : "***.***.***.*** (Secured)";
+            win.WriteRow(4, "Gateway    : " + gwText, ConsoleColor.Cyan, 2);
 
-            System.Console.SetCursorPosition(20, 12);
-            if (desktop.ShowDebugLogs)
-                System.Console.Write("Gateway    : " + RawTcpHttp.GetGatewayIp());
-            else
-                System.Console.Write("Gateway    : ***.***.***.*** (Secured)");
-
-            System.Console.SetCursorPosition(20, 13);
-            System.Console.Write("Subnet Mask: 255.255.255.0");
-
-            System.Console.SetCursorPosition(20, 14);
-            System.Console.ForegroundColor = ConsoleColor.Yellow;
-            System.Console.Write("[ESC] Return to Desktop");
+            win.WriteRow(5, "Subnet Mask: 255.255.255.0", ConsoleColor.Cyan, 2);
+            win.WriteFooter("[ESC] Return to Desktop", ConsoleColor.Yellow);
         }
 
         public void HandleInput(TuiDesktop desktop, KeyEvent keyEvent)

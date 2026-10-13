@@ -17,10 +17,7 @@ namespace WeatherOS.Apps
 
         public void Draw(TuiDesktop desktop)
         {
-            desktop.DrawWindow(8, 2, 64, 21, "SYSTEM RESOURCES & POWER (Live)");
-            ConsoleColor winBg = desktop.IsDarkMode ? ConsoleColor.Black : ConsoleColor.Blue;
-            System.Console.BackgroundColor = winBg;
-            System.Console.ForegroundColor = ConsoleColor.Yellow;
+            var win = desktop.CreateWindow("SYSTEM RESOURCES & POWER (Live)", WindowSize.Large);
 
             // Poll NIC in real-time to pick up background ARP and IP packets
             WeatherOS.Kernel.CustomNIC?.HackPoll();
@@ -48,38 +45,19 @@ namespace WeatherOS.Apps
             var battery = BatteryService.GetBatteryInfo();
 
             // 1. CPU Section
-            System.Console.SetCursorPosition(11, 4);
-            System.Console.ForegroundColor = ConsoleColor.White;
-            System.Console.Write("CPU : " + cpuBrand);
-
-            desktop.DrawBar(11, 5, "CPU Load", cpuUsagePct, ConsoleColor.Green);
+            win.WriteRow(0, "CPU : " + cpuBrand, ConsoleColor.White, 2);
+            win.DrawBar(2, 1, "CPU Load", cpuUsagePct, ConsoleColor.Green);
 
             // 2. RAM Section
-            desktop.DrawBar(11, 7, "RAM Load", ramUsagePct, ConsoleColor.Magenta);
-
-            System.Console.SetCursorPosition(11, 8);
-            System.Console.ForegroundColor = ConsoleColor.White;
-            System.Console.Write($"RAM : {totalUsedBytes / (1024 * 1024)} MB Used / {totalRamMB} MB Total ({totalUsedBytes / 1024} KB)");
+            win.DrawBar(2, 3, "RAM Load", ramUsagePct, ConsoleColor.Magenta);
+            win.WriteRow(4, $"RAM : {totalUsedBytes / (1024 * 1024)} MB Used / {totalRamMB} MB Total", ConsoleColor.White, 2);
 
             // 3. Battery & Power Section
-            if (battery.HasBattery || battery.IsLaptop)
-            {
-                ConsoleColor battColor = battery.Percentage > 20 ? ConsoleColor.Yellow : ConsoleColor.Red;
-                desktop.DrawBar(11, 10, "Battery", battery.Percentage, battColor);
+            ConsoleColor battColor = battery.Percentage > 20 ? ConsoleColor.Yellow : ConsoleColor.Red;
+            win.DrawBar(2, 6, "Battery", battery.Percentage, battColor);
 
-                System.Console.SetCursorPosition(11, 11);
-                System.Console.ForegroundColor = ConsoleColor.White;
-                string acText = battery.IsAcConnected ? "AC Plugged (Charging)" : "On Battery (Discharging)";
-                System.Console.Write($"PWR : {battery.Percentage}% | {acText} [{battery.ChassisType}]       ");
-            }
-            else
-            {
-                desktop.DrawBar(11, 10, "Battery", battery.Percentage, ConsoleColor.Yellow);
-
-                System.Console.SetCursorPosition(11, 11);
-                System.Console.ForegroundColor = ConsoleColor.White;
-                System.Console.Write($"PWR : {battery.Percentage}% | On Battery (Discharging) [{battery.ChassisType}]       ");
-            }
+            string acText = battery.IsAcConnected ? "AC Plugged (Charging)" : "On Battery (Discharging)";
+            win.WriteRow(7, $"PWR : {battery.Percentage}% | {acText} [{battery.ChassisType}]", ConsoleColor.White, 2);
 
             // 4. Dynamic Network Interface
             string nicName = "Offline / No NIC";
@@ -97,26 +75,20 @@ namespace WeatherOS.Apps
                 }
             }
 
-            System.Console.SetCursorPosition(11, 13);
-            System.Console.ForegroundColor = ConsoleColor.White;
-            System.Console.Write($"NETWORK INTERFACE: {nicName} ({macAddr})");
-            
-            System.Console.SetCursorPosition(11, 14);
-            System.Console.ForegroundColor = ConsoleColor.Cyan;
-            System.Console.Write($"Tx (Sent)     : {RawTcpHttp.TotalTxBytes} bytes ({RTL8102E.HardwareTxPackets} pkts)    ");
-            
-            System.Console.SetCursorPosition(11, 15);
-            System.Console.ForegroundColor = ConsoleColor.Green;
-            System.Console.Write($"Rx (Received) : {RawTcpHttp.TotalRxBytes} bytes ({RTL8102E.HardwareRxPackets} pkts)    ");
+            win.WriteRow(9, $"NETWORK: {nicName} ({macAddr})", ConsoleColor.White, 2);
+            win.WriteRow(10, $"Tx: {RawTcpHttp.TotalTxBytes} B ({RTL8102E.HardwareTxPackets} pkts)  |  Rx: {RawTcpHttp.TotalRxBytes} B ({RTL8102E.HardwareRxPackets} pkts)", ConsoleColor.Cyan, 2);
 
-            System.Console.SetCursorPosition(11, 17);
-            System.Console.ForegroundColor = ConsoleColor.White;
             string linkState = NetworkDevice.Devices.Count > 0 ? "ONLINE (100M Full-Duplex)" : "OFFLINE";
-            System.Console.Write($"Network Link  : {linkState}".PadRight(50));
+            win.WriteRow(11, $"Network Link  : {linkState}", ConsoleColor.White, 2);
+            win.WriteFooter("[ESC] Return to Desktop", ConsoleColor.Yellow);
         }
 
         public void HandleInput(TuiDesktop desktop, KeyEvent keyEvent)
         {
+            if (keyEvent.Key == ConsoleKeyEx.Escape)
+            {
+                desktop.SetCurrentApp("launcher");
+            }
         }
     }
 }

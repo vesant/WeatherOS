@@ -12,21 +12,11 @@ namespace WeatherOS.Apps
 
         public void Draw(TuiDesktop desktop)
         {
-            desktop.DrawWindow(20, 6, 40, 10, "SYSTEM INFORMATION");
-            ConsoleColor winBg = desktop.IsDarkMode ? ConsoleColor.Black : ConsoleColor.Blue;
-            System.Console.BackgroundColor = winBg;
-            System.Console.ForegroundColor = ConsoleColor.White;
-
-            System.Console.SetCursorPosition(23, 9);
-            System.Console.Write("WeatherOS v3.0 (Cosmos Kernel)");
-            System.Console.SetCursorPosition(23, 11);
-            System.Console.Write("Developed by: Ghost");
-            System.Console.SetCursorPosition(23, 13);
-            System.Console.Write("Architecture: x86 / 32-bit (IL2CPU)");
-
-            System.Console.SetCursorPosition(23, 14);
-            System.Console.ForegroundColor = ConsoleColor.Yellow;
-            System.Console.Write("[ESC] Return to Desktop");
+            var win = desktop.CreateWindow("SYSTEM INFORMATION", WindowSize.Small);
+            win.WriteRow(1, "WeatherOS v3.0 (Cosmos Kernel)", ConsoleColor.White, 2);
+            win.WriteRow(3, "Developed by: Ghost", ConsoleColor.White, 2);
+            win.WriteRow(5, "Architecture: x86 / 32-bit (IL2CPU)", ConsoleColor.White, 2);
+            win.WriteFooter("[ESC] Return to Desktop", ConsoleColor.Yellow);
         }
 
         public void HandleInput(TuiDesktop desktop, KeyEvent keyEvent)
