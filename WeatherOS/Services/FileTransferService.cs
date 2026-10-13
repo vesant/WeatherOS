@@ -118,14 +118,39 @@ namespace WeatherOS.Services
             byte[] frame = new byte[frameLen];
 
             // 1. Ethernet Header (14 bytes)
-            if (targetMac != null && targetMac.Length == 6 && (targetMac[0] != 0 || targetMac[1] != 0 || targetMac[2] != 0))
+            byte[] destMac = new byte[6];
+            bool macFound = false;
+
+            if (targetMac != null && targetMac.Length == 6 &&
+                (targetMac[0] != 0 || targetMac[1] != 0 || targetMac[2] != 0) &&
+                (targetMac[0] != 0xFF || targetMac[1] != 0xFF || targetMac[2] != 0xFF))
             {
-                Array.Copy(targetMac, 0, frame, 0, 6);
+                Array.Copy(targetMac, 0, destMac, 0, 6);
+                macFound = true;
             }
-            else
+            else if (RemoteMac != null && RemoteMac.Length == 6 &&
+                     (RemoteMac[0] != 0 || RemoteMac[1] != 0 || RemoteMac[2] != 0) &&
+                     (RemoteMac[0] != 0xFF || RemoteMac[1] != 0xFF || RemoteMac[2] != 0xFF))
             {
-                for (int i = 0; i < 6; i++) frame[i] = 0xFF; // Broadcast fallback
+                Array.Copy(RemoteMac, 0, destMac, 0, 6);
+                macFound = true;
             }
+            else if (targetIp != null && targetIp.Length == 4 && (targetIp[0] != 0xFF || targetIp[1] != 0xFF))
+            {
+                byte[] rMac = RawTcpHttp.GetRouterMac();
+                if (rMac != null && (rMac[0] != 0 || rMac[1] != 0 || rMac[2] != 0) && (rMac[0] != 0xFF || rMac[1] != 0xFF))
+                {
+                    Array.Copy(rMac, 0, destMac, 0, 6);
+                    macFound = true;
+                }
+            }
+
+            if (!macFound)
+            {
+                for (int i = 0; i < 6; i++) destMac[i] = 0xFF; // Broadcast fallback
+            }
+
+            Array.Copy(destMac, 0, frame, 0, 6);
 
             byte[] myMac = nic.MACAddress != null ? nic.MACAddress.bytes : new byte[6];
             Array.Copy(myMac, 0, frame, 6, 6);
@@ -412,15 +437,12 @@ namespace WeatherOS.Services
             RawTcpHttp.EnsurePacketHandlerActive();
 
             // Refresh ARP resolution for the target IP
-            RawTcpHttp.SendArpRequest(targetIp);
-            for (int w = 0; w < 10; w++)
-            {
-                WeatherOS.Kernel.CustomNIC?.HackPoll();
-                System.Threading.Thread.Sleep(5);
-            }
-
             byte[] targetMac = new byte[6];
-            for (int i = 0; i < 6; i++) targetMac[i] = 0xFF; // Broadcast or learned ARP
+            bool macResolved = RawTcpHttp.ResolveArp(targetIp, targetMac, 80);
+            if (!macResolved && RemoteMac != null && (RemoteMac[0] != 0 || RemoteMac[1] != 0 || RemoteMac[2] != 0))
+            {
+                Array.Copy(RemoteMac, 0, targetMac, 0, 6);
+            }
 
             Status = TransferStatus.Sending;
             CurrentFileName = filename;
@@ -549,7 +571,12 @@ namespace WeatherOS.Services
             if (targetIp == null) return false;
 
             RawTcpHttp.EnsurePacketHandlerActive();
-            RawTcpHttp.SendArpRequest(targetIp);
+            byte[] targetMac = new byte[6];
+            bool macResolved = RawTcpHttp.ResolveArp(targetIp, targetMac, 80);
+            if (!macResolved && RemoteMac != null && (RemoteMac[0] != 0 || RemoteMac[1] != 0 || RemoteMac[2] != 0))
+            {
+                Array.Copy(RemoteMac, 0, targetMac, 0, 6);
+            }
 
             byte[] ping = new byte[5];
             ping[0] = 0x57; ping[1] = 0x4F; ping[2] = 0x53; ping[3] = 0x46;
@@ -558,8 +585,7 @@ namespace WeatherOS.Services
             _pongReceived = false;
             _lastPongInfo = "";
 
-            byte[] bcastMac = new byte[] { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
-            SendUdp(bcastMac, targetIp, PORT, targetPort, ping);
+            SendUdp(targetMac, targetIp, PORT, targetPort, ping);
 
             int elapsed = 0;
             while (!_pongReceived && elapsed < 800)

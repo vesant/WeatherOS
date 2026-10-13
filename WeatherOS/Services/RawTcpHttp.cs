@@ -283,10 +283,61 @@ namespace WeatherOS.Services
             return dhcp;
         }
 
+        public static byte[] GetRouterMac()
+        {
+            return _macDest;
+        }
+
+        public static bool ResolveArp(byte[] targetIp, byte[] outMac, int timeoutMs = 120)
+        {
+            if (targetIp == null || targetIp.Length != 4 || outMac == null || outMac.Length < 6) return false;
+
+            // 1. If target is router/gateway and we already learned its MAC
+            if (_gatewayIp != null && targetIp[0] == _gatewayIp[0] && targetIp[1] == _gatewayIp[1] &&
+                targetIp[2] == _gatewayIp[2] && targetIp[3] == _gatewayIp[3])
+            {
+                if (_macDest != null && (_macDest[0] != 0 || _macDest[1] != 0 || _macDest[2] != 0) &&
+                    (_macDest[0] != 0xFF || _macDest[1] != 0xFF))
+                {
+                    Array.Copy(_macDest, 0, outMac, 0, 6);
+                    return true;
+                }
+            }
+
+            // 2. Perform active ARP Request
+            SendArpRequest(targetIp);
+
+            int elapsed = 0;
+            while (!_arpReplyReceived && elapsed < timeoutMs)
+            {
+                WeatherOS.Kernel.CustomNIC?.HackPoll();
+                System.Threading.Thread.Sleep(5);
+                elapsed += 5;
+            }
+
+            if (_arpReplyReceived)
+            {
+                Array.Copy(_macDest, 0, outMac, 0, 6);
+                return true;
+            }
+
+            // 3. Fallback to router MAC if on same subnet
+            if (_macDest != null && (_macDest[0] != 0 || _macDest[1] != 0 || _macDest[2] != 0) &&
+                (_macDest[0] != 0xFF || _macDest[1] != 0xFF))
+            {
+                Array.Copy(_macDest, 0, outMac, 0, 6);
+                return true;
+            }
+
+            return false;
+        }
+
         public static void SendArpRequest(byte[] targetIp)
         {
             if (targetIp == null || targetIp.Length != 4) return;
+            if (Cosmos.HAL.NetworkDevice.Devices.Count == 0) return;
             var nic = Cosmos.HAL.NetworkDevice.Devices[0];
+            _pendingArpIp = targetIp;
             _arpReplyReceived = false;
             byte[] arp = new byte[42];
             for (int i = 0; i < 6; i++) arp[i] = 0xFF; // Broadcast
