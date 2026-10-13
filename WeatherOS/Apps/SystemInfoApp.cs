@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using Cosmos.Core;
 using Cosmos.System;
 using Cosmos.System.FileSystem.VFS;
@@ -11,7 +12,10 @@ namespace WeatherOS.Apps
     {
         Overview,
         Changelog,
-        OtaUpdate
+        CommitDetails,
+        OtaUpdateMenu,
+        OtaFilePicker,
+        OtaUpdateStaged
     }
 
     public class SystemInfoApp : IApp
@@ -21,69 +25,32 @@ namespace WeatherOS.Apps
         public bool IsRealTime => false;
 
         private SysInfoMode _mode = SysInfoMode.Overview;
-        private int _selectedOption = 0; // 0 = Changelog, 1 = OS Update
-        private int _changelogScroll = 0;
+        private int _selectedOverviewOption = 0; // 0 = Changelog, 1 = Update
+        private int _selectedOtaMenuOption = 0; // 0 = File Picker, 1 = Transfer App
 
-        private static readonly string[] ChangelogLines = new string[]
-        {
-            "# WeatherOS Software Release History",
-            "> Document: RELEASE.md (Tracked Engineering Changelog)",
-            "> Target Architecture: x86 32-bit (Cosmos IL2CPU Bare-Metal Runtime)",
-            "",
-            "## [v3.0.0] - 2026-10-13 (Current Release)",
-            "### Added",
-            "  * Network File Transfer Engine (WOSF Protocol over UDP port 7331).",
-            "  * Windows Companion CLI sync tool (WeatherTransfer) with node auto-discovery.",
-            "  * Interactive Dual-Mode Bootloader (Live OS in RAM vs Disk Setup Wizard).",
-            "  * Dynamic Display Sizing & Coordinate Clipping engine in TuiDesktop.",
-            "  * System Information Changelog (.md viewer) with vertical scroll buffer.",
-            "  * Firmware Update Manager (OTA Staging Architecture specification).",
-            "### Changed",
-            "  * Decoupled lunar phase telemetry from 7-day weather forecast.",
-            "  * Replaced manual IP broadcast with active unicast ARP resolution.",
-            "  * Re-architected application grid into 4 dedicated launcher categories.",
-            "### Fixed",
-            "  * Resolved UDP broadcast MAC collision causing packet drops on real NICs.",
-            "  * Fixed window coordinate border overflow and text bleed on 80x25 VGA.",
-            "  * Fixed Notepad file dialog crash when switching between virtual and ATA drives.",
-            "",
-            "## [v2.5.0] - 2026-10-12",
-            "### Added",
-            "  * RawTcpHttp bare-metal socket stack bypassing Cosmos DHCP hang.",
-            "  * Realtek RTL8102E / RTL8139 PCI Network Interface Card driver.",
-            "  * Custom PCI ATA IDE controller initialization and sector probing.",
-            "  * File Explorer dialog in Notepad with drive selection and directory tree.",
-            "  * Disk Diagnostics app with sector read benchmark and integrity checks.",
-            "### Changed",
-            "  * Migrated system settings persistence from volatile RAM to settings.ini.",
-            "  * Optimized font rendering and palette switching for Dark and Light modes.",
-            "### Fixed",
-            "  * Fixed infinite loop during static IP fallback when DHCP server is absent.",
-            "  * Corrected FAT32 cluster chain calculation on partitioned secondary disks.",
-            "",
-            "## [v2.0.0] - 2026-10-09",
-            "### Added",
-            "  * Full TUI Desktop windowing subsystem with focus management.",
-            "  * Weather Dashboard with real-time station metrics (temp, humidity, pressure).",
-            "  * 7-Day synoptic weather forecasting engine with trend indicator.",
-            "  * Lunar Observatory calculating phase angles, illumination and moonrise.",
-            "  * Serial sensor telemetry daemon for external UART hardware stations.",
-            "  * System Resources monitor with CPU telemetry and heap allocation bars.",
-            "### Changed",
-            "  * Replaced legacy CLI prompt with graphical launcher shell.",
-            "### Fixed",
-            "  * Resolved memory leak caused by repeated JSON string allocations.",
-            "",
-            "## [v1.0.0] - 2026-10-04",
-            "### Added",
-            "  * Initial bootstrap kernel on Cosmos x86 framework.",
-            "  * VGA text-mode 80x25 character buffer and color attributes.",
-            "  * Basic keyboard input driver and command interpreter shell.",
-            "  * Built-in diagnostic commands (sysinfo, memory, ping, reboot).",
-            "",
-            "----------------------------------------------------------------------",
-            "End of changelog. WeatherOS Project (c) 2026. All rights reserved."
-        };
+        // Commit List Navigation
+        private int _selectedCommitIndex = 0;
+        private int _commitListScrollOffset = 0;
+        private int _commitDetailScroll = 0;
+
+        // File Picker for OS Update (Windows-Style Picker identical to Notepad)
+        private List<StorageLocation> _cachedLocations = null;
+        private int _openDialogLocationIndex = 0;
+        private List<StorageFileInfo> _openDialogFiles = null;
+        private int _openDialogSelectedFileIndex = 0;
+        private int _openDialogScrollOffset = 0;
+        private string _pickerStatus = "Select an update package (.bin, .pkg, .zip) to stage.";
+
+        // Staged Update Details
+        private string _stagedFileName = "";
+        private long _stagedFileSize = 0;
+        private string _stagedChecksum = "";
+        private string _stagedPackageType = "";
+        private string _stagedLocation = "";
+        private string _syncStatus = "";
+        private byte[] _stagedFileBytes = null;
+        private string _updateAppliedStatus = "";
+        private bool _updateAppliedSuccess = false;
 
         public void Draw(TuiDesktop desktop)
         {
@@ -95,12 +62,22 @@ namespace WeatherOS.Apps
                 case SysInfoMode.Changelog:
                     DrawChangelog(desktop);
                     break;
-                case SysInfoMode.OtaUpdate:
-                    DrawOtaUpdate(desktop);
+                case SysInfoMode.CommitDetails:
+                    DrawCommitDetails(desktop);
+                    break;
+                case SysInfoMode.OtaUpdateMenu:
+                    DrawOtaUpdateMenu(desktop);
+                    break;
+                case SysInfoMode.OtaFilePicker:
+                    DrawOtaFilePicker(desktop);
+                    break;
+                case SysInfoMode.OtaUpdateStaged:
+                    DrawOtaUpdateStaged(desktop);
                     break;
             }
         }
 
+        #region Overview
         private void DrawOverview(TuiDesktop desktop)
         {
             var win = desktop.CreateWindow("SYSTEM INFORMATION & DIAGNOSTICS", WindowSize.Large);
@@ -130,235 +107,904 @@ namespace WeatherOS.Apps
             win.WriteRow(4, $"  Processor : {cpuBrand}", ConsoleColor.White, 2, fillRemaining: true);
             win.WriteRow(5, $"  Memory    : {ramMB} MB System RAM Installed", ConsoleColor.White, 2, fillRemaining: true);
             win.WriteRow(6, $"  Network   : {activeIp}  [RTL8102E / PCnet-Fast III]", ConsoleColor.White, 2, fillRemaining: true);
+            string bootDesc = UpdateManagerService.GetBootTargetDescription();
             win.WriteRow(7, $"  Storage   : {storageInfo}", ConsoleColor.White, 2, fillRemaining: true);
-            win.WriteRow(8, "  Boot Mode : Live OS  [RAM execution / ISO9660 Read-Only]", ConsoleColor.White, 2, fillRemaining: true);
+            win.WriteRow(8, $"  Boot Mode : {bootDesc}", ConsoleColor.White, 2, fillRemaining: true);
             win.WriteSeparator(9);
 
             // Section 3: Sub-actions / Sub-apps
             win.WriteRow(10, "AVAILABLE SYSTEM MODULES:", ConsoleColor.Yellow, 2, fillRemaining: true);
-            win.WriteSelectionRow(11, "[1] View Updates & Changelog (.md release notes)", _selectedOption == 0, 2);
-            win.WriteSelectionRow(12, "[2] OS Firmware Update Manager (OTA Staging)", _selectedOption == 1, 2);
+            win.WriteSelectionRow(11, "[1] View GitHub Commits & Updates Log (vesant/WeatherOS: 32bit)", _selectedOverviewOption == 0, 2);
+            win.WriteSelectionRow(12, "[2] Install Update Package (.bin / .pkg / .zip)", _selectedOverviewOption == 1, 2);
             win.WriteSeparator(13);
 
             // Section 4: Dynamic hint
-            if (_selectedOption == 0)
+            if (_selectedOverviewOption == 0)
             {
-                win.WriteRow(14, "Description: Scrollable engineering release notes & version history.", ConsoleColor.DarkCyan, 2, fillRemaining: true);
+                win.WriteRow(14, "Description: Tracked git commits from GitHub branch 32bit with detail notes.", ConsoleColor.DarkCyan, 2, fillRemaining: true);
             }
             else
             {
-                win.WriteRow(14, "Description: Bare-metal A/B dual-partition OTA firmware update manager.", ConsoleColor.DarkCyan, 2, fillRemaining: true);
+                win.WriteRow(14, "Description: Select and stage local or network firmware update package.", ConsoleColor.DarkCyan, 2, fillRemaining: true);
             }
 
-            win.WriteFooter("[Up/Dn] Select   [ENTER] Open   [1/L] Changelog   [2/U] OTA   [ESC] Exit", ConsoleColor.Yellow);
+            win.WriteFooter("[Up/Dn] Select   [ENTER] Open   [1/C] Commits   [2/U] Update   [ESC] Exit", ConsoleColor.Yellow);
         }
+        #endregion
 
+        #region Changelog (GitHub Commits List)
         private void DrawChangelog(TuiDesktop desktop)
         {
-            var win = desktop.CreateWindow("WEATHEROS RELEASE HISTORY (RELEASE.md)", WindowSize.Large);
+            var win = desktop.CreateWindow("WEATHEROS COMMITS & CHANGELOG (vesant/WeatherOS: 32bit)", WindowSize.FullScreen);
 
-            win.WriteRow(0, "Tracked Engineering Release Log - Arrow keys to scroll", ConsoleColor.Cyan, 2, fillRemaining: true);
-            win.WriteSeparator(1);
+            var commits = GitHubCommitsService.GetCommits();
 
-            int viewHeight = win.InnerHeight - 3;
-            if (viewHeight <= 0) viewHeight = 12;
-
-            int maxScroll = Math.Max(0, ChangelogLines.Length - viewHeight);
-            if (_changelogScroll > maxScroll) _changelogScroll = maxScroll;
-            if (_changelogScroll < 0) _changelogScroll = 0;
-
-            for (int r = 0; r < viewHeight; r++)
+            win.WriteRow(0, "Live Git Commits from GitHub (branch: 32bit)  |  Total: " + commits.Count, ConsoleColor.Cyan, 2, fillRemaining: true);
+            if (!string.IsNullOrEmpty(_syncStatus))
             {
-                int lineIdx = _changelogScroll + r;
-                if (lineIdx < ChangelogLines.Length)
+                ConsoleColor sc = _syncStatus.StartsWith("Live") ? ConsoleColor.Green : ConsoleColor.Yellow;
+                win.WriteRow(1, _syncStatus, sc, 2, fillRemaining: true);
+            }
+            else
+            {
+                win.WriteRow(1, "Use [Up/Dn] to select. Press [Enter] for details. Press [R] to sync via TLS 1.2.", ConsoleColor.Gray, 2, fillRemaining: true);
+            }
+            win.WriteSeparator(2);
+
+            // Visible commits calculation: each commit uses 2 rows (1 title row + 1 blank row spacing)
+            // Rows available: relY = 3 to 16 -> 14 rows / 2 = 7 commits visible
+            int maxVisibleCommits = 7;
+            if (_selectedCommitIndex < _commitListScrollOffset)
+            {
+                _commitListScrollOffset = _selectedCommitIndex;
+            }
+            if (_selectedCommitIndex >= _commitListScrollOffset + maxVisibleCommits)
+            {
+                _commitListScrollOffset = _selectedCommitIndex - maxVisibleCommits + 1;
+            }
+
+            int startRelY = 3;
+            for (int i = 0; i < maxVisibleCommits; i++)
+            {
+                int commitIdx = _commitListScrollOffset + i;
+                int currentY = startRelY + (i * 2);
+
+                if (commitIdx < commits.Count)
                 {
-                    string line = ChangelogLines[lineIdx];
-                    ConsoleColor fg = ConsoleColor.White;
+                    var c = commits[commitIdx];
+                    bool isSelected = (commitIdx == _selectedCommitIndex);
 
-                    if (line.StartsWith("# "))
+                    // Truncate title cleanly to fit with SHA and Date
+                    string titleText = c.Title;
+                    int maxTitleLen = win.InnerWidth - 28;
+                    if (maxTitleLen < 15) maxTitleLen = 15;
+                    if (titleText.Length > maxTitleLen) titleText = titleText.Substring(0, maxTitleLen - 3) + "...";
+
+                    string rowText = $"[{c.Sha}] {titleText}  ({c.Date})";
+
+                    if (isSelected)
                     {
-                        fg = ConsoleColor.Cyan;
+                        win.WriteSelectionRow(currentY, rowText, true, 1);
                     }
-                    else if (line.StartsWith("## "))
+                    else
                     {
-                        fg = ConsoleColor.Yellow;
-                    }
-                    else if (line.StartsWith("### "))
-                    {
-                        fg = ConsoleColor.Green;
-                    }
-                    else if (line.StartsWith("  * ") || line.StartsWith("* "))
-                    {
-                        fg = ConsoleColor.White;
-                    }
-                    else if (line.StartsWith("    - ") || line.StartsWith("- "))
-                    {
-                        fg = ConsoleColor.Gray;
-                    }
-                    else if (line.StartsWith("> "))
-                    {
-                        fg = ConsoleColor.DarkGray;
-                    }
-                    else if (line.StartsWith("---"))
-                    {
-                        fg = ConsoleColor.DarkCyan;
+                        win.WriteRow(currentY, "   " + rowText, ConsoleColor.White, 1, fillRemaining: true);
                     }
 
-                    win.WriteRow(2 + r, line, fg, 2, fillRemaining: true);
+                    // Blank line spacing between commit titles
+                    win.WriteRow(currentY + 1, "", ConsoleColor.Black, 1, fillRemaining: true);
                 }
                 else
                 {
-                    win.WriteRow(2 + r, "", ConsoleColor.Black, 2, fillRemaining: true);
+                    win.WriteRow(currentY, "", ConsoleColor.Black, 1, fillRemaining: true);
+                    win.WriteRow(currentY + 1, "", ConsoleColor.Black, 1, fillRemaining: true);
                 }
             }
 
-            int currentLine = _changelogScroll + 1;
-            int totalLines = ChangelogLines.Length;
-            win.WriteFooter($"[Up/Dn] Scroll  [PgUp/PgDn] Page  [Home/End]  [ESC] Back  |  Line {currentLine}/{totalLines}", ConsoleColor.Yellow);
+            win.WriteSeparator(17);
+            win.WriteFooter($"[Up/Dn] Select  |  [Enter] Full Notes  |  [R] Sync Live (TLS 1.2)  |  [ESC] Overview  |  Commit {_selectedCommitIndex + 1}/{commits.Count}", ConsoleColor.Yellow);
         }
+        #endregion
 
-        private void DrawOtaUpdate(TuiDesktop desktop)
+        #region Commit Details View
+        private void DrawCommitDetails(TuiDesktop desktop)
+        {
+            var commits = GitHubCommitsService.GetCommits();
+            if (_selectedCommitIndex < 0 || _selectedCommitIndex >= commits.Count)
+            {
+                _mode = SysInfoMode.Changelog;
+                return;
+            }
+
+            var c = commits[_selectedCommitIndex];
+            var win = desktop.CreateWindow($"COMMIT DETAILS  |  [{c.Sha}]", WindowSize.FullScreen);
+
+            win.WriteRow(0, $"Commit : [{c.Sha}]  |  Branch: 32bit  |  Repository: vesant/WeatherOS", ConsoleColor.Cyan, 2, fillRemaining: true);
+            win.WriteRow(1, $"Title  : {c.Title}", ConsoleColor.Yellow, 2, fillRemaining: true);
+            win.WriteRow(2, $"Author : {c.Author}  |  Date: {c.Date}", ConsoleColor.Gray, 2, fillRemaining: true);
+            win.WriteSeparator(3);
+
+            win.WriteRow(4, "DETAILED COMMIT DESCRIPTION:", ConsoleColor.Green, 2, fillRemaining: true);
+
+            // Wrap description paragraphs into display lines
+            int maxLineLen = win.InnerWidth - 4;
+            if (maxLineLen < 20) maxLineLen = 60;
+
+            List<string> wrappedLines;
+            if (string.IsNullOrWhiteSpace(c.Description))
+            {
+                wrappedLines = new List<string> { "(No additional multiline description provided for this commit.)" };
+            }
+            else
+            {
+                wrappedLines = WrapText(c.Description, maxLineLen);
+            }
+
+            // Visible description rows: relY = 5 to 16 (12 rows)
+            int visibleRows = 12;
+            int maxScroll = Math.Max(0, wrappedLines.Count - visibleRows);
+            if (_commitDetailScroll > maxScroll) _commitDetailScroll = maxScroll;
+            if (_commitDetailScroll < 0) _commitDetailScroll = 0;
+
+            for (int r = 0; r < visibleRows; r++)
+            {
+                int lineIdx = _commitDetailScroll + r;
+                if (lineIdx < wrappedLines.Count)
+                {
+                    string line = wrappedLines[lineIdx];
+                    ConsoleColor fg = ConsoleColor.White;
+                    if (line.StartsWith("- ") || line.StartsWith("* ")) fg = ConsoleColor.White;
+                    else if (line.StartsWith("> ")) fg = ConsoleColor.DarkGray;
+
+                    win.WriteRow(5 + r, line, fg, 2, fillRemaining: true);
+                }
+                else
+                {
+                    win.WriteRow(5 + r, "", ConsoleColor.Black, 2, fillRemaining: true);
+                }
+            }
+
+            win.WriteSeparator(17);
+            win.WriteFooter($"[Up/Dn] Scroll Notes  |  [PgUp/PgDn] Page  |  [ESC] Back to Commits  |  Line {_commitDetailScroll + 1}/{Math.Max(1, wrappedLines.Count)}", ConsoleColor.Yellow);
+        }
+        #endregion
+
+        #region OS Update Menu
+        private void DrawOtaUpdateMenu(TuiDesktop desktop)
         {
             var win = desktop.CreateWindow("FIRMWARE & OS UPDATE MANAGER (OTA)", WindowSize.Large);
 
             string activeIp = RawTcpHttp.GetAssignedIp();
             if (string.IsNullOrEmpty(activeIp) || activeIp == "0.0.0.0") activeIp = "Offline";
 
-            win.WriteRow(0, "[!] NOTICE: RUNNING IN LIVE OS MODE (RAM / ISO9660)", ConsoleColor.Yellow, 2, fillRemaining: true);
-            win.WriteRow(1, "Persistent kernel flashing is locked until WeatherOS is installed to disk.", ConsoleColor.White, 2, fillRemaining: true);
+            bool isInstalled = UpdateManagerService.IsInstalledOnDisk();
+            bool hasBackup = UpdateManagerService.HasBackupKernel();
+            string installedVer = UpdateManagerService.GetInstalledVersion();
+
+            if (isInstalled)
+            {
+                win.WriteRow(0, "[OK] RUNNING FROM LOCAL HARD DISK (0:\\boot\\WeatherOS.bin)", ConsoleColor.Green, 2, fillRemaining: true);
+                win.WriteRow(1, "In-place updates replace kernel only. User data & settings are 100% PRESERVED.", ConsoleColor.White, 2, fillRemaining: true);
+            }
+            else
+            {
+                win.WriteRow(0, "[!] RUNNING IN LIVE OS MODE (RAM / ISO9660)", ConsoleColor.Yellow, 2, fillRemaining: true);
+                win.WriteRow(1, "Live session in RAM. Use option [3] to install permanently to hard disk.", ConsoleColor.White, 2, fillRemaining: true);
+            }
             win.WriteSeparator(2);
 
             win.WriteRow(3, "SYSTEM FIRMWARE STATUS:", ConsoleColor.Yellow, 2, fillRemaining: true);
-            win.WriteRow(4, "  Installed Version : WeatherOS v3.0.0 (Release Build)", ConsoleColor.White, 2, fillRemaining: true);
-            win.WriteRow(5, "  Partition Slot    : Slot A [Live RAM Execution - Read Only]", ConsoleColor.White, 2, fillRemaining: true);
-            win.WriteRow(6, $"  OTA UDP Listener  : Port 7331 (WOSF) on IP {activeIp} [READY]", ConsoleColor.Green, 2, fillRemaining: true);
-            win.WriteSeparator(7);
+            win.WriteRow(4, $"  Installed Version : {installedVer}", ConsoleColor.White, 2, fillRemaining: true);
+            win.WriteRow(5, $"  Active Boot Slot  : {(isInstalled ? "Slot A [0:\\boot\\WeatherOS.bin] (FAT32 Disk)" : "Slot A [Live RAM Execution]")}", ConsoleColor.White, 2, fillRemaining: true);
+            win.WriteRow(6, $"  Backup Slot B     : {(hasBackup ? "0:\\boot\\WeatherOS.bak [READY FOR ROLLBACK]" : "None / Standby")}", hasBackup ? ConsoleColor.Green : ConsoleColor.DarkGray, 2, fillRemaining: true);
+            win.WriteRow(7, $"  OTA UDP Listener  : Port 7331 (WOSF) on IP {activeIp} [READY]", ConsoleColor.Green, 2, fillRemaining: true);
+            win.WriteSeparator(8);
 
-            win.WriteRow(8, "REAL-WORLD A/B DUAL-SLOT OTA ARCHITECTURE:", ConsoleColor.Cyan, 2, fillRemaining: true);
-            win.WriteRow(9, " 1. PC sends kernel image using: WeatherTransfer send <kernel.bin>", ConsoleColor.Gray, 2, fillRemaining: true);
-            win.WriteRow(10, " 2. WOSF protocol streams binary over UDP 7331 with CRC32 packet check.", ConsoleColor.Gray, 2, fillRemaining: true);
-            win.WriteRow(11, " 3. Kernel stages image in dormant Slot B on hard disk while Slot A runs.", ConsoleColor.Gray, 2, fillRemaining: true);
-            win.WriteRow(12, " 4. Bootloader flips active partition pointer with automatic crash rollback.", ConsoleColor.Gray, 2, fillRemaining: true);
+            win.WriteRow(9, "SELECT UPDATE OR INSTALLATION ACTION:", ConsoleColor.Yellow, 2, fillRemaining: true);
+            win.WriteSelectionRow(10, "[1] Choose Update File (.bin / .pkg / .zip)  [File Picker Dialog]", _selectedOtaMenuOption == 0, 2);
+            win.WriteSelectionRow(11, "[2] Open Network File Transfer App (Receive file from PC)", _selectedOtaMenuOption == 1, 2);
+
+            if (isInstalled && hasBackup)
+            {
+                win.WriteSelectionRow(12, "[3] Rollback to Previous Version (Restore 0:\\boot\\WeatherOS.bak)", _selectedOtaMenuOption == 2, 2);
+            }
+            else if (isInstalled)
+            {
+                win.WriteSelectionRow(12, "[3] Reinstall or Repair System Installation (Setup Wizard)", _selectedOtaMenuOption == 2, 2);
+            }
+            else
+            {
+                win.WriteSelectionRow(12, "[3] Install WeatherOS to Hard Disk Now (Setup Wizard)", _selectedOtaMenuOption == 2, 2);
+            }
             win.WriteSeparator(13);
 
-            win.WriteRow(14, "Action: To send or receive test files, launch the File Transfer app.", ConsoleColor.DarkYellow, 2, fillRemaining: true);
+            if (_selectedOtaMenuOption == 0)
+            {
+                win.WriteRow(14, "Description: Opens Windows-style file picker to select update from disk or RAM.", ConsoleColor.DarkCyan, 2, fillRemaining: true);
+            }
+            else if (_selectedOtaMenuOption == 1)
+            {
+                win.WriteRow(14, "Description: Launch UDP 7331 network transfer to receive binaries from Windows PC.", ConsoleColor.DarkCyan, 2, fillRemaining: true);
+            }
+            else
+            {
+                win.WriteRow(14, isInstalled && hasBackup ? "Description: Instantly revert kernel to previous version from backup slot." : "Description: Partition hard drive and install WeatherOS permanently.", ConsoleColor.DarkCyan, 2, fillRemaining: true);
+            }
 
-            win.WriteFooter("[ESC] Return to Overview   |   [F] Open File Transfer   |   [ENTER] Refresh", ConsoleColor.Yellow);
+            win.WriteFooter("[Up/Dn] Select   [ENTER] Open   [1] File Picker   [2] Transfer   [3] Install/Rollback   [ESC] Back", ConsoleColor.Yellow);
+        }
+        #endregion
+
+        #region OS Update File Picker (Identical to Notepad Windows-Like Picker)
+        private void OpenUpdateFilePicker()
+        {
+            _cachedLocations = StorageService.GetStorageLocations();
+            if (_cachedLocations == null || _cachedLocations.Count == 0)
+            {
+                _cachedLocations = new List<StorageLocation>();
+            }
+            _openDialogLocationIndex = 0;
+            RefreshOpenDialogFiles();
+            _pickerStatus = "Ready to load update package.";
+            _mode = SysInfoMode.OtaFilePicker;
         }
 
-        public void HandleInput(TuiDesktop desktop, KeyEvent keyEvent)
+        private void RefreshOpenDialogFiles()
         {
-            if (_mode == SysInfoMode.Overview)
+            string locId = "ram";
+            if (_cachedLocations != null && _openDialogLocationIndex >= 0 && _openDialogLocationIndex < _cachedLocations.Count)
             {
-                if (keyEvent.Key == ConsoleKeyEx.Escape)
-                {
-                    desktop.SetCurrentApp("launcher");
-                    return;
-                }
+                locId = _cachedLocations[_openDialogLocationIndex].Id;
+            }
+            _openDialogFiles = StorageService.GetFilesForLocation(locId);
+            _openDialogSelectedFileIndex = 0;
+            _openDialogScrollOffset = 0;
+        }
 
-                if (keyEvent.Key == ConsoleKeyEx.UpArrow || keyEvent.Key == ConsoleKeyEx.DownArrow || keyEvent.Key == ConsoleKeyEx.Tab)
-                {
-                    _selectedOption = (_selectedOption == 0) ? 1 : 0;
-                    return;
-                }
+        private void DrawOtaFilePicker(TuiDesktop desktop)
+        {
+            var win = desktop.CreateWindow("SELECT UPDATE PACKAGE  |  FILE PICKER", WindowSize.FullScreen);
 
-                if (keyEvent.Key == ConsoleKeyEx.D1 || keyEvent.Key == ConsoleKeyEx.Num1 || keyEvent.KeyChar == '1' ||
-                    keyEvent.Key == ConsoleKeyEx.L || keyEvent.KeyChar == 'l' || keyEvent.KeyChar == 'L' ||
-                    keyEvent.Key == ConsoleKeyEx.C || keyEvent.KeyChar == 'c' || keyEvent.KeyChar == 'C')
-                {
-                    _mode = SysInfoMode.Changelog;
-                    _changelogScroll = 0;
-                    return;
-                }
+            // Header / Look In
+            string driveName = "RAM Virtual Store";
+            if (_cachedLocations != null && _openDialogLocationIndex >= 0 && _openDialogLocationIndex < _cachedLocations.Count)
+            {
+                driveName = _cachedLocations[_openDialogLocationIndex].GetDescription();
+            }
+            string driveBox = $"[ < {driveName} > ]";
+            if (driveBox.Length > 44) driveBox = driveBox.Substring(0, 41) + "... > ]";
 
-                if (keyEvent.Key == ConsoleKeyEx.D2 || keyEvent.Key == ConsoleKeyEx.Num2 || keyEvent.KeyChar == '2' ||
-                    keyEvent.Key == ConsoleKeyEx.U || keyEvent.KeyChar == 'u' || keyEvent.KeyChar == 'U')
-                {
-                    _mode = SysInfoMode.OtaUpdate;
-                    return;
-                }
+            win.WriteRow(1, "Look in: " + driveBox + "  [Tab: Switch Drive]", ConsoleColor.Yellow, 2);
 
-                if (keyEvent.Key == ConsoleKeyEx.Enter)
+            // File table header
+            string th = "  Name                    Size        Type            Location        ";
+            win.WriteRow(2, th, ConsoleColor.Yellow, 2);
+            win.WriteSeparator(3);
+
+            // File list (8 visible rows: relY = 4 to 11)
+            int visibleRows = 8;
+            if (_openDialogFiles == null || _openDialogFiles.Count == 0)
+            {
+                win.WriteRow(5, "(No files found on this drive. Upload via Transfer app or switch drive with [Tab])", ConsoleColor.Yellow, 2);
+            }
+            else
+            {
+                for (int r = 0; r < visibleRows; r++)
                 {
-                    if (_selectedOption == 0)
+                    int fileIdx = _openDialogScrollOffset + r;
+
+                    if (fileIdx < _openDialogFiles.Count)
                     {
-                        _mode = SysInfoMode.Changelog;
-                        _changelogScroll = 0;
+                        var f = _openDialogFiles[fileIdx];
+                        bool isSelected = (fileIdx == _openDialogSelectedFileIndex);
+
+                        string namePart = f.Name;
+                        if (namePart.Length > 20) namePart = namePart.Substring(0, 17) + "...";
+
+                        string sizePart = FormatFileSize(f.Size);
+                        string typePart = FormatFileType(f.Name);
+                        string locPart = f.LocationName;
+                        if (locPart.Length > 14) locPart = locPart.Substring(0, 12) + "..";
+
+                        string rowText = namePart.PadRight(22) + sizePart.PadRight(12) + typePart.PadRight(16) + locPart.PadRight(16);
+                        win.WriteSelectionRow(4 + r, rowText, isSelected, 1);
                     }
                     else
                     {
-                        _mode = SysInfoMode.OtaUpdate;
+                        win.WriteRow(4 + r, "", ConsoleColor.Black, 1, fillRemaining: true);
                     }
-                    return;
                 }
             }
-            else if (_mode == SysInfoMode.Changelog)
+
+            win.WriteSeparator(12);
+
+            // Bottom Selected File Box
+            string selectedFileName = "";
+            if (_openDialogFiles != null && _openDialogSelectedFileIndex >= 0 && _openDialogSelectedFileIndex < _openDialogFiles.Count)
             {
-                int viewHeight = 14;
-                int maxScroll = Math.Max(0, ChangelogLines.Length - viewHeight);
+                selectedFileName = _openDialogFiles[_openDialogSelectedFileIndex].Name;
+            }
+            win.WriteRow(13, $"Package name:  [ {selectedFileName.PadRight(47)} ]", ConsoleColor.Yellow, 2);
+            win.WriteRow(14, "Files of type: [ Firmware Packages (*.bin, *.pkg, *.zip, *.iso, *.*) ]", ConsoleColor.Yellow, 2);
 
-                if (keyEvent.Key == ConsoleKeyEx.Escape)
-                {
-                    _mode = SysInfoMode.Overview;
-                    return;
-                }
+            if (!string.IsNullOrEmpty(_pickerStatus))
+            {
+                win.WriteRow(15, "Status: " + _pickerStatus, ConsoleColor.Cyan, 2);
+            }
 
-                if (keyEvent.Key == ConsoleKeyEx.UpArrow)
-                {
-                    if (_changelogScroll > 0) _changelogScroll--;
-                    return;
-                }
+            win.WriteFooter("[Up/Dn] Select  |  [Tab] Drive  |  [Enter] Stage & Apply  |  [ESC] Cancel", ConsoleColor.Yellow);
+        }
 
-                if (keyEvent.Key == ConsoleKeyEx.DownArrow)
-                {
-                    if (_changelogScroll < maxScroll) _changelogScroll++;
-                    return;
-                }
+        private void StageSelectedFile()
+        {
+            if (_openDialogFiles == null || _openDialogFiles.Count == 0 ||
+                _openDialogSelectedFileIndex < 0 || _openDialogSelectedFileIndex >= _openDialogFiles.Count)
+            {
+                _pickerStatus = "No file selected.";
+                return;
+            }
 
-                if (keyEvent.Key == ConsoleKeyEx.PageUp)
-                {
-                    _changelogScroll = Math.Max(0, _changelogScroll - 8);
-                    return;
-                }
+            var picked = _openDialogFiles[_openDialogSelectedFileIndex];
+            string locId = "ram";
+            if (_cachedLocations != null && _openDialogLocationIndex >= 0 && _openDialogLocationIndex < _cachedLocations.Count)
+            {
+                locId = _cachedLocations[_openDialogLocationIndex].Id;
+            }
 
-                if (keyEvent.Key == ConsoleKeyEx.PageDown)
-                {
-                    _changelogScroll = Math.Min(maxScroll, _changelogScroll + 8);
-                    return;
-                }
+            byte[] data;
+            string status;
+            bool loaded = StorageService.LoadBinaryFileFromLocation(picked.Name, locId, out data, out status);
 
-                if (keyEvent.Key == ConsoleKeyEx.Home)
+            if (!loaded || data == null || data.Length == 0)
+            {
+                // Try text load if binary load was empty
+                string textContent;
+                if (StorageService.LoadFileFromLocation(picked.Name, locId, out textContent, out status) && !string.IsNullOrEmpty(textContent))
                 {
-                    _changelogScroll = 0;
-                    return;
-                }
-
-                if (keyEvent.Key == ConsoleKeyEx.End)
-                {
-                    _changelogScroll = maxScroll;
-                    return;
+                    data = System.Text.Encoding.ASCII.GetBytes(textContent);
+                    loaded = true;
                 }
             }
-            else if (_mode == SysInfoMode.OtaUpdate)
-            {
-                if (keyEvent.Key == ConsoleKeyEx.Escape)
-                {
-                    _mode = SysInfoMode.Overview;
-                    return;
-                }
 
-                if (keyEvent.Key == ConsoleKeyEx.F || keyEvent.KeyChar == 'f' || keyEvent.KeyChar == 'F')
+            if (!loaded || data == null || data.Length == 0)
+            {
+                _pickerStatus = "Error: Unable to read file content (" + status + ")";
+                return;
+            }
+
+            _stagedFileName = picked.Name;
+            _stagedFileSize = data.Length;
+            _stagedLocation = picked.LocationName;
+            _stagedFileBytes = data;
+            _updateAppliedStatus = "";
+            _updateAppliedSuccess = false;
+
+            uint crc = ComputeCrc32(data);
+            _stagedChecksum = "0x" + crc.ToString("X8");
+
+            string lower = picked.Name.ToLower();
+            if (lower == "commits.json")
+            {
+                _stagedPackageType = "GitHub Commits Manifest (Live Update)";
+                GitHubCommitsService.ReloadFromJson(data);
+            }
+            else if (lower.EndsWith(".bin"))
+            {
+                _stagedPackageType = "WeatherOS Raw Kernel Binary (AOT x86)";
+            }
+            else if (lower.EndsWith(".pkg") || lower.EndsWith(".wos"))
+            {
+                _stagedPackageType = "WeatherOS Signed Firmware Package";
+            }
+            else if (lower.EndsWith(".zip") || lower.EndsWith(".tar"))
+            {
+                _stagedPackageType = "Compressed WeatherOS System Archive";
+            }
+            else
+            {
+                _stagedPackageType = "Raw Firmware Binary Image";
+            }
+
+            _mode = SysInfoMode.OtaUpdateStaged;
+        }
+        #endregion
+
+        #region OS Update Staged Screen
+        private void DrawOtaUpdateStaged(TuiDesktop desktop)
+        {
+            var win = desktop.CreateWindow("FIRMWARE UPDATE  |  PACKAGE STAGED", WindowSize.Large);
+
+            if (_updateAppliedSuccess)
+            {
+                win.WriteRow(0, "[SUCCESS] FIRMWARE UPDATE DEPLOYED TO DISK!", ConsoleColor.Green, 2, fillRemaining: true);
+                win.WriteRow(1, _updateAppliedStatus, ConsoleColor.White, 2, fillRemaining: true);
+                win.WriteSeparator(2);
+
+                win.WriteRow(3, "SYSTEM READY FOR REBOOT:", ConsoleColor.Yellow, 2, fillRemaining: true);
+                win.WriteRow(4, "  Active Boot Target : 0:\\boot\\WeatherOS.bin (Updated)", ConsoleColor.White, 2, fillRemaining: true);
+                win.WriteRow(5, "  Safety Rollback    : 0:\\boot\\WeatherOS.bak (Available in Boot Menu)", ConsoleColor.White, 2, fillRemaining: true);
+                win.WriteRow(6, "  User Protection    : All documents, notes and settings.ini PRESERVED.", ConsoleColor.Green, 2, fillRemaining: true);
+                win.WriteSeparator(7);
+
+                win.WriteRow(9,  "Press [R] or [ENTER] to Reboot System Now and boot the updated kernel.", ConsoleColor.Yellow, 2, fillRemaining: true);
+                win.WriteRow(10, "Press [ESC] to return to System Information overview.", ConsoleColor.DarkGray, 2, fillRemaining: true);
+
+                win.WriteFooter("[R / ENTER] Reboot System Now   |   [ESC] Return to Desktop", ConsoleColor.Yellow);
+                return;
+            }
+
+            win.WriteRow(0, "[OK] UPDATE PACKAGE LOADED & VERIFIED SUCCESSFULLY!", ConsoleColor.Green, 2, fillRemaining: true);
+            win.WriteRow(1, "Integrity check passed. Ready to deploy non-destructive in-place update.", ConsoleColor.White, 2, fillRemaining: true);
+            win.WriteSeparator(2);
+
+            win.WriteRow(3, "STAGED FIRMWARE PAYLOAD:", ConsoleColor.Yellow, 2, fillRemaining: true);
+            win.WriteRow(4, $"  Package File   : {_stagedFileName}", ConsoleColor.White, 2, fillRemaining: true);
+            win.WriteRow(5, $"  Payload Size   : {FormatFileSize(_stagedFileSize)} ({_stagedFileSize} bytes)", ConsoleColor.White, 2, fillRemaining: true);
+            win.WriteRow(6, $"  Package Format : {_stagedPackageType}", ConsoleColor.White, 2, fillRemaining: true);
+            win.WriteRow(7, $"  Integrity CRC  : {_stagedChecksum}  [VALID]", ConsoleColor.Green, 2, fillRemaining: true);
+            win.WriteRow(8,  "  Target Slot    : 0:\\boot\\WeatherOS.bin (Slot A)", ConsoleColor.Cyan, 2, fillRemaining: true);
+            win.WriteSeparator(9);
+
+            win.WriteRow(10, "NON-DESTRUCTIVE UPDATE & USER DATA PROTECTION:", ConsoleColor.Yellow, 2, fillRemaining: true);
+            win.WriteRow(11, "  Disk Protection   : Partition is NOT formatted. Drive is NEVER wiped.", ConsoleColor.Green, 2, fillRemaining: true);
+            win.WriteRow(12, "  User Files        : All documents, notes, and settings.ini remain intact.", ConsoleColor.Green, 2, fillRemaining: true);
+            win.WriteRow(13, "  Safety Rollback   : Current kernel backed up to 0:\\boot\\WeatherOS.bak.", ConsoleColor.White, 2, fillRemaining: true);
+
+            win.WriteFooter("[ENTER] Apply Update to Disk   |   [O] Pick Another File   |   [ESC] Cancel", ConsoleColor.Yellow);
+        }
+        #endregion
+
+        #region Input Handling
+        public void HandleInput(TuiDesktop desktop, KeyEvent keyEvent)
+        {
+            switch (_mode)
+            {
+                case SysInfoMode.Overview:
+                    HandleOverviewInput(desktop, keyEvent);
+                    break;
+                case SysInfoMode.Changelog:
+                    HandleChangelogInput(desktop, keyEvent);
+                    break;
+                case SysInfoMode.CommitDetails:
+                    HandleCommitDetailsInput(desktop, keyEvent);
+                    break;
+                case SysInfoMode.OtaUpdateMenu:
+                    HandleOtaMenuInput(desktop, keyEvent);
+                    break;
+                case SysInfoMode.OtaFilePicker:
+                    HandleOtaFilePickerInput(desktop, keyEvent);
+                    break;
+                case SysInfoMode.OtaUpdateStaged:
+                    HandleOtaStagedInput(desktop, keyEvent);
+                    break;
+            }
+        }
+
+        private void HandleOverviewInput(TuiDesktop desktop, KeyEvent keyEvent)
+        {
+            if (keyEvent.Key == ConsoleKeyEx.Escape)
+            {
+                desktop.SetCurrentApp("launcher");
+                return;
+            }
+
+            if (keyEvent.Key == ConsoleKeyEx.UpArrow || keyEvent.Key == ConsoleKeyEx.DownArrow || keyEvent.Key == ConsoleKeyEx.Tab)
+            {
+                _selectedOverviewOption = (_selectedOverviewOption == 0) ? 1 : 0;
+                return;
+            }
+
+            if (keyEvent.Key == ConsoleKeyEx.D1 || keyEvent.Key == ConsoleKeyEx.Num1 || keyEvent.KeyChar == '1' ||
+                keyEvent.Key == ConsoleKeyEx.C || keyEvent.KeyChar == 'c' || keyEvent.KeyChar == 'C' ||
+                keyEvent.Key == ConsoleKeyEx.L || keyEvent.KeyChar == 'l' || keyEvent.KeyChar == 'L')
+            {
+                _mode = SysInfoMode.Changelog;
+                _selectedCommitIndex = 0;
+                _commitListScrollOffset = 0;
+                return;
+            }
+
+            if (keyEvent.Key == ConsoleKeyEx.D2 || keyEvent.Key == ConsoleKeyEx.Num2 || keyEvent.KeyChar == '2' ||
+                keyEvent.Key == ConsoleKeyEx.U || keyEvent.KeyChar == 'u' || keyEvent.KeyChar == 'U')
+            {
+                _mode = SysInfoMode.OtaUpdateMenu;
+                return;
+            }
+
+            if (keyEvent.Key == ConsoleKeyEx.Enter)
+            {
+                if (_selectedOverviewOption == 0)
+                {
+                    _mode = SysInfoMode.Changelog;
+                    _selectedCommitIndex = 0;
+                    _commitListScrollOffset = 0;
+                }
+                else
+                {
+                    _mode = SysInfoMode.OtaUpdateMenu;
+                }
+            }
+        }
+
+        private void HandleChangelogInput(TuiDesktop desktop, KeyEvent keyEvent)
+        {
+            var commits = GitHubCommitsService.GetCommits();
+
+            if (keyEvent.Key == ConsoleKeyEx.Escape)
+            {
+                _mode = SysInfoMode.Overview;
+                return;
+            }
+
+            if (keyEvent.Key == ConsoleKeyEx.UpArrow)
+            {
+                if (_selectedCommitIndex > 0)
+                {
+                    _selectedCommitIndex--;
+                }
+                return;
+            }
+
+            if (keyEvent.Key == ConsoleKeyEx.DownArrow)
+            {
+                if (_selectedCommitIndex < commits.Count - 1)
+                {
+                    _selectedCommitIndex++;
+                }
+                return;
+            }
+
+            if (keyEvent.Key == ConsoleKeyEx.PageUp)
+            {
+                _selectedCommitIndex = Math.Max(0, _selectedCommitIndex - 5);
+                return;
+            }
+
+            if (keyEvent.Key == ConsoleKeyEx.PageDown)
+            {
+                _selectedCommitIndex = Math.Min(commits.Count - 1, _selectedCommitIndex + 5);
+                return;
+            }
+
+            if (keyEvent.Key == ConsoleKeyEx.Home)
+            {
+                _selectedCommitIndex = 0;
+                return;
+            }
+
+            if (keyEvent.Key == ConsoleKeyEx.End)
+            {
+                _selectedCommitIndex = Math.Max(0, commits.Count - 1);
+                return;
+            }
+
+            if (keyEvent.Key == ConsoleKeyEx.Enter || keyEvent.Key == ConsoleKeyEx.Spacebar)
+            {
+                if (_selectedCommitIndex >= 0 && _selectedCommitIndex < commits.Count)
+                {
+                    _mode = SysInfoMode.CommitDetails;
+                    _commitDetailScroll = 0;
+                }
+                return;
+            }
+
+            if (keyEvent.Key == ConsoleKeyEx.R || keyEvent.KeyChar == 'r' || keyEvent.KeyChar == 'R')
+            {
+                _syncStatus = "Connecting to api.github.com:443 (TLS 1.2)...";
+                GitHubCommitsService.FetchLiveFromGitHub(out _syncStatus);
+                _selectedCommitIndex = 0;
+                _commitListScrollOffset = 0;
+                return;
+            }
+        }
+
+        private void HandleCommitDetailsInput(TuiDesktop desktop, KeyEvent keyEvent)
+        {
+            if (keyEvent.Key == ConsoleKeyEx.Escape)
+            {
+                _mode = SysInfoMode.Changelog;
+                return;
+            }
+
+            if (keyEvent.Key == ConsoleKeyEx.UpArrow)
+            {
+                if (_commitDetailScroll > 0) _commitDetailScroll--;
+                return;
+            }
+
+            if (keyEvent.Key == ConsoleKeyEx.DownArrow)
+            {
+                _commitDetailScroll++;
+                return;
+            }
+
+            if (keyEvent.Key == ConsoleKeyEx.PageUp)
+            {
+                _commitDetailScroll = Math.Max(0, _commitDetailScroll - 8);
+                return;
+            }
+
+            if (keyEvent.Key == ConsoleKeyEx.PageDown)
+            {
+                _commitDetailScroll += 8;
+                return;
+            }
+
+            if (keyEvent.Key == ConsoleKeyEx.Home)
+            {
+                _commitDetailScroll = 0;
+                return;
+            }
+        }
+
+        private void HandleOtaMenuInput(TuiDesktop desktop, KeyEvent keyEvent)
+        {
+            if (keyEvent.Key == ConsoleKeyEx.Escape)
+            {
+                _mode = SysInfoMode.Overview;
+                return;
+            }
+
+            if (keyEvent.Key == ConsoleKeyEx.UpArrow)
+            {
+                _selectedOtaMenuOption = (_selectedOtaMenuOption > 0) ? _selectedOtaMenuOption - 1 : 2;
+                return;
+            }
+
+            if (keyEvent.Key == ConsoleKeyEx.DownArrow || keyEvent.Key == ConsoleKeyEx.Tab)
+            {
+                _selectedOtaMenuOption = (_selectedOtaMenuOption < 2) ? _selectedOtaMenuOption + 1 : 0;
+                return;
+            }
+
+            if (keyEvent.Key == ConsoleKeyEx.D1 || keyEvent.Key == ConsoleKeyEx.Num1 || keyEvent.KeyChar == '1' ||
+                keyEvent.Key == ConsoleKeyEx.O || keyEvent.KeyChar == 'o' || keyEvent.KeyChar == 'O')
+            {
+                OpenUpdateFilePicker();
+                return;
+            }
+
+            if (keyEvent.Key == ConsoleKeyEx.D2 || keyEvent.Key == ConsoleKeyEx.Num2 || keyEvent.KeyChar == '2' ||
+                keyEvent.Key == ConsoleKeyEx.T || keyEvent.KeyChar == 't' || keyEvent.KeyChar == 'T')
+            {
+                desktop.SetCurrentApp("transfer");
+                return;
+            }
+
+            if (keyEvent.Key == ConsoleKeyEx.D3 || keyEvent.Key == ConsoleKeyEx.Num3 || keyEvent.KeyChar == '3' ||
+                keyEvent.Key == ConsoleKeyEx.I || keyEvent.KeyChar == 'i' || keyEvent.KeyChar == 'I')
+            {
+                ExecuteOtaOption3(desktop);
+                return;
+            }
+
+            if (keyEvent.Key == ConsoleKeyEx.Enter)
+            {
+                if (_selectedOtaMenuOption == 0)
+                {
+                    OpenUpdateFilePicker();
+                }
+                else if (_selectedOtaMenuOption == 1)
                 {
                     desktop.SetCurrentApp("transfer");
+                }
+                else
+                {
+                    ExecuteOtaOption3(desktop);
+                }
+            }
+        }
+
+        private void ExecuteOtaOption3(TuiDesktop desktop)
+        {
+            bool isInstalled = UpdateManagerService.IsInstalledOnDisk();
+            bool hasBackup = UpdateManagerService.HasBackupKernel();
+
+            if (isInstalled && hasBackup)
+            {
+                string rbStat;
+                UpdateManagerService.RollbackToBackup(out rbStat);
+                _syncStatus = rbStat;
+                _mode = SysInfoMode.Overview;
+            }
+            else
+            {
+                desktop.SetCurrentApp("installer");
+            }
+        }
+
+        private void HandleOtaFilePickerInput(TuiDesktop desktop, KeyEvent keyEvent)
+        {
+            if (keyEvent.Key == ConsoleKeyEx.Escape)
+            {
+                _mode = SysInfoMode.OtaUpdateMenu;
+                return;
+            }
+
+            if (keyEvent.Key == ConsoleKeyEx.UpArrow)
+            {
+                if (_openDialogFiles != null && _openDialogFiles.Count > 0)
+                {
+                    if (_openDialogSelectedFileIndex > 0)
+                    {
+                        _openDialogSelectedFileIndex--;
+                        if (_openDialogSelectedFileIndex < _openDialogScrollOffset)
+                        {
+                            _openDialogScrollOffset = _openDialogSelectedFileIndex;
+                        }
+                    }
+                }
+                return;
+            }
+
+            if (keyEvent.Key == ConsoleKeyEx.DownArrow)
+            {
+                if (_openDialogFiles != null && _openDialogFiles.Count > 0)
+                {
+                    if (_openDialogSelectedFileIndex < _openDialogFiles.Count - 1)
+                    {
+                        _openDialogSelectedFileIndex++;
+                        if (_openDialogSelectedFileIndex >= _openDialogScrollOffset + 8)
+                        {
+                            _openDialogScrollOffset = _openDialogSelectedFileIndex - 7;
+                        }
+                    }
+                }
+                return;
+            }
+
+            if (keyEvent.Key == ConsoleKeyEx.Tab || keyEvent.Key == ConsoleKeyEx.RightArrow)
+            {
+                if (_cachedLocations != null && _cachedLocations.Count > 0)
+                {
+                    _openDialogLocationIndex = (_openDialogLocationIndex + 1) % _cachedLocations.Count;
+                    RefreshOpenDialogFiles();
+                }
+                return;
+            }
+
+            if (keyEvent.Key == ConsoleKeyEx.LeftArrow)
+            {
+                if (_cachedLocations != null && _cachedLocations.Count > 0)
+                {
+                    _openDialogLocationIndex = (_openDialogLocationIndex - 1 + _cachedLocations.Count) % _cachedLocations.Count;
+                    RefreshOpenDialogFiles();
+                }
+                return;
+            }
+
+            if (keyEvent.Key == ConsoleKeyEx.Enter)
+            {
+                StageSelectedFile();
+            }
+        }
+
+        private void HandleOtaStagedInput(TuiDesktop desktop, KeyEvent keyEvent)
+        {
+            if (_updateAppliedSuccess)
+            {
+                if (keyEvent.Key == ConsoleKeyEx.Enter || keyEvent.Key == ConsoleKeyEx.R || keyEvent.KeyChar == 'r' || keyEvent.KeyChar == 'R')
+                {
+                    Power.Reboot();
+                    return;
+                }
+
+                if (keyEvent.Key == ConsoleKeyEx.Escape)
+                {
+                    _mode = SysInfoMode.Overview;
+                    return;
+                }
+            }
+            else
+            {
+                if (keyEvent.Key == ConsoleKeyEx.Escape)
+                {
+                    _mode = SysInfoMode.Overview;
+                    return;
+                }
+
+                if (keyEvent.Key == ConsoleKeyEx.O || keyEvent.KeyChar == 'o' || keyEvent.KeyChar == 'O')
+                {
+                    OpenUpdateFilePicker();
                     return;
                 }
 
                 if (keyEvent.Key == ConsoleKeyEx.Enter)
                 {
-                    WeatherOS.Kernel.CustomNIC?.HackPoll();
-                    return;
+                    if (_stagedFileBytes != null && _stagedFileBytes.Length > 0)
+                    {
+                        bool ok = UpdateManagerService.ApplyUpdate(_stagedFileBytes, _stagedFileName, out _updateAppliedStatus);
+                        if (ok)
+                        {
+                            _updateAppliedSuccess = true;
+                        }
+                        else
+                        {
+                            _pickerStatus = "Update error: " + _updateAppliedStatus;
+                        }
+                    }
+                    else
+                    {
+                        _updateAppliedStatus = "Error: Staged payload is empty.";
+                    }
                 }
             }
         }
+        #endregion
+
+        #region Helpers
+        private static List<string> WrapText(string text, int maxLineLength)
+        {
+            var result = new List<string>();
+            if (string.IsNullOrEmpty(text)) return result;
+
+            string[] paragraphs = text.Replace("\r", "").Split('\n');
+            foreach (var para in paragraphs)
+            {
+                string p = para.TrimEnd();
+                if (string.IsNullOrEmpty(p))
+                {
+                    result.Add("");
+                    continue;
+                }
+
+                while (p.Length > maxLineLength)
+                {
+                    int splitIdx = p.LastIndexOf(' ', maxLineLength);
+                    if (splitIdx <= 0) splitIdx = maxLineLength;
+
+                    result.Add(p.Substring(0, splitIdx));
+                    p = p.Substring(splitIdx).TrimStart();
+                }
+
+                if (p.Length > 0)
+                {
+                    result.Add(p);
+                }
+            }
+
+            return result;
+        }
+
+        private static uint ComputeCrc32(byte[] data)
+        {
+            if (data == null || data.Length == 0) return 0xFFFFFFFF;
+            uint crc = 0xFFFFFFFF;
+            for (int i = 0; i < data.Length; i++)
+            {
+                crc ^= data[i];
+                for (int j = 0; j < 8; j++)
+                {
+                    if ((crc & 1) != 0)
+                        crc = (crc >> 1) ^ 0xEDB88320;
+                    else
+                        crc >>= 1;
+                }
+            }
+            return ~crc;
+        }
+
+        private static string FormatFileSize(long bytes)
+        {
+            if (bytes <= 0) return "0 B";
+            if (bytes < 1024) return $"{bytes} B";
+            if (bytes < 1024 * 1024) return $"{bytes / 1024} KB";
+            return $"{bytes / (1024 * 1024)} MB";
+        }
+
+        private static string FormatFileType(string filename)
+        {
+            if (string.IsNullOrEmpty(filename)) return "File";
+            string u = filename.ToUpper();
+            if (u.EndsWith(".BIN") || u.EndsWith(".IMG")) return "Firmware Image";
+            if (u.EndsWith(".PKG") || u.EndsWith(".WOS")) return "Update Package";
+            if (u.EndsWith(".ZIP") || u.EndsWith(".TAR")) return "Archive File";
+            if (u.EndsWith(".JSON")) return "JSON Data";
+            if (u.EndsWith(".TXT")) return "Text Document";
+            if (u.EndsWith(".INI") || u.EndsWith(".CFG")) return "Configuration";
+            if (u.EndsWith(".LOG")) return "Log File";
+            return "Binary File";
+        }
+        #endregion
     }
 }

@@ -1,70 +1,105 @@
 using System;
 using Cosmos.System;
+using WeatherOS.Services;
 
 namespace WeatherOS.Graphics
 {
     public enum BootMode
     {
         LiveOS,
-        InstallToDisk
+        InstallToDisk,
+        BootFromDisk
     }
 
     public static class BootMenu
     {
         public static BootMode Show()
         {
-            int selectedIndex = 0; // 0 = Live OS, 1 = Install to Disk
+            bool isInstalled = UpdateManagerService.IsInstalledOnDisk();
+            int maxOptions = isInstalled ? 3 : 2;
+            int selectedIndex = 0;
             bool menuRunning = true;
+            BootMode chosenMode = isInstalled ? BootMode.BootFromDisk : BootMode.LiveOS;
 
             System.Console.CursorVisible = false;
 
             while (menuRunning)
             {
-                DrawMenu(selectedIndex);
+                DrawMenu(selectedIndex, isInstalled);
 
                 var keyEvent = KeyboardManager.ReadKey();
 
-                if (keyEvent.Key == ConsoleKeyEx.UpArrow || keyEvent.Key == ConsoleKeyEx.DownArrow || keyEvent.Key == ConsoleKeyEx.Tab)
+                if (keyEvent.Key == ConsoleKeyEx.UpArrow)
                 {
-                    selectedIndex = (selectedIndex == 0) ? 1 : 0;
+                    selectedIndex = (selectedIndex > 0) ? selectedIndex - 1 : maxOptions - 1;
+                }
+                else if (keyEvent.Key == ConsoleKeyEx.DownArrow || keyEvent.Key == ConsoleKeyEx.Tab)
+                {
+                    selectedIndex = (selectedIndex < maxOptions - 1) ? selectedIndex + 1 : 0;
                 }
                 else if (keyEvent.Key == ConsoleKeyEx.D1 || keyEvent.Key == ConsoleKeyEx.Num1 || keyEvent.KeyChar == '1')
                 {
                     selectedIndex = 0;
-                    DrawMenu(selectedIndex);
                     menuRunning = false;
                 }
                 else if (keyEvent.Key == ConsoleKeyEx.D2 || keyEvent.Key == ConsoleKeyEx.Num2 || keyEvent.KeyChar == '2')
                 {
                     selectedIndex = 1;
-                    DrawMenu(selectedIndex);
-                    ShowInstallerNoticeDialog();
+                    menuRunning = false;
+                }
+                else if (isInstalled && (keyEvent.Key == ConsoleKeyEx.D3 || keyEvent.Key == ConsoleKeyEx.Num3 || keyEvent.KeyChar == '3'))
+                {
+                    selectedIndex = 2;
+                    menuRunning = false;
                 }
                 else if (keyEvent.Key == ConsoleKeyEx.Enter)
                 {
-                    if (selectedIndex == 0)
-                    {
-                        menuRunning = false;
-                    }
-                    else
-                    {
-                        ShowInstallerNoticeDialog();
-                    }
+                    menuRunning = false;
+                }
+            }
+
+            if (isInstalled)
+            {
+                if (selectedIndex == 0)
+                {
+                    UpdateManagerService.SetBootSource(BootSource.HardDisk);
+                    chosenMode = BootMode.BootFromDisk;
+                }
+                else if (selectedIndex == 1)
+                {
+                    UpdateManagerService.SetBootSource(BootSource.LiveRam);
+                    chosenMode = BootMode.LiveOS;
+                }
+                else
+                {
+                    chosenMode = BootMode.InstallToDisk;
+                }
+            }
+            else
+            {
+                if (selectedIndex == 0)
+                {
+                    UpdateManagerService.SetBootSource(BootSource.LiveRam);
+                    chosenMode = BootMode.LiveOS;
+                }
+                else
+                {
+                    chosenMode = BootMode.InstallToDisk;
                 }
             }
 
             System.Console.Clear();
             System.Console.CursorVisible = true;
-            return BootMode.LiveOS;
+            return chosenMode;
         }
 
-        private static void DrawMenu(int selectedIndex)
+        private static void DrawMenu(int selectedIndex, bool isInstalled)
         {
             System.Console.BackgroundColor = ConsoleColor.Black;
             System.Console.Clear();
 
             // 1. Top Header Bar (Row 0)
-            string topBar = " WeatherOS Boot Selection Manager v3.0                 [x86 Bare-Metal Edition] ";
+            string topBar = " WeatherOS Boot Selection Manager v3.1                 [x86 Bare-Metal Edition] ";
             Screen.WriteClipped(0, 0, topBar, Screen.Width - 1, ConsoleColor.White, ConsoleColor.DarkBlue, true);
 
             // 2. ASCII Title (Rows 2 to 7)
@@ -86,9 +121,13 @@ namespace WeatherOS.Graphics
             }
 
             // 3. Subtitle (Row 8)
-            string sub = "Dedicated Meteorological Operating System Bootloader";
+            string sub = isInstalled
+                ? "Hard Disk Target Detected  |  0:\\boot\\WeatherOS.bin [ACTIVE]"
+                : "Dedicated Meteorological Operating System Bootloader";
             int subX = (Screen.Width - sub.Length) / 2;
-            Screen.WriteClipped(subX, 8, sub, Screen.Width - subX, ConsoleColor.DarkGray, ConsoleColor.Black);
+            if (subX < 0) subX = 0;
+            ConsoleColor subColor = isInstalled ? ConsoleColor.Green : ConsoleColor.DarkGray;
+            Screen.WriteClipped(subX, 8, sub, Screen.Width - subX, subColor, ConsoleColor.Black);
 
             // 4. Selection Frame (Rows 10 to 20, columns 5 to 74)
             int left = 5;
@@ -98,37 +137,66 @@ namespace WeatherOS.Graphics
 
             Screen.DrawBox(left, top, width, height, "BOOT TARGET SELECTION", ConsoleColor.Black, ConsoleColor.DarkCyan, ConsoleColor.Yellow);
 
-            // Option 1: Live OS
-            bool sel0 = (selectedIndex == 0);
-            DrawOptionRow(left, width, top + 2, "1. Try WeatherOS  (Live OS / RAM Mode)", sel0);
-
-            // Option 2: Install to Disk
-            bool sel1 = (selectedIndex == 1);
-            DrawOptionRow(left, width, top + 4, "2. Install WeatherOS to Hard Disk  (Setup Wizard)", sel1);
+            if (isInstalled)
+            {
+                DrawOptionRow(left, width, top + 2, "1. Boot WeatherOS from Hard Disk  (0:\\boot\\WeatherOS.bin)", selectedIndex == 0);
+                DrawOptionRow(left, width, top + 3, "2. Try WeatherOS  (Live OS / RAM Mode)", selectedIndex == 1);
+                DrawOptionRow(left, width, top + 4, "3. Reinstall or Repair WeatherOS on Hard Disk", selectedIndex == 2);
+            }
+            else
+            {
+                DrawOptionRow(left, width, top + 2, "1. Try WeatherOS  (Live OS / RAM Mode)", selectedIndex == 0);
+                DrawOptionRow(left, width, top + 4, "2. Install WeatherOS to Hard Disk  (Setup Wizard)", selectedIndex == 1);
+            }
 
             // Horizontal separator inside box
             Screen.WriteInsideWindow(left, width, top + 6, 0, new string('-', width - 4), ConsoleColor.DarkCyan, ConsoleColor.Black);
 
             // Dynamic Description Panel based on selection
-            if (selectedIndex == 0)
+            if (isInstalled)
             {
-                Screen.WriteInsideWindow(left, width, top + 7, 2, "Description: Boot into memory. Hard drives remain untouched.", ConsoleColor.White, ConsoleColor.Black);
-                Screen.WriteInsideWindow(left, width, top + 8, 2, "Full environment with desktop, live weather, network & diagnostics.", ConsoleColor.Gray, ConsoleColor.Black);
+                if (selectedIndex == 0)
+                {
+                    Screen.WriteInsideWindow(left, width, top + 7, 2, "Description: Boot installed OS directly from FAT32 local disk.", ConsoleColor.White, ConsoleColor.Black);
+                    Screen.WriteInsideWindow(left, width, top + 8, 2, "Persistent user storage, documents, and settings.ini active.", ConsoleColor.Green, ConsoleColor.Black);
+                }
+                else if (selectedIndex == 1)
+                {
+                    Screen.WriteInsideWindow(left, width, top + 7, 2, "Description: Temporary session in RAM. Disks remain untouched.", ConsoleColor.White, ConsoleColor.Black);
+                    Screen.WriteInsideWindow(left, width, top + 8, 2, "Full desktop environment and diagnostic suite available.", ConsoleColor.Gray, ConsoleColor.Black);
+                }
+                else
+                {
+                    Screen.WriteInsideWindow(left, width, top + 7, 2, "Description: Launch setup wizard to reinstall or repair system files.", ConsoleColor.White, ConsoleColor.Black);
+                    Screen.WriteInsideWindow(left, width, top + 8, 2, "Non-destructive update options available inside the wizard.", ConsoleColor.Cyan, ConsoleColor.Black);
+                }
             }
             else
             {
-                Screen.WriteInsideWindow(left, width, top + 7, 2, "Description: Partition hard drive and copy WeatherOS system files.", ConsoleColor.White, ConsoleColor.Black);
-                Screen.WriteInsideWindow(left, width, top + 8, 2, "[Notice: Hard disk installer is currently under active development]", ConsoleColor.DarkYellow, ConsoleColor.Black);
+                if (selectedIndex == 0)
+                {
+                    Screen.WriteInsideWindow(left, width, top + 7, 2, "Description: Boot into memory. Hard drives remain untouched.", ConsoleColor.White, ConsoleColor.Black);
+                    Screen.WriteInsideWindow(left, width, top + 8, 2, "Full environment with desktop, live weather, network & diagnostics.", ConsoleColor.Gray, ConsoleColor.Black);
+                }
+                else
+                {
+                    Screen.WriteInsideWindow(left, width, top + 7, 2, "Description: Partition hard drive and copy WeatherOS system files.", ConsoleColor.White, ConsoleColor.Black);
+                    Screen.WriteInsideWindow(left, width, top + 8, 2, "Interactive 4-step wizard with anti-wipe guarantee for future updates.", ConsoleColor.Green, ConsoleColor.Black);
+                }
             }
 
             // 5. Instruction line (Row 22)
-            string instruct = "[Up/Dn / Tab] Select Option   |   [1 / 2] Direct Key   |   [ENTER] Boot";
+            string instruct = isInstalled
+                ? "[Up/Dn / Tab] Select Option   |   [1 / 2 / 3] Direct Key   |   [ENTER] Boot"
+                : "[Up/Dn / Tab] Select Option   |   [1 / 2] Direct Key   |   [ENTER] Boot";
             int insX = (Screen.Width - instruct.Length) / 2;
             if (insX < 0) insX = 0;
             Screen.WriteClipped(insX, 22, instruct, Screen.Width - insX, ConsoleColor.Yellow, ConsoleColor.Black);
 
             // 6. Bottom Status Bar (Row 24)
-            string btm = " WeatherOS Kernel 3.0  |  Hardware Target: x86 PC  |  Default: Live OS ";
+            string btm = isInstalled
+                ? " WeatherOS Kernel 3.1  |  Default: Hard Disk (0:\\)  |  Status: INSTALLED "
+                : " WeatherOS Kernel 3.1  |  Default: Live OS (RAM)   |  Status: LIVE SESSION ";
             Screen.WriteClipped(0, Screen.Height - 1, btm, Screen.Width - 1, ConsoleColor.Black, ConsoleColor.Gray, true);
             System.Console.ResetColor();
         }
@@ -145,23 +213,6 @@ namespace WeatherOS.Graphics
                 string line = "   " + text;
                 Screen.WriteInsideWindow(winLeft, winWidth, y, 1, line, ConsoleColor.White, ConsoleColor.Black, true);
             }
-        }
-
-        private static void ShowInstallerNoticeDialog()
-        {
-            int left, top, width, height;
-            Screen.CalculateWindow(62, 11, out left, out top, out width, out height);
-
-            Screen.DrawBox(left, top, width, height, "HARD DISK INSTALLER - NOTICE", ConsoleColor.DarkBlue, ConsoleColor.White, ConsoleColor.Yellow);
-
-            Screen.WriteInsideWindow(left, width, top + 2, 2, "[!] Notice: Hard Disk Installation Wizard", ConsoleColor.Yellow, ConsoleColor.DarkBlue);
-            Screen.WriteInsideWindow(left, width, top + 4, 2, "The permanent disk installation wizard and partitioner are", ConsoleColor.White, ConsoleColor.DarkBlue);
-            Screen.WriteInsideWindow(left, width, top + 5, 2, "currently being finalized for bare-metal targets.", ConsoleColor.White, ConsoleColor.DarkBlue);
-            Screen.WriteInsideWindow(left, width, top + 7, 2, "Please select [1. Live OS] to test and run WeatherOS in RAM.", ConsoleColor.Cyan, ConsoleColor.DarkBlue);
-            Screen.WriteInsideWindow(left, width, top + 9, 2, "         >> Press ANY KEY to return to Boot Menu <<", ConsoleColor.Green, ConsoleColor.DarkBlue);
-
-            System.Console.ResetColor();
-            KeyboardManager.ReadKey();
         }
     }
 }

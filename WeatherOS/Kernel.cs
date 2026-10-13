@@ -83,8 +83,20 @@ namespace WeatherOS
 
             InitializeCommandManager();
 
-            // Show Boot Menu selection before starting the OS (Live OS vs Install to Disk)
-            Graphics.BootMenu.Show();
+            // Show Boot Menu selection only if OS is NOT installed on disk.
+            // If already installed, the boot menu is bypassed and boots directly from hard disk.
+            if (UpdateManagerService.IsInstalledOnDisk())
+            {
+                UpdateManagerService.SetBootSource(BootSource.HardDisk);
+            }
+            else
+            {
+                var bootChoice = Graphics.BootMenu.Show();
+                if (bootChoice == Graphics.BootMode.InstallToDisk)
+                {
+                    _tuiDesktop.StartApp("installer");
+                }
+            }
 
             if (_isNetworkConfigured)
             {
@@ -144,7 +156,7 @@ namespace WeatherOS
             _commandManager.Register(new HelpCommand(_commandManager, _tuiDesktop));
             _commandManager.Register(new ClearCommand(() => PrintBootBanner()));
             _commandManager.Register(new BootMenuCommand(() => PrintBootBanner()));
-            _commandManager.Register(new InstallCommand());
+            _commandManager.Register(new InstallCommand(() => _tuiDesktop.StartApp("installer")));
             _commandManager.Register(new PingCommand());
             _commandManager.Register(new FetchCommand(_weatherService, () => DecodeApiKey()));
             _commandManager.Register(new SetCityCommand(_weatherService, () => DecodeApiKey()));

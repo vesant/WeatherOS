@@ -79,6 +79,7 @@ namespace WeatherOS.Graphics
             RegisterApp(new DebugMenuApp());
             RegisterApp(new DiskDiagnosticsApp());
             RegisterApp(new BatteryDiagnosticsApp());
+            RegisterApp(new InstallerApp());
         }
 
         private void RegisterApp(IApp app)
@@ -276,7 +277,7 @@ namespace WeatherOS.Graphics
             {
                 if (_currentApp == "settings") SaveSettings();
                 
-                if (_currentApp == "notepad" || _currentApp == "transfer" || _currentApp == "about")
+                if (_currentApp == "notepad" || _currentApp == "transfer" || _currentApp == "about" || _currentApp == "installer")
                 {
                     IApp curApp = GetApp(_currentApp);
                     curApp?.HandleInput(this, keyEvent);
@@ -334,6 +335,7 @@ namespace WeatherOS.Graphics
             list.Add(new LauncherAppEntry { Id = "resources", Name = "System Resources", Description = "Real-time CPU telemetry, memory heap and system load.", Category = "STORAGE & SYSTEM" });
             list.Add(new LauncherAppEntry { Id = "battery", Name = "Battery & Power", Description = "AC adapter status, battery percentage & power health.", Category = "STORAGE & SYSTEM" });
             list.Add(new LauncherAppEntry { Id = "about", Name = "System Information", Description = "Kernel specs, changelog release notes & OTA update manager.", Category = "STORAGE & SYSTEM" });
+            list.Add(new LauncherAppEntry { Id = "installer", Name = "Install to Disk", Description = "Permanent setup wizard: partition FAT32 & install boot files.", Category = "STORAGE & SYSTEM" });
 
             // Category: System Power
             list.Add(new LauncherAppEntry { Id = "reboot", Name = "Reboot System", Description = "Safely restart the computer and reload WeatherOS.", Category = "POWER & SYSTEM" });

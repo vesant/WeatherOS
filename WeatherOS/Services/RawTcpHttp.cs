@@ -11,6 +11,7 @@ namespace WeatherOS.Services
         private static byte[] _ipSource = new byte[4];
         private static byte[] _ipDest = new byte[4];
         private static ushort _sourcePort = 54321;
+        public static ushort TargetPort = 80;
         private static uint _sequence = 0x4F9B2C11;
         private static uint _acknowledgment = 0;
 
@@ -461,6 +462,7 @@ namespace WeatherOS.Services
             }
 
             _ipDest = destIp.ToByteArray();
+            TargetPort = 80;
 
             // Refresh router ARP cache before starting TCP
             if (_gatewayIp[0] != 0) SendArpRequest(_gatewayIp);
@@ -619,6 +621,116 @@ namespace WeatherOS.Services
             return -1;
         }
 
+        public static bool StartTcpSession(Address destIp, ushort destPort, int timeoutMs = 2500)
+        {
+            if (NetworkDevice.Devices.Count == 0) return false;
+            var nic = NetworkDevice.Devices[0];
+
+            if (_ipSource[0] == 0 && _ipSource[1] == 0)
+            {
+                DoAutoConfig(nic);
+                if (_ipSource[0] == 0 && _ipSource[1] == 0) return false;
+            }
+
+            _ipDest = destIp.ToByteArray();
+            TargetPort = destPort;
+
+            if (_gatewayIp[0] != 0) SendArpRequest(_gatewayIp);
+
+            // Drain any lingering packets
+            for (int drain = 0; drain < 25; drain++)
+            {
+                WeatherOS.Kernel.CustomNIC?.HackPoll();
+                System.Threading.Thread.Sleep(1);
+            }
+
+            _synAckReceived = false;
+            _finReceived = false;
+            _rxLength = 0;
+            _sequence = 0x4F9B2C11 + (uint)(_sourcePort * 101);
+            _acknowledgment = 0;
+
+            _oldHandler = nic.DataReceived;
+            nic.DataReceived = CustomDataReceived;
+
+            for (int attempt = 0; attempt < 3; attempt++)
+            {
+                SendTcpPacket(nic, 0x02, new byte[0]); // SYN
+                int synTimeout = 0;
+                while (!_synAckReceived && synTimeout < 50)
+                {
+                    WeatherOS.Kernel.CustomNIC?.HackPoll();
+                    System.Threading.Thread.Sleep(10);
+                    synTimeout++;
+                }
+                if (_synAckReceived) break;
+            }
+
+            return _synAckReceived;
+        }
+
+        public static bool SendTcpData(byte[] data)
+        {
+            if (!_synAckReceived || data == null || data.Length == 0) return false;
+            if (NetworkDevice.Devices.Count == 0) return false;
+            var nic = NetworkDevice.Devices[0];
+
+            SendTcpPacket(nic, 0x18, data); // ACK + PSH
+            _sequence += (uint)data.Length;
+            return true;
+        }
+
+        public static int ReadTcpData(byte[] buffer, int offset, int maxLen, int timeoutMs = 2500)
+        {
+            if (NetworkDevice.Devices.Count == 0) return 0;
+
+            int elapsed = 0;
+            while (_rxLength == 0 && elapsed < timeoutMs)
+            {
+                WeatherOS.Kernel.CustomNIC?.HackPoll();
+                System.Threading.Thread.Sleep(10);
+                elapsed += 10;
+            }
+
+            if (_rxLength == 0) return 0;
+
+            int toCopy = Math.Min(_rxLength, maxLen);
+            Array.Copy(_rxBuffer, 0, buffer, offset, toCopy);
+
+            if (_rxLength > toCopy)
+            {
+                Array.Copy(_rxBuffer, toCopy, _rxBuffer, 0, _rxLength - toCopy);
+                _rxLength -= toCopy;
+            }
+            else
+            {
+                _rxLength = 0;
+            }
+
+            return toCopy;
+        }
+
+        public static void EndTcpSession()
+        {
+            if (NetworkDevice.Devices.Count == 0) return;
+            var nic = NetworkDevice.Devices[0];
+            try
+            {
+                if (_synAckReceived)
+                {
+                    SendTcpPacket(nic, 0x11, new byte[0]); // FIN + ACK
+                }
+            }
+            catch { }
+            finally
+            {
+                if (_oldHandler != null)
+                {
+                    nic.DataReceived = _oldHandler;
+                }
+            }
+        }
+
         private static void SendTcpPacket(Cosmos.HAL.NetworkDevice nic, byte tcpFlags, byte[] payload)
         {
             bool isSyn = (tcpFlags & 0x02) != 0;
@@ -648,7 +760,7 @@ namespace WeatherOS.Services
             // TCP
             int tcpOffset = 34;
             frame[tcpOffset] = (byte)(_sourcePort >> 8); frame[tcpOffset + 1] = (byte)(_sourcePort & 0xFF);
-            frame[tcpOffset + 2] = 0x00; frame[tcpOffset + 3] = 0x50; // Port 80
+            frame[tcpOffset + 2] = (byte)(TargetPort >> 8); frame[tcpOffset + 3] = (byte)(TargetPort & 0xFF);
             
             frame[tcpOffset + 4] = (byte)(_sequence >> 24); frame[tcpOffset + 5] = (byte)(_sequence >> 16);
             frame[tcpOffset + 6] = (byte)(_sequence >> 8); frame[tcpOffset + 7] = (byte)(_sequence & 0xFF);
