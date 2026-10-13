@@ -97,6 +97,10 @@ namespace WeatherOS.Apps
                 string peerName = string.IsNullOrWhiteSpace(FileTransferService.LastPeerName) ? "Windows PC" : FileTransferService.LastPeerName;
                 win.WriteRow(2, $"Remote Peer   : [CONNECTED] {peerName} ({FileTransferService.LastPeerIp})", ConsoleColor.Green, 2);
             }
+            else if (FileTransferService.HasDiscoveredPeer)
+            {
+                win.WriteRow(2, $"Remote Peer   : [DETECTED: {FileTransferService.LastPeerIp}] Awaiting verification", ConsoleColor.Yellow, 2);
+            }
             else
             {
                 win.WriteRow(2, "Remote Peer   : [SEARCHING LAN...] Auto-discovery active (UDP 7331)", ConsoleColor.Yellow, 2);
@@ -287,11 +291,34 @@ namespace WeatherOS.Apps
             win.WriteRow(1, "--- NETWORK PING & PEER TEST ---", ConsoleColor.Yellow, 2);
             win.WriteSeparator(2);
 
-            string ipToPing = !string.IsNullOrWhiteSpace(FileTransferService.LastPeerIp) ? FileTransferService.LastPeerIp : _ipEditor.Text.Trim();
-            win.WriteRow(4, "Target PC IP : " + (string.IsNullOrWhiteSpace(ipToPing) ? "(Auto-discovering...)" : ipToPing), ConsoleColor.White, 2);
+            if (string.IsNullOrWhiteSpace(_ipEditor.Text) && !string.IsNullOrWhiteSpace(FileTransferService.LastPeerIp))
+            {
+                _ipEditor.Text = FileTransferService.LastPeerIp;
+                _ipEditor.CursorPos = _ipEditor.Text.Length;
+            }
+
+            win.WriteRow(4, "Target PC IP : ", ConsoleColor.White, 2);
+            _ipEditor.DrawInline(win.InnerLeft + 16, win.InnerTop + 4, 18, win.Background, ConsoleColor.White);
+
             if (!string.IsNullOrWhiteSpace(FileTransferService.LastPeerIp))
             {
-                win.WriteRow(5, "Peer status  : [DISCOVERED ON LAN]", ConsoleColor.Green, 2);
+                if (FileTransferService.IsPeerVerified)
+                {
+                    string peerName = string.IsNullOrWhiteSpace(FileTransferService.LastPeerName) ? "Windows PC" : FileTransferService.LastPeerName;
+                    win.WriteRow(5, $"Peer status  : [ONLINE & VERIFIED] {peerName}", ConsoleColor.Green, 2);
+                }
+                else if (!string.IsNullOrWhiteSpace(_pingResult) && _pingResult.Contains("FAILED"))
+                {
+                    win.WriteRow(5, "Peer status  : [UNREACHABLE / TIMED OUT]", ConsoleColor.Red, 2);
+                }
+                else
+                {
+                    win.WriteRow(5, "Peer status  : [DETECTED ON LAN - Press Enter to verify]", ConsoleColor.Yellow, 2);
+                }
+            }
+            else
+            {
+                win.WriteRow(5, "Peer status  : [SEARCHING LAN... Press R to rescan]", ConsoleColor.DarkYellow, 2);
             }
 
             win.WriteSeparator(7);
@@ -302,7 +329,7 @@ namespace WeatherOS.Apps
             }
             else
             {
-                win.WriteRow(9, "Press [Enter] to send test UDP ping to discovered peer.", ConsoleColor.Gray, 2);
+                win.WriteRow(9, "Press [Enter] to send test UDP ping to target IP.", ConsoleColor.Gray, 2);
             }
 
             win.WriteFooter("[Enter] Ping Host  |  [R] Rescan Network  |  [ESC] Return to Menu", ConsoleColor.Yellow);
@@ -584,6 +611,8 @@ namespace WeatherOS.Apps
                 FileTransferService.DiscoverWindowsPeer(1500);
                 if (!string.IsNullOrWhiteSpace(FileTransferService.LastPeerIp))
                 {
+                    _ipEditor.Text = FileTransferService.LastPeerIp;
+                    _ipEditor.CursorPos = _ipEditor.Text.Length;
                     _pingResult = $"[FOUND] Auto-discovered Windows PC at {FileTransferService.LastPeerIp}!";
                 }
                 else
@@ -595,15 +624,20 @@ namespace WeatherOS.Apps
 
             if (keyEvent.Key == ConsoleKeyEx.Enter)
             {
-                string targetIp = !string.IsNullOrWhiteSpace(FileTransferService.LastPeerIp)
-                    ? FileTransferService.LastPeerIp
-                    : _ipEditor.Text.Trim();
+                string targetIp = !string.IsNullOrWhiteSpace(_ipEditor.Text)
+                    ? _ipEditor.Text.Trim()
+                    : FileTransferService.LastPeerIp;
 
                 if (string.IsNullOrWhiteSpace(targetIp))
                 {
                     _pingResult = "Searching LAN for peers...";
                     FileTransferService.DiscoverWindowsPeer(1500);
                     targetIp = FileTransferService.LastPeerIp;
+                    if (!string.IsNullOrWhiteSpace(targetIp))
+                    {
+                        _ipEditor.Text = targetIp;
+                        _ipEditor.CursorPos = _ipEditor.Text.Length;
+                    }
                 }
 
                 if (string.IsNullOrWhiteSpace(targetIp))
@@ -618,6 +652,7 @@ namespace WeatherOS.Apps
                 bool ok = FileTransferService.SendPing(targetIp, 7331, out rtt, out reply);
                 if (ok)
                 {
+                    FileTransferService.LastPeerIp = targetIp;
                     _pingResult = $"[SUCCESS] Reply from {targetIp} in {rtt} ms! Info: {reply}";
                 }
                 else

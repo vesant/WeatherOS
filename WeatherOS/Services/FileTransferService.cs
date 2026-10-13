@@ -47,7 +47,9 @@ namespace WeatherOS.Services
         public static string RemoteIpStr { get; set; } = "";
         public static string LastPeerIp { get; set; } = "";
         public static string LastPeerName { get; set; } = "";
-        public static bool IsPeerConnected => !string.IsNullOrWhiteSpace(LastPeerIp);
+        public static bool IsPeerVerified { get; set; } = false;
+        public static bool HasDiscoveredPeer => !string.IsNullOrWhiteSpace(LastPeerIp);
+        public static bool IsPeerConnected => !string.IsNullOrWhiteSpace(LastPeerIp) && IsPeerVerified;
         public static byte[] RemoteMac { get; set; } = new byte[6];
         public static byte[] RemoteIp { get; set; } = new byte[4];
         public static ushort RemotePort { get; set; } = 7331;
@@ -80,6 +82,7 @@ namespace WeatherOS.Services
             _dataAckReceived = false;
             _finishAckReceived = false;
             _pongReceived = false;
+            IsPeerVerified = false;
             _rxBufferLength = 0;
         }
 
@@ -188,9 +191,39 @@ namespace WeatherOS.Services
             Array.Copy(packet, 26, srcIp, 0, 4);
 
             byte[] myIpBytes = RawTcpHttp.GetSourceIpBytes();
-            if (myIpBytes != null && myIpBytes.Length == 4 && srcIp[0] == myIpBytes[0] && srcIp[1] == myIpBytes[1] && srcIp[2] == myIpBytes[2] && srcIp[3] == myIpBytes[3])
+            if (myIpBytes != null && myIpBytes.Length == 4)
             {
-                return; // Ignore own broadcast
+                // Ignore own broadcast
+                if (srcIp[0] == myIpBytes[0] && srcIp[1] == myIpBytes[1] && srcIp[2] == myIpBytes[2] && srcIp[3] == myIpBytes[3])
+                {
+                    return;
+                }
+
+                // If local node has a configured IP, filter out packets from incompatible subnets (e.g. host virtual adapters)
+                if (myIpBytes[0] != 0 || myIpBytes[1] != 0 || myIpBytes[2] != 0 || myIpBytes[3] != 0)
+                {
+                    if (myIpBytes[0] == 192 && myIpBytes[1] == 168)
+                    {
+                        if (srcIp[0] != 192 || srcIp[1] != 168 || srcIp[2] != myIpBytes[2])
+                        {
+                            return; // Different 192.168.x subnet
+                        }
+                    }
+                    else if (myIpBytes[0] == 172 && (myIpBytes[1] >= 16 && myIpBytes[1] <= 31))
+                    {
+                        if (srcIp[0] != 172 || srcIp[1] != myIpBytes[1])
+                        {
+                            return; // Different 172.x subnet
+                        }
+                    }
+                    else if (myIpBytes[0] == 10)
+                    {
+                        if (srcIp[0] != 10 || srcIp[1] != myIpBytes[1])
+                        {
+                            return; // Different 10.x subnet
+                        }
+                    }
+                }
             }
 
             LastPeerIp = $"{srcIp[0]}.{srcIp[1]}.{srcIp[2]}.{srcIp[3]}";
@@ -221,6 +254,7 @@ namespace WeatherOS.Services
             if (msgType == MSG_PONG)
             {
                 _pongReceived = true;
+                IsPeerVerified = true;
                 if (payloadLen > 5)
                 {
                     _lastPongInfo = Encoding.ASCII.GetString(packet, payloadOff + 5, payloadLen - 5);
@@ -539,9 +573,11 @@ namespace WeatherOS.Services
             {
                 rttMs = elapsed;
                 replyInfo = _lastPongInfo;
+                IsPeerVerified = true;
                 return true;
             }
 
+            IsPeerVerified = false;
             return false;
         }
 

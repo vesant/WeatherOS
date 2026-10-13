@@ -244,9 +244,8 @@ namespace WeatherOS.Graphics
                             // Actively poll network hardware in real time
                             WeatherOS.Kernel.CustomNIC?.HackPoll();
 
-                            if (System.Console.KeyAvailable)
+                            if (KeyboardManager.TryReadKey(out var keyEvent))
                             {
-                                var keyEvent = KeyboardManager.ReadKey();
                                 ProcessKeyEvent(keyEvent);
                                 break;
                             }
@@ -277,10 +276,10 @@ namespace WeatherOS.Graphics
             {
                 if (_currentApp == "settings") SaveSettings();
                 
-                if (_currentApp == "notepad")
+                if (_currentApp == "notepad" || _currentApp == "transfer")
                 {
-                    IApp notepad = GetApp("notepad");
-                    notepad?.HandleInput(this, keyEvent);
+                    IApp curApp = GetApp(_currentApp);
+                    curApp?.HandleInput(this, keyEvent);
                     return;
                 }
 
