@@ -54,7 +54,7 @@ namespace WeatherOS.Services
                     for (int i = 0; i < physDrives.Count; i++)
                     {
                         var drv = physDrives[i];
-                        if (drv == null || drv.Name.Contains("Live USB") || drv.Name.Contains("Boot Medium")) continue;
+                        if (drv == null || drv.Name.Contains("Live USB") || drv.Name.Contains("Boot Medium") || drv.Name.Contains("Boot Drive")) continue;
 
                         var dev = drv.Device;
                         if (dev != null)
@@ -191,6 +191,10 @@ namespace WeatherOS.Services
 
                 var targetDrive = physDrives[targetDiskIndex];
                 var dev = targetDrive.Device;
+                while (dev is Cosmos.HAL.BlockDevice.Partition part)
+                {
+                    dev = part.Host;
+                }
                 if (dev == null)
                 {
                     statusMessage = "Error: Selected block device handle is null.";

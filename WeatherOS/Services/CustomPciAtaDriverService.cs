@@ -27,9 +27,38 @@ namespace WeatherOS.Services
             IsLba48 = info.IsLba48;
             mBlockCount = info.TotalSectors > 0 ? info.TotalSectors : 204800UL;
             mBlockSize = 512;
-            Model = string.IsNullOrWhiteSpace(info.Model) ? "PCI ATA Fixed Storage" : info.Model;
+            string cleanModel = SanitizeAtaModel(info.Model);
+            if (string.IsNullOrEmpty(cleanModel))
+            {
+                Model = (mBlockCount > 0 && mBlockCount < 64000000UL) ? "Live USB Boot Drive" : "Internal Fixed Storage";
+            }
+            else
+            {
+                Model = cleanModel;
+            }
             Serial = info.Serial ?? "";
             ChannelName = channelName ?? "";
+        }
+
+        public static string SanitizeAtaModel(string raw)
+        {
+            if (string.IsNullOrWhiteSpace(raw)) return "";
+            string s = raw.Trim('\0', ' ', '\t', '\r', '\n');
+            if (s.Length == 0) return "";
+            int distinct = 0;
+            for (int i = 0; i < s.Length; i++)
+            {
+                char c = s[i];
+                if (c <= 32 || c > 126) continue;
+                bool seen = false;
+                for (int j = 0; j < i; j++)
+                {
+                    if (s[j] == c) { seen = true; break; }
+                }
+                if (!seen) distinct++;
+            }
+            if (distinct < 3 && s.Length > 4) return "";
+            return s;
         }
 
         public override void ReadBlock(ulong aBlock, ulong aBlockCount, ref byte[] aData)
@@ -377,7 +406,9 @@ namespace WeatherOS.Services
                         }
                     }
 
-                    bool isUsb = (info.TotalSectors > 0 && info.TotalSectors < 10000000UL);
+                    info.Model = CustomPciAtaBlockDevice.SanitizeAtaModel(info.Model);
+
+                    // Check for existing device duplicates / ghost mirrors
                     for (int i = 0; i < _devices.Count; i++)
                     {
                         var ed = _devices[i];
@@ -386,14 +417,30 @@ namespace WeatherOS.Services
                         {
                             return; // Same drive already probed
                         }
-                        if (isUsb && (ed.BlockCount > 0 && ed.BlockCount < 10000000UL) && ed.CmdBase == cmdBase)
+
+                        // If on the same I/O channel base (Master already probed), and this is Slave, ignore ghost mirror!
+                        if (ed.CmdBase == cmdBase)
                         {
-                            return; // Skip duplicate USB mirror on same channel
+                            if (drvSel == 0xB0) return; // Slave on same channel is ghosting Master!
+                            if (ed.BlockCount == info.TotalSectors || Math.Abs((long)ed.BlockCount - (long)info.TotalSectors) < 2048)
+                            {
+                                return; // Duplicate mirror on same channel
+                            }
                         }
 
-                        // Check for identical MBR signature & partition table (bytes 440..510)
+                        // Check for identical Sector 0 data (bytes 0..64) or identical MBR
                         byte[] edSec0 = new byte[512];
                         try { ed.ReadBlock(0, 1, ref edSec0); } catch { }
+                        bool identicalSec0 = true;
+                        for (int b = 0; b < 64; b++)
+                        {
+                            if (sec0[b] != edSec0[b]) { identicalSec0 = false; break; }
+                        }
+                        if (identicalSec0 && (ed.BlockCount == info.TotalSectors || Math.Abs((long)ed.BlockCount - (long)info.TotalSectors) < 2048))
+                        {
+                            return; // Same physical disk mirror!
+                        }
+
                         if (sec0[510] == 0x55 && sec0[511] == 0xAA && edSec0[510] == 0x55 && edSec0[511] == 0xAA)
                         {
                             bool sameMbr = true;

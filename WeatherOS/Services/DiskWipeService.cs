@@ -87,6 +87,19 @@ namespace WeatherOS.Services
                 var ex = existingList[i];
                 if (ex.Device == newDev) return true;
 
+                // Match if sector count is identical and first 64 bytes of Sector 0 are identical
+                if (ex.SectorCount == newDev.BlockCount && ex.SectorCount > 0 && sec0 != null && sec0.Length >= 64)
+                {
+                    byte[] exSec0 = new byte[512];
+                    try { ex.Device.ReadBlock(0, 1, ref exSec0); } catch { }
+                    bool sameStart = true;
+                    for (int b = 0; b < 64; b++)
+                    {
+                        if (sec0[b] != exSec0[b]) { sameStart = false; break; }
+                    }
+                    if (sameStart) return true;
+                }
+
                 // Match identical hardware mirror ONLY if sector 0 has non-zero identical MBR disk signature and partition table
                 if (sec0 != null && sec0.Length >= 512 && sec0[510] == 0x55 && sec0[511] == 0xAA)
                 {
@@ -164,13 +177,15 @@ namespace WeatherOS.Services
                         try { pd.ReadBlock(0, 1, ref testSec); } catch { continue; }
                         if (IsDuplicateOfExisting(list, pd, testSec)) continue;
 
-                        bool isUsb = (pd.BlockCount > 0 && pd.BlockCount < 10000000UL);
+                        bool isUsb = (pd.BlockCount > 0 && pd.BlockCount < 64000000UL) || pd.Model.Contains("USB") || pd.Model.Contains("Live");
+                        string cleanModel = CustomPciAtaBlockDevice.SanitizeAtaModel(pd.Model);
+                        if (string.IsNullOrEmpty(cleanModel)) cleanModel = isUsb ? "Live USB Boot Drive" : "Internal Fixed Storage";
 
                         var info = new DiskDriveInfo
                         {
                             Index = list.Count,
                             Device = pd,
-                            Name = isUsb ? $"Disk {list.Count} (Live USB Boot Medium)" : $"Disk {list.Count} ({pd.Model} : {FormatSectors(pd.BlockCount)})",
+                            Name = isUsb ? $"Disk {list.Count} (Live USB Boot Drive, {FormatSectors(pd.BlockCount)})" : $"Disk {list.Count} ({cleanModel}, {FormatSectors(pd.BlockCount)})",
                             SectorCount = pd.BlockCount
                         };
 
@@ -236,10 +251,15 @@ namespace WeatherOS.Services
                         ulong safeCount = 0;
                         string driveName = "";
 
+                        string cleanModel = CustomPciAtaBlockDevice.SanitizeAtaModel(ataInfo.Model);
+                        bool isUsbDev = (safeCount > 0 && safeCount < 64000000UL) || ataInfo.Model.Contains("USB") || ataInfo.Model.Contains("Live");
+                        if (string.IsNullOrEmpty(cleanModel)) cleanModel = isUsbDev ? "Live USB Boot Drive" : "Internal Hard Disk";
+
                         if (ataInfo.Exists && ataInfo.TotalSectors > 0)
                         {
                             safeCount = ataInfo.TotalSectors;
-                            driveName = $"Disk {list.Count} ({ataInfo.Model} : {ataInfo.SizeDisplay})";
+                            isUsbDev = (safeCount < 64000000UL) || ataInfo.Model.Contains("USB") || ataInfo.Model.Contains("Live");
+                            driveName = isUsbDev ? $"Disk {list.Count} (Live USB Boot Drive, {FormatSectors(safeCount)})" : $"Disk {list.Count} ({cleanModel}, {FormatSectors(safeCount)})";
                         }
 
                         // Fallback 1: Inspect MBR partition table for partition bounds
@@ -282,7 +302,7 @@ namespace WeatherOS.Services
 
                         if (string.IsNullOrEmpty(driveName))
                         {
-                            driveName = $"Disk {list.Count} (Fixed Storage Dev #{i} : {FormatSectors(safeCount)})";
+                            driveName = isUsbDev ? $"Disk {list.Count} (Live USB Boot Drive, {FormatSectors(safeCount)})" : $"Disk {list.Count} (Internal Hard Disk #{i}, {FormatSectors(safeCount)})";
                         }
 
                         var info = new DiskDriveInfo
@@ -300,7 +320,7 @@ namespace WeatherOS.Services
             }
             catch { }
 
-            // 3. Fallback: Probe Cosmos VFS Disks & Partitions directly
+            // 3. Fallback: Probe Cosmos VFS Disks directly (resolving physical parent drive)
             try
             {
                 var vfsDisks = VFSManager.GetDisks();
@@ -309,46 +329,62 @@ namespace WeatherOS.Services
                     for (int d = 0; d < vfsDisks.Count; d++)
                     {
                         var vdisk = vfsDisks[d];
-                        if (vdisk == null || vdisk.Partitions == null) continue;
+                        if (vdisk == null || vdisk.Partitions == null || vdisk.Partitions.Count == 0) continue;
 
+                        BlockDevice rootDev = null;
+                        ulong totalPartSectors = 0;
                         for (int p = 0; p < vdisk.Partitions.Count; p++)
                         {
                             var vpart = vdisk.Partitions[p];
-                            if (vpart != null && vpart.Host != null && vpart.Host.BlockCount > 0)
+                            if (vpart != null && vpart.Host != null)
                             {
-                                if (list.Exists(x => x.Device == vpart.Host)) continue;
-
-                                byte[] testSec = new byte[512];
-                                try { vpart.Host.ReadBlock(0, 1, ref testSec); } catch { continue; }
-                                if (IsDuplicateOfExisting(list, vpart.Host, testSec)) continue;
-
-                                ulong pCount = vpart.Host.BlockCount;
-                                if (pCount > 4000000000UL) pCount = 2097152UL;
-
-                                var info = new DiskDriveInfo
+                                BlockDevice h = vpart.Host;
+                                while (h is Cosmos.HAL.BlockDevice.Partition pHost)
                                 {
-                                    Index = list.Count,
-                                    Device = vpart.Host,
-                                    Name = $"Disk {d} Part {p + 1} ({FormatSectors(pCount)})",
-                                    SectorCount = pCount
-                                };
-                                list.Add(info);
+                                    h = pHost.Host;
+                                }
+                                if (rootDev == null && h != null) rootDev = h;
+                                if (vpart.Host.BlockCount > 0) totalPartSectors += vpart.Host.BlockCount;
                             }
                         }
+
+                        if (rootDev == null) continue;
+                        if (list.Exists(x => x.Device == rootDev)) continue;
+
+                        byte[] testSec = new byte[512];
+                        try { rootDev.ReadBlock(0, 1, ref testSec); } catch { continue; }
+                        if (IsDuplicateOfExisting(list, rootDev, testSec)) continue;
+
+                        ulong safeDiskSectors = rootDev.BlockCount;
+                        if (safeDiskSectors == 0 || safeDiskSectors > 4000000000UL || safeDiskSectors < totalPartSectors)
+                        {
+                            safeDiskSectors = (totalPartSectors > 0) ? totalPartSectors : 2097152UL;
+                        }
+
+                        var info = new DiskDriveInfo
+                        {
+                            Index = list.Count,
+                            Device = rootDev,
+                            Name = $"Disk {d} (Internal Hard Disk, {FormatSectors(safeDiskSectors)})",
+                            SectorCount = safeDiskSectors
+                        };
+
+                        ProbeDriveFilesystems(rootDev, list.Count, info);
+                        list.Add(info);
                     }
                 }
             }
             catch { }
 
-            // Sort physical drives so that writable storage drives come first, and live USB boot medium comes last
+            // Sort physical drives so that internal hard disks come first, and live USB boot medium comes last
             if (list.Count > 1)
             {
                 for (int i = 0; i < list.Count - 1; i++)
                 {
                     for (int j = i + 1; j < list.Count; j++)
                     {
-                        bool aUsb = list[i].Name.Contains("Live USB") || list[i].Name.Contains("Boot Medium");
-                        bool bUsb = list[j].Name.Contains("Live USB") || list[j].Name.Contains("Boot Medium");
+                        bool aUsb = list[i].Name.Contains("Live USB") || list[i].Name.Contains("Boot Medium") || list[i].Name.Contains("Boot Drive");
+                        bool bUsb = list[j].Name.Contains("Live USB") || list[j].Name.Contains("Boot Medium") || list[j].Name.Contains("Boot Drive");
                         if (aUsb && !bUsb)
                         {
                             var temp = list[i];
@@ -360,6 +396,23 @@ namespace WeatherOS.Services
                 for (int idx = 0; idx < list.Count; idx++)
                 {
                     list[idx].Index = idx;
+                    bool isUsb = list[idx].Name.Contains("Live USB") || list[idx].Name.Contains("Boot Medium") || list[idx].Name.Contains("Boot Drive");
+                    if (isUsb)
+                    {
+                        list[idx].Name = $"Disk {idx} (Live USB Boot Drive, {list[idx].SizeDisplay})";
+                    }
+                    else
+                    {
+                        int pOpen = list[idx].Name.IndexOf('(');
+                        if (pOpen > 0)
+                        {
+                            list[idx].Name = $"Disk {idx} " + list[idx].Name.Substring(pOpen);
+                        }
+                        else
+                        {
+                            list[idx].Name = $"Disk {idx} (Internal Hard Disk, {list[idx].SizeDisplay})";
+                        }
+                    }
                 }
             }
 
@@ -380,7 +433,14 @@ namespace WeatherOS.Services
                     }
                     if (!string.IsNullOrEmpty(fatVol.VolumeLabel) && !info.Name.Contains(fatVol.VolumeLabel))
                     {
-                        info.Name = $"Disk {diskIdx} ({fatVol.VolumeLabel} : {info.SizeDisplay})";
+                        if (!info.Name.Contains("Live USB") && !info.Name.Contains("Boot Drive"))
+                        {
+                            string cleanLabel = CustomPciAtaBlockDevice.SanitizeAtaModel(fatVol.VolumeLabel);
+                            if (!string.IsNullOrEmpty(cleanLabel))
+                            {
+                                info.Name = $"Disk {diskIdx} ({cleanLabel}, {info.SizeDisplay})";
+                            }
+                        }
                     }
                 }
 
@@ -443,28 +503,33 @@ namespace WeatherOS.Services
                     }
                 }
 
-                bool isPartition = dev is Partition;
-                ulong startLba = isPartition ? 0UL : 2048UL;
+                // Resolve parent physical BlockDevice if dev is a Partition slice
+                BlockDevice rootDev = dev;
+                while (rootDev is Partition partObj)
+                {
+                    rootDev = partObj.Host;
+                }
+
+                ulong startLba = 2048UL;
                 ulong partSectors = totalBlocks > startLba ? totalBlocks - startLba : totalBlocks;
                 if (partSectors > 0xFFFFFFFF) partSectors = 0xFFFFFFFF;
                 uint sectors32 = (uint)partSectors;
 
-                // 1. Write MBR at Sector 0 with executable bootloader and active FAT32 partition
-                if (!isPartition)
+                // 1. Write executable 16-bit real mode MBR bootloader at Sector 0 with active FAT32 partition
                 {
                     byte[] mbr = new byte[512];
 
-                    // Standard x86 Generic MBR Bootloader (locates active partition 0x80 and boots VBR via INT 13h)
+                    // Standard 16-bit Real Mode x86 MBR Bootloader (relocates to 0x0600, locates active partition 0x80, builds DAP at 0x05F0 and boots VBR via INT 13h Extensions)
                     byte[] mbrBootCode = new byte[]
                     {
-                        0x33, 0xC0, 0x8E, 0xD0, 0xBC, 0x00, 0x7C, 0x8E, 0xC0, 0x8E, 0xD8, 0xBE, 0x00, 0x7C, 0xBF, 0x00,
-                        0x06, 0xB9, 0x00, 0x02, 0xFC, 0xF3, 0xA4, 0xEA, 0x1C, 0x06, 0x00, 0x00, 0xBE, 0xBE, 0x07, 0xB3,
-                        0x04, 0x80, 0x3C, 0x80, 0x74, 0x0E, 0x83, 0xC6, 0x10, 0xFE, 0xCB, 0x75, 0xF5, 0xCD, 0x18, 0xEB,
-                        0xFE, 0xBF, 0xF0, 0x05, 0xC6, 0x05, 0x10, 0xC6, 0x45, 0x01, 0x00, 0xC7, 0x45, 0x02, 0x01, 0x00,
-                        0xC7, 0x45, 0x04, 0x00, 0x7C, 0xC7, 0x45, 0x06, 0x00, 0x00, 0x8B, 0x44, 0x08, 0x89, 0x45, 0x08,
-                        0x8B, 0x44, 0x0A, 0x89, 0x45, 0x0A, 0xC7, 0x45, 0x0C, 0x00, 0x00, 0xC7, 0x45, 0x0E, 0x00, 0x00,
-                        0xB4, 0x42, 0xB2, 0x80, 0x89, 0xFE, 0xCD, 0x13, 0x72, 0x05, 0xEA, 0x00, 0x7C, 0x00, 0x00, 0xCD,
-                        0x18, 0xEB, 0xFE
+                        0x31, 0xC0, 0x8E, 0xD0, 0xBC, 0x00, 0x7C, 0x8E, 0xD8, 0x8E, 0xC0, 0xBE, 0x00, 0x7C, 0xBF, 0x00,
+                        0x06, 0xB9, 0x00, 0x01, 0xFC, 0xF3, 0xA5, 0xEA, 0x1C, 0x06, 0x00, 0x00, 0xBE, 0xBE, 0x07, 0xB1,
+                        0x04, 0x80, 0x3C, 0x80, 0x74, 0x0B, 0x83, 0xC6, 0x10, 0xFE, 0xC9, 0x75, 0xF4, 0xCD, 0x18, 0xEB,
+                        0xFE, 0xC7, 0x06, 0xF0, 0x05, 0x10, 0x00, 0xC7, 0x06, 0xF2, 0x05, 0x01, 0x00, 0xC7, 0x06, 0xF4,
+                        0x05, 0x00, 0x7C, 0xC7, 0x06, 0xF6, 0x05, 0x00, 0x00, 0x8B, 0x44, 0x08, 0xA3, 0xF8, 0x05, 0x8B,
+                        0x44, 0x0A, 0xA3, 0xFA, 0x05, 0x31, 0xC0, 0xA3, 0xFC, 0x05, 0xA3, 0xFE, 0x05, 0xBE, 0xF0, 0x05,
+                        0xB4, 0x42, 0xB2, 0x80, 0xCD, 0x13, 0x72, 0x05, 0xEA, 0x00, 0x7C, 0x00, 0x00, 0xCD, 0x18, 0xEB,
+                        0xFE
                     };
                     Array.Copy(mbrBootCode, 0, mbr, 0, mbrBootCode.Length);
 
@@ -493,7 +558,7 @@ namespace WeatherOS.Services
                     // Signature 0x55, 0xAA
                     mbr[510] = 0x55;
                     mbr[511] = 0xAA;
-                    dev.WriteBlock(0, 1, ref mbr);
+                    rootDev.WriteBlock(0, 1, ref mbr);
                 }
 
                 // 2. Compute FAT32 Parameters

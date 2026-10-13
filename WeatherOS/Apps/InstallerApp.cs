@@ -81,9 +81,9 @@ namespace WeatherOS.Apps
                 {
                     var d = _availableDrives[i];
                     bool isSel = (i == _selectedDriveIndex);
-                    bool isUsb = d.Name.Contains("Live USB") || d.Name.Contains("Boot Medium");
+                    bool isUsb = d.Name.Contains("Live USB") || d.Name.Contains("Boot Medium") || d.Name.Contains("Boot Drive");
                     string tag = isUsb ? "[BOOT PEN DRIVE]" : "[INTERNAL DISK - RECOMMENDED]";
-                    string line = $"[{i}] {d.Name}  |  {d.SizeDisplay}  {tag}";
+                    string line = $"[{i}] {d.Name}  {tag}";
                     win.WriteSelectionRow(5 + (i * 2), line, isSel, 2);
                 }
             }
@@ -105,7 +105,7 @@ namespace WeatherOS.Apps
 
             string targetName = d != null ? d.Name : "Target Drive";
             string targetSize = d != null ? d.SizeDisplay : "Unknown";
-            bool isUsbTarget = d != null && (d.Name.Contains("Live USB") || d.Name.Contains("Boot Medium"));
+            bool isUsbTarget = d != null && (d.Name.Contains("Live USB") || d.Name.Contains("Boot Medium") || d.Name.Contains("Boot Drive"));
 
             win.WriteRow(0, "STEP 2: CONFIRM PARTITION INITIALIZATION", ConsoleColor.Red, 2, fillRemaining: true);
             win.WriteRow(1, "Review target drive parameters before proceeding with installation:", ConsoleColor.White, 2, fillRemaining: true);

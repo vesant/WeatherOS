@@ -682,19 +682,8 @@ namespace WeatherOS.Services
                 bytes[i * 2] = (byte)((val >> 8) & 0xFF);
                 bytes[i * 2 + 1] = (byte)(val & 0xFF);
             }
-            string s = Encoding.ASCII.GetString(bytes).Trim('\0', ' ');
-            // Filter out corrupted strings with repeated identical characters (e.g. "1 1 1 1 1 1...")
-            if (s.Length > 2)
-            {
-                char first = s[0];
-                bool allSame = true;
-                for (int c = 1; c < s.Length; c++)
-                {
-                    if (s[c] != first && s[c] != ' ') { allSame = false; break; }
-                }
-                if (allSame) return "";
-            }
-            return s;
+            string s = Encoding.ASCII.GetString(bytes);
+            return CustomPciAtaBlockDevice.SanitizeAtaModel(s);
         }
     }
 
