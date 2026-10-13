@@ -276,7 +276,7 @@ namespace WeatherOS.Graphics
             {
                 if (_currentApp == "settings") SaveSettings();
                 
-                if (_currentApp == "notepad" || _currentApp == "transfer")
+                if (_currentApp == "notepad" || _currentApp == "transfer" || _currentApp == "about")
                 {
                     IApp curApp = GetApp(_currentApp);
                     curApp?.HandleInput(this, keyEvent);
@@ -333,7 +333,7 @@ namespace WeatherOS.Graphics
             list.Add(new LauncherAppEntry { Id = "diskdiag", Name = "Storage Diagnostics", Description = "Hardware ATA/AHCI scan, automated self-test & partition info.", Category = "STORAGE & SYSTEM" });
             list.Add(new LauncherAppEntry { Id = "resources", Name = "System Resources", Description = "Real-time CPU telemetry, memory heap and system load.", Category = "STORAGE & SYSTEM" });
             list.Add(new LauncherAppEntry { Id = "battery", Name = "Battery & Power", Description = "AC adapter status, battery percentage & power health.", Category = "STORAGE & SYSTEM" });
-            list.Add(new LauncherAppEntry { Id = "about", Name = "System Information", Description = "Cosmos kernel specifications, OS build & hardware summary.", Category = "STORAGE & SYSTEM" });
+            list.Add(new LauncherAppEntry { Id = "about", Name = "System Information", Description = "Kernel specs, changelog release notes & OTA update manager.", Category = "STORAGE & SYSTEM" });
 
             // Category: System Power
             list.Add(new LauncherAppEntry { Id = "reboot", Name = "Reboot System", Description = "Safely restart the computer and reload WeatherOS.", Category = "POWER & SYSTEM" });
