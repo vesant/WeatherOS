@@ -19,6 +19,42 @@ namespace WeatherOS.Services
         private static BootSource _bootSource = BootSource.LiveRam;
         private static bool _forceInstalledFlag = false;
 
+        public static readonly byte[] GrubMbrSector = new byte[]
+        {
+            0xFA, 0x31, 0xC0, 0x8E, 0xD8, 0x8E, 0xC0, 0x8E, 0xD0, 0xBC, 0x00, 0x7C, 0xFB, 0x88, 0x16, 0x7D,
+            0x7C, 0xB4, 0x41, 0xBB, 0xAA, 0x55, 0xCD, 0x13, 0x72, 0x4E, 0x81, 0xFB, 0x55, 0xAA, 0x75, 0x48,
+            0xC6, 0x06, 0xFE, 0x6F, 0x01, 0xC7, 0x06, 0x00, 0x70, 0x10, 0x00, 0xC7, 0x06, 0x02, 0x70, 0x01,
+            0x00, 0xC7, 0x06, 0x04, 0x70, 0x00, 0x00, 0xC7, 0x06, 0x06, 0x70, 0x00, 0x08, 0x66, 0xC7, 0x06,
+            0x08, 0x70, 0x01, 0x00, 0x00, 0x00, 0x66, 0xC7, 0x06, 0x0C, 0x70, 0x00, 0x00, 0x00, 0x00, 0xB4,
+            0x42, 0x8A, 0x16, 0x7D, 0x7C, 0xBE, 0x00, 0x70, 0xCD, 0x13, 0x72, 0x0C, 0x8A, 0x16, 0x7D, 0x7C,
+            0xBE, 0x00, 0x70, 0xEA, 0x00, 0x80, 0x00, 0x00, 0xBE, 0x7E, 0x7C, 0xAC, 0x08, 0xC0, 0x74, 0x09,
+            0xB4, 0x0E, 0xBB, 0x07, 0x00, 0xCD, 0x10, 0xEB, 0xF2, 0xFA, 0xF4, 0xEB, 0xFC, 0x80, 0x47, 0x52,
+            0x55, 0x42, 0x20, 0x4D, 0x42, 0x52, 0x20, 0x45, 0x72, 0x72, 0x6F, 0x72, 0x0D, 0x0A, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80, 0x00,
+            0x02, 0x00, 0x17, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x02, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x55, 0xAA
+        };
+
         public static BootSource CurrentBootSource => _bootSource;
 
         public static void SetBootSource(BootSource source)
@@ -273,8 +309,91 @@ namespace WeatherOS.Services
                         }
                     }
 
-                    // Verify hardware writes on target hard disk
-                    progressCallback?.Invoke("Verifying hard disk bootloader integrity...", 88);
+                    // 1. Inject GRUB2 BIOS HDD stage and MBR bootloader
+                    progressCallback?.Invoke("Injecting GRUB2 BIOS bootloader to target disk...", 86);
+                    byte[] coreBuffer = new byte[51 * 512];
+                    bool foundCore = false;
+
+                    // Method A: Check if srcDev already has core.img at LBA 1 (Hybrid ISO image)
+                    try
+                    {
+                        srcDev.ReadBlock(1, 51, ref coreBuffer);
+                        if (coreBuffer[508] == 0x32 && coreBuffer[509] == 0x00 && coreBuffer[510] == 0x20 && coreBuffer[511] == 0x08)
+                        {
+                            foundCore = true;
+                        }
+                    }
+                    catch { }
+
+                    // Method B: Dynamically parse El Torito Boot Record and Catalog
+                    if (!foundCore)
+                    {
+                        try
+                        {
+                            byte[] brSector = new byte[512];
+                            srcDev.ReadBlock(68, 1, ref brSector);
+                            uint catLba = (uint)(brSector[71] | (brSector[72] << 8) | (brSector[73] << 16) | (brSector[74] << 24));
+                            if (catLba > 0 && catLba < 1000)
+                            {
+                                byte[] catSector = new byte[512];
+                                srcDev.ReadBlock((ulong)catLba * 4UL, 1, ref catSector);
+                                uint imgLba = (uint)(catSector[40] | (catSector[41] << 8) | (catSector[42] << 16) | (catSector[43] << 24));
+                                if (imgLba > 0 && imgLba < 1000000)
+                                {
+                                    ulong dynCoreLba = ((ulong)imgLba * 4UL) + 4UL;
+                                    srcDev.ReadBlock(dynCoreLba, 51, ref coreBuffer);
+                                    if (coreBuffer[508] == 0x32 && coreBuffer[509] == 0x00 && coreBuffer[510] == 0x20 && coreBuffer[511] == 0x08)
+                                    {
+                                        foundCore = true;
+                                    }
+                                }
+                            }
+                        }
+                        catch { }
+                    }
+
+                    // Method C: Fallback known offsets across Cosmos builds
+                    if (!foundCore)
+                    {
+                        ulong[] fallbackLbas = new ulong[] { 118440UL, 118384UL, 118400UL };
+                        for (int f = 0; f < fallbackLbas.Length; f++)
+                        {
+                            try
+                            {
+                                srcDev.ReadBlock(fallbackLbas[f], 51, ref coreBuffer);
+                                if (coreBuffer[508] == 0x32 && coreBuffer[509] == 0x00 && coreBuffer[510] == 0x20 && coreBuffer[511] == 0x08)
+                                {
+                                    foundCore = true;
+                                    break;
+                                }
+                            }
+                            catch { }
+                        }
+                    }
+
+                    if (foundCore)
+                    {
+                        // Patch diskboot.img blocklist starting LBA to LBA 2 (bytes 500..507 = 0x00000002)
+                        coreBuffer[500] = 0x02;
+                        coreBuffer[501] = 0x00;
+                        coreBuffer[502] = 0x00;
+                        coreBuffer[503] = 0x00;
+                        coreBuffer[504] = 0x00;
+                        coreBuffer[505] = 0x00;
+                        coreBuffer[506] = 0x00;
+                        coreBuffer[507] = 0x00;
+
+                        // Write 51 sectors of core.img to LBA 1..51 of target disk
+                        dev.WriteBlock(1, 51, ref coreBuffer);
+                    }
+
+                    // Write Sector 0 MBR Bootloader (GrubMbrSector) with active partition and 0x55, 0xAA signature
+                    byte[] mbrSector = new byte[512];
+                    Array.Copy(GrubMbrSector, 0, mbrSector, 0, 512);
+                    dev.WriteBlock(0, 1, ref mbrSector);
+
+                    // 2. Verify hardware writes on target hard disk
+                    progressCallback?.Invoke("Verifying hard disk bootloader integrity...", 89);
                     byte[] chkMbr = new byte[512];
                     dev.ReadBlock(0, 1, ref chkMbr);
                     if (chkMbr[510] != 0x55 || chkMbr[511] != 0xAA)
@@ -283,15 +402,15 @@ namespace WeatherOS.Services
                         return false;
                     }
 
-                    byte[] chkVbr = new byte[512];
-                    dev.ReadBlock(2048, 1, ref chkVbr);
-                    if (chkVbr[510] != 0x55 || chkVbr[511] != 0xAA)
+                    byte[] chkDiskboot = new byte[512];
+                    dev.ReadBlock(1, 1, ref chkDiskboot);
+                    if (chkDiskboot[510] != 0x20 || chkDiskboot[511] != 0x08)
                     {
-                        statusMessage = "Hardware error: Target disk VBR validation failed.";
+                        statusMessage = "Hardware error: Target disk GRUB stage validation failed.";
                         return false;
                     }
 
-                    progressCallback?.Invoke("Configuring environment & manifests on target disk...", 92);
+                    progressCallback?.Invoke("Configuring environment & manifests...", 95);
                     string versionContent =
                         "[WeatherOS]\n" +
                         "Version=3.1.0-release\n" +
@@ -303,7 +422,7 @@ namespace WeatherOS.Services
                         "Architecture=x86-AOT\n";
 
                     string vStat;
-                    DiskWipeService.WriteFileDirectToFat32(dev, "version.ini", versionContent, out vStat);
+                    StorageService.SaveFile("version.ini", versionContent, out vStat);
 
                     string appsManifest =
                         "[WeatherOS_Apps]\n" +
@@ -312,7 +431,7 @@ namespace WeatherOS.Services
                         "SystemInfoApp_Version=3.1\n" +
                         "NetTransferApp_Version=2.0\n";
                     string aStat;
-                    DiskWipeService.WriteFileDirectToFat32(dev, "apps.ini", appsManifest, out aStat);
+                    StorageService.SaveFile("apps.ini", appsManifest, out aStat);
 
                     string settingsContent =
                         "DarkMode=false\n" +
@@ -321,31 +440,26 @@ namespace WeatherOS.Services
                         "DebugLog=false\n" +
                         "CustomKey=\n";
                     string sStat;
-                    DiskWipeService.WriteFileDirectToFat32(dev, "settings.ini", settingsContent, out sStat);
+                    StorageService.SaveFile("settings.ini", settingsContent, out sStat);
 
                     string welcomeContent =
                         "==============================================================================\n" +
                         "                   Welcome to WeatherOS (Installed on Hard Disk)             \n" +
                         "==============================================================================\n" +
-                        "WeatherOS is now permanently installed to your local FAT32 storage volume!\n\n" +
-                        "FEATURES & STORAGE:\n" +
-                        "- All documents created in Notepad are saved permanently to this disk.\n" +
-                        "- Network file transfers via WeatherTransfer (port 7331) persist across reboots.\n" +
-                        "- System settings and weather location preferences are remembered.\n\n" +
-                        "NON-DESTRUCTIVE UPDATES:\n" +
-                        "When updating WeatherOS in the future:\n" +
-                        "1. Upload the new WeatherOS.bin or .pkg package via network or file picker.\n" +
-                        "2. Open System Information -> OS Update -> Apply Update.\n" +
-                        "3. The updater will replace 0:\\boot\\WeatherOS.bin without wiping your files!\n" +
+                        "WeatherOS is now permanently installed to your internal hard drive!\n\n" +
+                        "BOOTLOADER:\n" +
+                        "- Target disk MBR configured with BIOS INT 13h LBA bootloader.\n" +
+                        "- GRUB2 core stage embedded at LBA 1..51.\n" +
+                        "- WeatherOS kernel and modules boots directly from hard drive.\n" +
                         "==============================================================================\n";
                     string wStat;
-                    DiskWipeService.WriteFileDirectToFat32(dev, "welcome.txt", welcomeContent, out wStat);
+                    StorageService.SaveFile("welcome.txt", welcomeContent, out wStat);
 
                     _forceInstalledFlag = true;
                     _bootSource = BootSource.HardDisk;
 
                     progressCallback?.Invoke("Installation finalized successfully! Ready to boot.", 100);
-                    statusMessage = $"Installed to {targetDrive.Name} (0:\\boot\\WeatherOS.bin) [OK]";
+                    statusMessage = $"Installed to {targetDrive.Name} [OK] - BIOS MBR + GRUB2 ready.";
                     return true;
                 }
                 else
