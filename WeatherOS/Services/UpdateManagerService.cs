@@ -190,6 +190,12 @@ namespace WeatherOS.Services
                 }
 
                 var targetDrive = physDrives[targetDiskIndex];
+                if (targetDrive.Name.Contains("Live USB") || targetDrive.Name.Contains("Boot Medium") || targetDrive.Name.Contains("Boot Drive"))
+                {
+                    statusMessage = "Cannot install to the Live USB boot pen drive. Please select the internal hard disk.";
+                    return false;
+                }
+
                 var dev = targetDrive.Device;
                 while (dev is Cosmos.HAL.BlockDevice.Partition part)
                 {
@@ -227,6 +233,11 @@ namespace WeatherOS.Services
                 byte[] kernelPayload = GenerateKernelBootImage();
                 string saveStat;
                 bool kernelSaved = DiskWipeService.WriteBinaryFileDirectToFat32(dev, "WeatherOS.bin", kernelPayload, out saveStat);
+                if (!kernelSaved)
+                {
+                    statusMessage = "Failed to write WeatherOS.bin to disk: " + saveStat;
+                    return false;
+                }
 
                 try
                 {

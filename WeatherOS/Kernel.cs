@@ -88,8 +88,12 @@ namespace WeatherOS
             StorageService.InitDefaultMemoryFiles();
             UpdateManagerService.InitDefaultUpdatePackage();
 
-            // Set boot source: High-speed Live RAM Mode (running entirely in memory)
-            UpdateManagerService.SetBootSource(BootSource.LiveRam);
+            // Initial Boot Screen: Select between Live RAM Mode and Hard Disk Installer
+            var bootChoice = Graphics.BootMenu.Show();
+            if (bootChoice == Graphics.BootMode.InstallToDisk)
+            {
+                _tuiDesktop.StartApp("installer");
+            }
 
             if (_isNetworkConfigured)
             {

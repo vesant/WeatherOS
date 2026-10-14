@@ -638,6 +638,15 @@ namespace WeatherOS.Services
                     mbr[510] = 0x55;
                     mbr[511] = 0xAA;
                     rootDev.WriteBlock(0, 1, ref mbr);
+
+                    // Read-back verification: ensure MBR partition table actually wrote to hardware
+                    byte[] checkMbr = new byte[512];
+                    try { rootDev.ReadBlock(0, 1, ref checkMbr); } catch { }
+                    if (checkMbr[510] != 0x55 || checkMbr[511] != 0xAA)
+                    {
+                        status = "[ERR] Hardware write failed: MBR partition table was not accepted by target disk.";
+                        return false;
+                    }
                 }
 
                 // 2. Compute FAT32 Parameters
@@ -702,6 +711,15 @@ namespace WeatherOS.Services
 
                 dev.WriteBlock(startLba, 1, ref bpb);
                 dev.WriteBlock(startLba + 6, 1, ref bpb); // Backup boot sector
+
+                // Read-back verification: ensure FAT32 BPB actually wrote to hardware
+                byte[] checkBpb = new byte[512];
+                try { dev.ReadBlock(startLba, 1, ref checkBpb); } catch { }
+                if (checkBpb[510] != 0x55 || checkBpb[511] != 0xAA || checkBpb[0] != 0xEB)
+                {
+                    status = "[ERR] Hardware write failed: FAT32 boot sector was not accepted by target disk.";
+                    return false;
+                }
 
                 // 4. Write FSInfo Sector at startLba + 1 (2049) and backup at 2055
                 byte[] fsinfo = new byte[512];
@@ -1049,9 +1067,13 @@ namespace WeatherOS.Services
                     }
                 }
 
-                status = verified
-                    ? $"Saved to FAT32 Disk: {name8.Trim()}.{ext3.Trim()} ({fileSize} bytes) [OK]"
-                    : $"Saved to FAT32 Disk: {name8.Trim()}.{ext3.Trim()} ({fileSize} bytes) [Sync Pending]";
+                if (!verified)
+                {
+                    status = $"[ERR] File verification failed: {name8.Trim()}.{ext3.Trim()} could not be verified on disk.";
+                    return false;
+                }
+
+                status = $"Saved to FAT32 Disk: {name8.Trim()}.{ext3.Trim()} ({fileSize} bytes) [OK]";
                 return true;
             }
             catch (Exception ex)

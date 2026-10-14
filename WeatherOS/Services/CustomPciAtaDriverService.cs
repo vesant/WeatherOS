@@ -82,7 +82,12 @@ namespace WeatherOS.Services
             {
                 byte[] sec = new byte[512];
                 Array.Copy(aData, (int)(s * 512), sec, 0, 512);
-                WriteSectorPio(CmdBase, CtrlBase, DriveSelect, IsLba48, aBlock + s, sec);
+                bool ok = WriteSectorPio(CmdBase, CtrlBase, DriveSelect, IsLba48, aBlock + s, sec);
+                if (!ok)
+                {
+                    // Retry once on failure
+                    WriteSectorPio(CmdBase, CtrlBase, DriveSelect, IsLba48, aBlock + s, sec);
+                }
             }
             FlushPio(CmdBase, DriveSelect, IsLba48);
         }
@@ -277,15 +282,8 @@ namespace WeatherOS.Services
             _initialized = true;
             _devices.Clear();
 
-            // 1. Always probe standard legacy IDE ports first (guaranteed fallback for all x86 PC BIOS & ICH7 Compatibility mode)
-            try
-            {
-                ProbeChannel(0x1F0, 0x3F6, "Standard IDE Primary (0x1F0)");
-                ProbeChannel(0x170, 0x376, "Standard IDE Secondary (0x170)");
-            }
-            catch { }
-
-            // 2. Scan PCI Mass Storage controllers (Class 0x01) for native PCI BAR I/O ports
+            // 1. Scan and enable ALL PCI Mass Storage controllers (Class 0x01) first
+            // This ensures I/O space decoding and Bus Master are enabled before probing any I/O ports
             try
             {
                 if (Cosmos.HAL.PCI.Devices != null)
@@ -297,11 +295,46 @@ namespace WeatherOS.Services
                             var pciNormal = new PCIDeviceNormal(device.bus, device.slot, device.function);
                             pciNormal.EnableDevice();
 
-                            // Enable Bus Master (bit 2) and I/O Space (bit 0)
+                            // Enable Bus Master (bit 2), Memory (bit 1), and I/O Space (bit 0)
                             uint cmdStatus = pciNormal.ReadRegister32(0x04);
                             cmdStatus |= 0x0007u;
                             pciNormal.WriteRegister32(0x04, cmdStatus);
 
+                            // On Intel ICH7/ICHx SATA controllers, enable Port 0 & Port 1 in PCS register
+                            if (device.VendorID == 0x8086)
+                            {
+                                try
+                                {
+                                    uint mapPcs = pciNormal.ReadRegister32(0x90);
+                                    mapPcs |= 0x00030000u; // Enable SATA ports 0 and 1
+                                    pciNormal.WriteRegister32(0x90, mapPcs);
+                                }
+                                catch { }
+                            }
+                        }
+                    }
+                }
+            }
+            catch { }
+
+            // 2. Now probe standard legacy IDE ports (Primary 0x1F0, Secondary 0x170)
+            try
+            {
+                ProbeChannel(0x1F0, 0x3F6, "Standard IDE Primary (0x1F0)");
+                ProbeChannel(0x170, 0x376, "Standard IDE Secondary (0x170)");
+            }
+            catch { }
+
+            // 3. Scan PCI controllers for any native PCI BAR I/O ports
+            try
+            {
+                if (Cosmos.HAL.PCI.Devices != null)
+                {
+                    foreach (var device in Cosmos.HAL.PCI.Devices)
+                    {
+                        if (device.ClassCode == 0x01) // Mass Storage
+                        {
+                            var pciNormal = new PCIDeviceNormal(device.bus, device.slot, device.function);
                             uint bar0 = pciNormal.ReadRegister32(0x10);
                             uint bar1 = pciNormal.ReadRegister32(0x14);
                             uint bar2 = pciNormal.ReadRegister32(0x18);
@@ -312,10 +345,7 @@ namespace WeatherOS.Services
                             {
                                 ushort priCmd = (ushort)(bar0 & 0xFFFC);
                                 ushort priCtrl = ((bar1 & 1) == 1 && (bar1 & 0xFFFC) > 0) ? (ushort)((bar1 & 0xFFFC) + 2) : (ushort)(priCmd + 0x206);
-                                if (priCmd != 0x1F0)
-                                {
-                                    ProbeChannel(priCmd, priCtrl, $"PCI [{device.bus:X2}:{device.slot:X2}.{device.function:X2}] Pri (0x{priCmd:X4})");
-                                }
+                                ProbeChannel(priCmd, priCtrl, $"PCI [{device.bus:X2}:{device.slot:X2}.{device.function:X2}] BAR0 (0x{priCmd:X4})");
                             }
 
                             // Secondary Channel
@@ -323,10 +353,7 @@ namespace WeatherOS.Services
                             {
                                 ushort secCmd = (ushort)(bar2 & 0xFFFC);
                                 ushort secCtrl = ((bar3 & 1) == 1 && (bar3 & 0xFFFC) > 0) ? (ushort)((bar3 & 0xFFFC) + 2) : (ushort)(secCmd + 0x206);
-                                if (secCmd != 0x170)
-                                {
-                                    ProbeChannel(secCmd, secCtrl, $"PCI [{device.bus:X2}:{device.slot:X2}.{device.function:X2}] Sec (0x{secCmd:X4})");
-                                }
+                                ProbeChannel(secCmd, secCtrl, $"PCI [{device.bus:X2}:{device.slot:X2}.{device.function:X2}] BAR2 (0x{secCmd:X4})");
                             }
                         }
                     }
@@ -357,6 +384,17 @@ namespace WeatherOS.Services
         private static void ProbeChannel(ushort cmdBase, ushort ctrlBase, string channelTag)
         {
             if (cmdBase == 0) return;
+
+            // Software reset channel to ensure hardware is out of standby and in a known state
+            try
+            {
+                var pCtrl = new IOPort(ctrlBase);
+                pCtrl.Byte = 0x04; // SRST
+                for (int i = 0; i < 50; i++) { byte dummy = pCtrl.Byte; }
+                pCtrl.Byte = 0x00; // clear SRST
+                for (int i = 0; i < 500; i++) { byte dummy = pCtrl.Byte; }
+            }
+            catch { }
 
             // Probe Master (0xA0)
             ProbeSingleTarget(cmdBase, ctrlBase, 0xA0, $"{channelTag} Master");

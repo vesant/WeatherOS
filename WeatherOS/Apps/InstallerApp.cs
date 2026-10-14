@@ -146,8 +146,16 @@ namespace WeatherOS.Apps
             }
             win.WriteSeparator(12);
 
-            win.WriteRow(13, "Press [Y] or [ENTER] to Install   |   [N / ESC] Cancel", ConsoleColor.Yellow, 2, fillRemaining: true);
-            win.WriteFooter("[Y / ENTER] Confirm Install   |   [N / ESC] Cancel", ConsoleColor.Yellow);
+            if (isUsbTarget)
+            {
+                win.WriteRow(13, "[ESC] Go Back & Select Internal Hard Disk to Install", ConsoleColor.Yellow, 2, fillRemaining: true);
+                win.WriteFooter("[ESC] Back to Disk Selection (Cannot install to Live USB)", ConsoleColor.Yellow);
+            }
+            else
+            {
+                win.WriteRow(13, "Press [Y] or [ENTER] to Install   |   [N / ESC] Cancel", ConsoleColor.Yellow, 2, fillRemaining: true);
+                win.WriteFooter("[Y / ENTER] Confirm Install   |   [N / ESC] Cancel", ConsoleColor.Yellow);
+            }
         }
 
         private void DrawInstalling(TuiDesktop desktop)
@@ -177,16 +185,17 @@ namespace WeatherOS.Apps
             if (!_installationTriggered)
             {
                 _installationTriggered = true;
-                ExecuteInstall();
+                ExecuteInstall(desktop);
             }
         }
 
-        private void ExecuteInstall()
+        private void ExecuteInstall(TuiDesktop desktop)
         {
             bool ok = UpdateManagerService.InstallToDisk(_selectedDriveIndex, (msg, pct) =>
             {
                 _progressText = msg;
                 _progressPercent = pct;
+                DrawInstalling(desktop);
             }, out _statusResult);
 
             if (ok)
@@ -310,6 +319,16 @@ namespace WeatherOS.Apps
 
             if (keyEvent.Key == ConsoleKeyEx.Enter || keyEvent.KeyChar == 'y' || keyEvent.KeyChar == 'Y')
             {
+                var d = (_availableDrives != null && _selectedDriveIndex < _availableDrives.Count)
+                    ? _availableDrives[_selectedDriveIndex]
+                    : null;
+                bool isUsbTarget = d != null && (d.Name.Contains("Live USB") || d.Name.Contains("Boot Medium") || d.Name.Contains("Boot Drive"));
+                if (isUsbTarget)
+                {
+                    _step = InstallerStep.SelectDisk;
+                    return;
+                }
+
                 _step = InstallerStep.Installing;
                 _progressPercent = 5;
                 _progressText = "Initializing target storage device...";
