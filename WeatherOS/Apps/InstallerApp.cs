@@ -19,7 +19,7 @@ namespace WeatherOS.Apps
     {
         public string Id => "installer";
         public string Name => "Hard Disk Installer";
-        public bool IsRealTime => true;
+        public bool IsRealTime => false;
 
         private InstallerStep _step = InstallerStep.SelectDisk;
         private List<DiskDriveInfo> _availableDrives = null;
@@ -373,6 +373,9 @@ namespace WeatherOS.Apps
             if (keyEvent.Key == ConsoleKeyEx.R || keyEvent.KeyChar == 'r' || keyEvent.KeyChar == 'R')
             {
                 _step = InstallerStep.SelectDisk;
+                _installationTriggered = false;
+                _progressPercent = 0;
+                _progressText = "Preparing installation...";
                 return;
             }
 
