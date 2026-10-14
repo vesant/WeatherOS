@@ -158,6 +158,8 @@ namespace WeatherOS.Apps
             }
         }
 
+        private int _lastDrawnPercent = -1;
+
         private void DrawInstalling(TuiDesktop desktop)
         {
             var win = desktop.CreateWindow("INSTALLING WEATHEROS TO DISK  |  PLEASE WAIT", WindowSize.FullScreen);
@@ -185,26 +187,42 @@ namespace WeatherOS.Apps
             if (!_installationTriggered)
             {
                 _installationTriggered = true;
-                ExecuteInstall(desktop);
+                _lastDrawnPercent = _progressPercent;
+                ExecuteInstall(desktop, win);
             }
         }
 
-        private void ExecuteInstall(TuiDesktop desktop)
+        private void ExecuteInstall(TuiDesktop desktop, TuiWindow win)
         {
             bool ok = UpdateManagerService.InstallToDisk(_selectedDriveIndex, (msg, pct) =>
             {
-                _progressText = msg;
-                _progressPercent = pct;
-                DrawInstalling(desktop);
+                if (pct != _lastDrawnPercent)
+                {
+                    _lastDrawnPercent = pct;
+                    _progressPercent = pct;
+                    _progressText = msg;
+
+                    // Update in-place on existing window with zero allocations
+                    string prog = msg ?? "";
+                    if (prog.Length > 60) prog = prog.Substring(0, 60);
+                    win.WriteRow(5, "  " + prog, ConsoleColor.White, 2, fillRemaining: true);
+
+                    int barWidth = 46;
+                    int filled = (pct * barWidth) / 100;
+                    string bar = "[" + new string('#', filled) + new string('-', Math.Max(0, barWidth - filled)) + $"] {pct}%";
+                    win.WriteRow(7, "  " + bar, ConsoleColor.Green, 2, fillRemaining: true);
+                }
             }, out _statusResult);
 
             if (ok)
             {
                 _step = InstallerStep.Complete;
+                DrawComplete(desktop);
             }
             else
             {
                 _step = InstallerStep.Error;
+                DrawError(desktop);
             }
         }
 

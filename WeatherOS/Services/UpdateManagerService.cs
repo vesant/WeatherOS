@@ -244,15 +244,17 @@ namespace WeatherOS.Services
                     try { srcDev.ReadBlock(0, 1, ref liveSec0); } catch { }
 
                     // Determine sectors to clone:
-                    // WeatherOS ISO is ~62.7 MB (122,496 sectors). Cloning 250,000 sectors (~128 MB)
-                    // guarantees copying MBR, VBR, FAT structures, /boot/grub/ and the full 60MB WeatherOS.bin kernel.
-                    ulong totalToClone = 250000UL;
-                    if (srcDev.BlockCount > 130000UL && srcDev.BlockCount < totalToClone) totalToClone = srcDev.BlockCount;
+                    // WeatherOS ISO is 62.7 MB (122,496 sectors). Cloning 135,000 sectors (~69 MB)
+                    // guarantees copying MBR, VBR, FAT structures, /boot/grub/ and the full 60MB WeatherOS.bin kernel
+                    // with ~7MB margin while finishing in seconds.
+                    ulong totalToClone = 135000UL;
+                    if (srcDev.BlockCount > 125000UL && srcDev.BlockCount < totalToClone) totalToClone = srcDev.BlockCount;
                     if (dev.BlockCount > 0 && dev.BlockCount < totalToClone) totalToClone = dev.BlockCount;
 
-                    ulong chunkSize = 64; // 32 KB per chunk
+                    ulong chunkSize = 128; // 64 KB per chunk
                     byte[] chunk = new byte[chunkSize * 512];
                     ulong copied = 0;
+                    int lastPct = -1;
 
                     while (copied < totalToClone)
                     {
@@ -262,9 +264,13 @@ namespace WeatherOS.Services
                         copied += count;
 
                         int pct = 5 + (int)((copied * 80UL) / totalToClone); // 5% to 85%
-                        ulong mbDone = (copied * 512UL) / (1024UL * 1024UL);
-                        ulong mbTotal = (totalToClone * 512UL) / (1024UL * 1024UL);
-                        progressCallback?.Invoke($"Cloning Rufus bootloader & kernel ({mbDone}MB / {mbTotal}MB)...", pct);
+                        if (pct != lastPct)
+                        {
+                            lastPct = pct;
+                            ulong mbDone = (copied * 512UL) / (1024UL * 1024UL);
+                            ulong mbTotal = (totalToClone * 512UL) / (1024UL * 1024UL);
+                            progressCallback?.Invoke($"Cloning Rufus bootloader & kernel ({mbDone}MB / {mbTotal}MB)...", pct);
+                        }
                     }
 
                     // Verify hardware writes on target hard disk
