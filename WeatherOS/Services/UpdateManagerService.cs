@@ -291,12 +291,34 @@ namespace WeatherOS.Services
                     byte[] chunk = new byte[chunkSize * 512];
                     ulong copied = 0;
                     int lastPct = -1;
+                    ulong detectedCoreLba = 0;
+                    bool coreDetected = false;
 
                     while (copied < totalToClone)
                     {
                         ulong count = Math.Min(chunkSize, totalToClone - copied);
-                        srcDev.ReadBlock(copied, count, ref chunk);
-                        dev.WriteBlock(copied, count, ref chunk);
+                        ulong startBlock = copied;
+
+                        srcDev.ReadBlock(startBlock, count, ref chunk);
+                        dev.WriteBlock(startBlock, count, ref chunk);
+
+                        // Scan chunk in memory for diskboot.img signature
+                        if (!coreDetected)
+                        {
+                            for (ulong s = 0; s < count; s++)
+                            {
+                                int off = (int)(s * 512UL);
+                                if (chunk[off + 508] == 0x32 && chunk[off + 509] == 0x00 &&
+                                    chunk[off + 510] == 0x20 && chunk[off + 511] == 0x08 &&
+                                    chunk[off + 0] == 0x52 && chunk[off + 1] == 0xE8)
+                                {
+                                    detectedCoreLba = startBlock + s;
+                                    coreDetected = true;
+                                    break;
+                                }
+                            }
+                        }
+
                         copied += count;
 
                         int pct = 5 + (int)((copied * 80UL) / totalToClone); // 5% to 85%
@@ -314,48 +336,116 @@ namespace WeatherOS.Services
                     byte[] coreBuffer = new byte[51 * 512];
                     bool foundCore = false;
 
-                    // Method A: Check if srcDev already has core.img at LBA 1 (Hybrid ISO image)
-                    try
+                    // Method 0: Detected dynamically in clone stream
+                    if (coreDetected && detectedCoreLba > 0)
                     {
-                        srcDev.ReadBlock(1, 51, ref coreBuffer);
-                        if (coreBuffer[508] == 0x32 && coreBuffer[509] == 0x00 && coreBuffer[510] == 0x20 && coreBuffer[511] == 0x08)
+                        try
                         {
-                            foundCore = true;
+                            srcDev.ReadBlock(detectedCoreLba, 51, ref coreBuffer);
+                            if (coreBuffer[508] == 0x32 && coreBuffer[509] == 0x00 && coreBuffer[510] == 0x20 && coreBuffer[511] == 0x08)
+                            {
+                                foundCore = true;
+                            }
+                        }
+                        catch { }
+
+                        if (!foundCore)
+                        {
+                            try
+                            {
+                                dev.ReadBlock(detectedCoreLba, 51, ref coreBuffer);
+                                if (coreBuffer[508] == 0x32 && coreBuffer[509] == 0x00 && coreBuffer[510] == 0x20 && coreBuffer[511] == 0x08)
+                                {
+                                    foundCore = true;
+                                }
+                            }
+                            catch { }
                         }
                     }
-                    catch { }
 
-                    // Method B: Dynamically parse El Torito Boot Record and Catalog
+                    // Method 1: Check Cosmos VFS mounted filesystem for eltorito.img
+                    if (!foundCore)
+                    {
+                        string[] vfsFiles = new string[] {
+                            @"0:\boot\grub\i386-pc\eltorito.img",
+                            @"1:\boot\grub\i386-pc\eltorito.img"
+                        };
+                        for (int vf = 0; vf < vfsFiles.Length; vf++)
+                        {
+                            try
+                            {
+                                if (File.Exists(vfsFiles[vf]))
+                                {
+                                    byte[] eltorito = File.ReadAllBytes(vfsFiles[vf]);
+                                    if (eltorito != null && eltorito.Length >= 2048 + (51 * 512))
+                                    {
+                                        Array.Copy(eltorito, 2048, coreBuffer, 0, 51 * 512);
+                                        if (coreBuffer[508] == 0x32 && coreBuffer[509] == 0x00 && coreBuffer[510] == 0x20 && coreBuffer[511] == 0x08)
+                                        {
+                                            foundCore = true;
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                            catch { }
+                        }
+                    }
+
+                    // Method A: Check if srcDev already has core.img at LBA 1 (Hybrid ISO image)
                     if (!foundCore)
                     {
                         try
                         {
-                            byte[] brSector = new byte[512];
-                            srcDev.ReadBlock(68, 1, ref brSector);
-                            uint catLba = (uint)(brSector[71] | (brSector[72] << 8) | (brSector[73] << 16) | (brSector[74] << 24));
-                            if (catLba > 0 && catLba < 1000)
+                            srcDev.ReadBlock(1, 51, ref coreBuffer);
+                            if (coreBuffer[508] == 0x32 && coreBuffer[509] == 0x00 && coreBuffer[510] == 0x20 && coreBuffer[511] == 0x08)
                             {
-                                byte[] catSector = new byte[512];
-                                srcDev.ReadBlock((ulong)catLba * 4UL, 1, ref catSector);
-                                uint imgLba = (uint)(catSector[40] | (catSector[41] << 8) | (catSector[42] << 16) | (catSector[43] << 24));
-                                if (imgLba > 0 && imgLba < 1000000)
-                                {
-                                    ulong dynCoreLba = ((ulong)imgLba * 4UL) + 4UL;
-                                    srcDev.ReadBlock(dynCoreLba, 51, ref coreBuffer);
-                                    if (coreBuffer[508] == 0x32 && coreBuffer[509] == 0x00 && coreBuffer[510] == 0x20 && coreBuffer[511] == 0x08)
-                                    {
-                                        foundCore = true;
-                                    }
-                                }
+                                foundCore = true;
                             }
                         }
                         catch { }
                     }
 
+                    // Method B: Dynamically parse El Torito Boot Record and Catalog with partition offsets
+                    if (!foundCore)
+                    {
+                        ulong[] elOffsets = new ulong[] { 68UL, 2048UL + 68UL, 64UL + 68UL };
+                        for (int e = 0; e < elOffsets.Length; e++)
+                        {
+                            try
+                            {
+                                byte[] brSector = new byte[512];
+                                srcDev.ReadBlock(elOffsets[e], 1, ref brSector);
+                                uint catLba = (uint)(brSector[71] | (brSector[72] << 8) | (brSector[73] << 16) | (brSector[74] << 24));
+                                if (catLba > 0 && catLba < 1000)
+                                {
+                                    byte[] catSector = new byte[512];
+                                    srcDev.ReadBlock((elOffsets[e] - 68UL) + ((ulong)catLba * 4UL), 1, ref catSector);
+                                    uint imgLba = (uint)(catSector[40] | (catSector[41] << 8) | (catSector[42] << 16) | (catSector[43] << 24));
+                                    if (imgLba > 0 && imgLba < 1000000)
+                                    {
+                                        ulong dynCoreLba = (elOffsets[e] - 68UL) + ((ulong)imgLba * 4UL) + 4UL;
+                                        srcDev.ReadBlock(dynCoreLba, 51, ref coreBuffer);
+                                        if (coreBuffer[508] == 0x32 && coreBuffer[509] == 0x00 && coreBuffer[510] == 0x20 && coreBuffer[511] == 0x08)
+                                        {
+                                            foundCore = true;
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                            catch { }
+                            if (foundCore) break;
+                        }
+                    }
+
                     // Method C: Fallback known offsets across Cosmos builds
                     if (!foundCore)
                     {
-                        ulong[] fallbackLbas = new ulong[] { 118440UL, 118384UL, 118400UL };
+                        ulong[] fallbackLbas = new ulong[] {
+                            118544UL, 118440UL, 118384UL, 118400UL,
+                            2048UL + 118544UL, 2048UL + 118440UL, 2048UL + 118384UL, 2048UL + 118400UL
+                        };
                         for (int f = 0; f < fallbackLbas.Length; f++)
                         {
                             try
@@ -371,21 +461,24 @@ namespace WeatherOS.Services
                         }
                     }
 
-                    if (foundCore)
+                    if (!foundCore)
                     {
-                        // Patch diskboot.img blocklist starting LBA to LBA 2 (bytes 500..507 = 0x00000002)
-                        coreBuffer[500] = 0x02;
-                        coreBuffer[501] = 0x00;
-                        coreBuffer[502] = 0x00;
-                        coreBuffer[503] = 0x00;
-                        coreBuffer[504] = 0x00;
-                        coreBuffer[505] = 0x00;
-                        coreBuffer[506] = 0x00;
-                        coreBuffer[507] = 0x00;
-
-                        // Write 51 sectors of core.img to LBA 1..51 of target disk
-                        dev.WriteBlock(1, 51, ref coreBuffer);
+                        statusMessage = "Bootloader error: Could not extract GRUB2 core stage from medium.";
+                        return false;
                     }
+
+                    // Patch diskboot.img blocklist starting LBA to LBA 2 (bytes 500..507 = 0x00000002)
+                    coreBuffer[500] = 0x02;
+                    coreBuffer[501] = 0x00;
+                    coreBuffer[502] = 0x00;
+                    coreBuffer[503] = 0x00;
+                    coreBuffer[504] = 0x00;
+                    coreBuffer[505] = 0x00;
+                    coreBuffer[506] = 0x00;
+                    coreBuffer[507] = 0x00;
+
+                    // Write 51 sectors of core.img to LBA 1..51 of target disk
+                    dev.WriteBlock(1, 51, ref coreBuffer);
 
                     // Write Sector 0 MBR Bootloader (GrubMbrSector) with active partition and 0x55, 0xAA signature
                     byte[] mbrSector = new byte[512];
