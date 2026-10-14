@@ -56,23 +56,34 @@ namespace WeatherOS.Apps
             _availableDrives = DiskWipeService.GetPhysicalDrives();
             if (_availableDrives == null) _availableDrives = new List<DiskDriveInfo>();
             if (_selectedDriveIndex >= _availableDrives.Count) _selectedDriveIndex = Math.Max(0, _availableDrives.Count - 1);
+
+            // Auto-select internal hard disk by default if present
+            for (int i = 0; i < _availableDrives.Count; i++)
+            {
+                var d = _availableDrives[i];
+                if (!d.Name.Contains("Live USB") && !d.Name.Contains("Boot Medium") && !d.Name.Contains("Boot Drive"))
+                {
+                    _selectedDriveIndex = i;
+                    break;
+                }
+            }
         }
 
         private void DrawSelectDisk(TuiDesktop desktop)
         {
             if (_availableDrives == null) RefreshDrives();
 
-            var win = desktop.CreateWindow("WEATHEROS HARD DISK INSTALLER  |  SELECT TARGET DRIVE", WindowSize.Large);
+            var win = desktop.CreateWindow("WEATHEROS HARD DISK INSTALLER  |  SELECT TARGET DRIVE", WindowSize.FullScreen);
 
             win.WriteRow(0, "STEP 1: SELECT PHYSICAL DISK FOR INSTALLATION", ConsoleColor.Cyan, 2, fillRemaining: true);
-            win.WriteRow(1, "WeatherOS will be installed as the primary operating system on this drive.", ConsoleColor.White, 2, fillRemaining: true);
+            win.WriteRow(1, "Select target drive to install WeatherOS permanently:", ConsoleColor.White, 2, fillRemaining: true);
             win.WriteSeparator(2);
 
             win.WriteRow(3, "DETECTED STORAGE CONTROLLERS & DRIVES:", ConsoleColor.Yellow, 2, fillRemaining: true);
 
             if (_availableDrives.Count == 0)
             {
-                win.WriteRow(5, "[!] No physical hard drives detected. Check IDE/SATA/AHCI controller.", ConsoleColor.Red, 2, fillRemaining: true);
+                win.WriteRow(5, "[!] No physical hard drives detected. Check IDE/SATA controller.", ConsoleColor.Red, 2, fillRemaining: true);
                 win.WriteRow(6, "You can continue running WeatherOS in Live OS (RAM) mode.", ConsoleColor.Gray, 2, fillRemaining: true);
             }
             else
@@ -82,33 +93,35 @@ namespace WeatherOS.Apps
                     var d = _availableDrives[i];
                     bool isSel = (i == _selectedDriveIndex);
                     bool isUsb = d.Name.Contains("Live USB") || d.Name.Contains("Boot Medium") || d.Name.Contains("Boot Drive");
-                    string tag = isUsb ? "[BOOT PEN DRIVE]" : "[INTERNAL DISK - RECOMMENDED]";
+                    string tag = isUsb ? "[LIVE USB]" : "[TARGET DISK]";
                     string line = $"[{i}] {d.Name}  {tag}";
+                    if (line.Length > 65) line = line.Substring(0, 65);
                     win.WriteSelectionRow(5 + (i * 2), line, isSel, 2);
                 }
             }
 
-            win.WriteSeparator(12);
-            win.WriteRow(13, "[i] TIP: Choose your internal hard disk (Disk 0) to boot without the pen drive.", ConsoleColor.DarkCyan, 2, fillRemaining: true);
-            win.WriteRow(14, "    Future updates are applied in-place to this drive without wiping data!", ConsoleColor.DarkCyan, 2, fillRemaining: true);
+            win.WriteSeparator(13);
+            win.WriteRow(14, "[i] TIP: Choose internal disk (Disk 0) to boot without USB pen.", ConsoleColor.DarkCyan, 2, fillRemaining: true);
+            win.WriteRow(15, "    Future updates are applied in-place without wiping data!", ConsoleColor.DarkCyan, 2, fillRemaining: true);
 
-            win.WriteFooter("[Up/Dn] Select Drive   |   [ENTER] Next   |   [R] Refresh   |   [ESC] Exit", ConsoleColor.Yellow);
+            win.WriteFooter("[Up/Dn] Select  |  [ENTER] Next  |  [R] Refresh  |  [ESC] Exit", ConsoleColor.Yellow);
         }
 
         private void DrawConfirmWarning(TuiDesktop desktop)
         {
-            var win = desktop.CreateWindow("INSTALLATION CONFIRMATION  |  WARNING", WindowSize.Large);
+            var win = desktop.CreateWindow("INSTALLATION CONFIRMATION  |  WARNING", WindowSize.FullScreen);
 
             var d = (_availableDrives != null && _selectedDriveIndex < _availableDrives.Count)
                 ? _availableDrives[_selectedDriveIndex]
                 : null;
 
             string targetName = d != null ? d.Name : "Target Drive";
+            if (targetName.Length > 44) targetName = targetName.Substring(0, 44);
             string targetSize = d != null ? d.SizeDisplay : "Unknown";
             bool isUsbTarget = d != null && (d.Name.Contains("Live USB") || d.Name.Contains("Boot Medium") || d.Name.Contains("Boot Drive"));
 
             win.WriteRow(0, "STEP 2: CONFIRM PARTITION INITIALIZATION", ConsoleColor.Red, 2, fillRemaining: true);
-            win.WriteRow(1, "Review target drive parameters before proceeding with installation:", ConsoleColor.White, 2, fillRemaining: true);
+            win.WriteRow(1, "Review target drive parameters before proceeding:", ConsoleColor.White, 2, fillRemaining: true);
             win.WriteSeparator(2);
 
             win.WriteRow(3, $"  Target Drive : {targetName}", ConsoleColor.Yellow, 2, fillRemaining: true);
@@ -119,44 +132,45 @@ namespace WeatherOS.Apps
 
             if (isUsbTarget)
             {
-                win.WriteRow(8, "[!] CAUTION: You have selected the Live USB Pen Drive!", ConsoleColor.Red, 2, fillRemaining: true);
-                win.WriteRow(9, "To install permanently to your computer, press [ESC] and choose", ConsoleColor.Yellow, 2, fillRemaining: true);
-                win.WriteRow(10, "the internal Hard Disk (Disk 0) instead of the pen drive.", ConsoleColor.Yellow, 2, fillRemaining: true);
+                win.WriteRow(8,  "[!] CAUTION: You have selected the Live USB Pen Drive!", ConsoleColor.Red, 2, fillRemaining: true);
+                win.WriteRow(9,  "To install permanently to your computer, press [ESC] and choose", ConsoleColor.Yellow, 2, fillRemaining: true);
+                win.WriteRow(10, "the internal Hard Disk instead of the boot pen drive.", ConsoleColor.Yellow, 2, fillRemaining: true);
                 win.WriteRow(11, "If you proceed, this will format the Live USB pen drive.", ConsoleColor.Red, 2, fillRemaining: true);
             }
             else
             {
-                win.WriteRow(8, "[!] NOTICE: INITIAL HARD DISK INSTALLATION & BOOTLOADER SETUP:", ConsoleColor.Yellow, 2, fillRemaining: true);
-                win.WriteRow(9, " - Partition 1 will be initialized as FAT32 on this internal disk.", ConsoleColor.White, 2, fillRemaining: true);
-                win.WriteRow(10, " - Executable x86 MBR bootloader written to Sector 0 for PC BIOS boot.", ConsoleColor.Green, 2, fillRemaining: true);
-                win.WriteRow(11, " - Subsequent updates will NEVER wipe this disk! Personal files preserved.", ConsoleColor.Green, 2, fillRemaining: true);
+                win.WriteRow(8,  "[!] NOTICE: HARD DISK INSTALLATION & BOOTLOADER SETUP:", ConsoleColor.Yellow, 2, fillRemaining: true);
+                win.WriteRow(9,  " - Partition 1 will be initialized as FAT32 on this disk.", ConsoleColor.White, 2, fillRemaining: true);
+                win.WriteRow(10, " - Executable x86 MBR bootloader written to Sector 0 for BIOS.", ConsoleColor.Green, 2, fillRemaining: true);
+                win.WriteRow(11, " - Subsequent updates will NEVER wipe this disk! Data preserved.", ConsoleColor.Green, 2, fillRemaining: true);
             }
             win.WriteSeparator(12);
 
-            win.WriteRow(13, "Press [Y] or [ENTER] to Proceed with Installation   |   [N / ESC] Cancel", ConsoleColor.Yellow, 2, fillRemaining: true);
+            win.WriteRow(13, "Press [Y] or [ENTER] to Install   |   [N / ESC] Cancel", ConsoleColor.Yellow, 2, fillRemaining: true);
             win.WriteFooter("[Y / ENTER] Confirm Install   |   [N / ESC] Cancel", ConsoleColor.Yellow);
         }
 
         private void DrawInstalling(TuiDesktop desktop)
         {
-            var win = desktop.CreateWindow("INSTALLING WEATHEROS TO DISK  |  PLEASE WAIT", WindowSize.Large);
+            var win = desktop.CreateWindow("INSTALLING WEATHEROS TO DISK  |  PLEASE WAIT", WindowSize.FullScreen);
 
             win.WriteRow(0, "STEP 3: DEPLOYING SYSTEM FILES & BOOTLOADER", ConsoleColor.Cyan, 2, fillRemaining: true);
             win.WriteRow(1, "Writing operating system structures to physical disk...", ConsoleColor.White, 2, fillRemaining: true);
             win.WriteSeparator(2);
 
             win.WriteRow(4, "CURRENT OPERATION:", ConsoleColor.Yellow, 2, fillRemaining: true);
-            win.WriteRow(5, "  " + _progressText, ConsoleColor.White, 2, fillRemaining: true);
+            string progText = _progressText ?? "";
+            if (progText.Length > 60) progText = progText.Substring(0, 60);
+            win.WriteRow(5, "  " + progText, ConsoleColor.White, 2, fillRemaining: true);
 
             // Progress bar
-            int barWidth = win.InnerWidth - 8;
-            if (barWidth < 20) barWidth = 40;
+            int barWidth = 46;
             int filled = (_progressPercent * barWidth) / 100;
             string bar = "[" + new string('#', filled) + new string('-', Math.Max(0, barWidth - filled)) + $"] {_progressPercent}%";
             win.WriteRow(7, "  " + bar, ConsoleColor.Green, 2, fillRemaining: true);
 
             win.WriteSeparator(10);
-            win.WriteRow(11, "Do not power off or disconnect the machine during installation.", ConsoleColor.DarkGray, 2, fillRemaining: true);
+            win.WriteRow(11, "Do not power off or disconnect the machine during install.", ConsoleColor.DarkGray, 2, fillRemaining: true);
             win.WriteFooter("Installation in progress... Please wait.", ConsoleColor.Yellow);
 
             // Trigger installation worker on first frame
@@ -187,38 +201,40 @@ namespace WeatherOS.Apps
 
         private void DrawComplete(TuiDesktop desktop)
         {
-            var win = desktop.CreateWindow("INSTALLATION COMPLETED SUCCESSFULLY", WindowSize.Large);
+            var win = desktop.CreateWindow("INSTALLATION COMPLETED SUCCESSFULLY", WindowSize.FullScreen);
 
             win.WriteRow(0, "[SUCCESS] WEATHEROS HAS BEEN INSTALLED TO YOUR HARD DISK!", ConsoleColor.Green, 2, fillRemaining: true);
             win.WriteRow(1, "The bootable operating system environment is now permanent.", ConsoleColor.White, 2, fillRemaining: true);
             win.WriteSeparator(2);
 
             win.WriteRow(3, "SYSTEM SUMMARY:", ConsoleColor.Yellow, 2, fillRemaining: true);
-            win.WriteRow(4, $"  Boot Target  : 0:\\boot\\WeatherOS.bin [ACTIVE]", ConsoleColor.White, 2, fillRemaining: true);
-            win.WriteRow(5, $"  File System  : FAT32 (WEATHEROS) on Local Drive", ConsoleColor.White, 2, fillRemaining: true);
-            win.WriteRow(6, $"  User Storage : 0:\\users\\ and 0:\\ root documents", ConsoleColor.White, 2, fillRemaining: true);
-            win.WriteRow(7, $"  System State : Ready for permanent boot and OTA in-place updates", ConsoleColor.Green, 2, fillRemaining: true);
+            win.WriteRow(4,  "  Boot Target  : 0:\\boot\\WeatherOS.bin [ACTIVE]", ConsoleColor.White, 2, fillRemaining: true);
+            win.WriteRow(5,  "  File System  : FAT32 (WEATHEROS) on Local Drive", ConsoleColor.White, 2, fillRemaining: true);
+            win.WriteRow(6,  "  User Storage : 0:\\users\\ and root documents", ConsoleColor.White, 2, fillRemaining: true);
+            win.WriteRow(7,  "  System State : Ready for permanent boot & OTA in-place updates", ConsoleColor.Green, 2, fillRemaining: true);
             win.WriteSeparator(8);
 
             win.WriteRow(9,  "HOW TO UPDATE IN THE FUTURE:", ConsoleColor.Yellow, 2, fillRemaining: true);
-            win.WriteRow(10, " - Transfer new builds (.bin / .pkg) via WeatherTransfer or file picker.", ConsoleColor.White, 2, fillRemaining: true);
-            win.WriteRow(11, " - System Information will replace 0:\\boot\\WeatherOS.bin seamlessly.", ConsoleColor.White, 2, fillRemaining: true);
+            win.WriteRow(10, " - Transfer new builds (.bin / .pkg) via WeatherTransfer.", ConsoleColor.White, 2, fillRemaining: true);
+            win.WriteRow(11, " - System Information replaces WeatherOS.bin seamlessly.", ConsoleColor.White, 2, fillRemaining: true);
             win.WriteRow(12, " - Your personal files and configs will NEVER be erased!", ConsoleColor.Green, 2, fillRemaining: true);
             win.WriteSeparator(13);
 
-            win.WriteFooter("[R / ENTER] Reboot Now to Installed OS   |   [ESC] Return to Desktop", ConsoleColor.Yellow);
+            win.WriteFooter("[R / ENTER] Reboot to Installed OS   |   [ESC] Return to Desktop", ConsoleColor.Yellow);
         }
 
         private void DrawError(TuiDesktop desktop)
         {
-            var win = desktop.CreateWindow("INSTALLATION FAILED  |  ERROR", WindowSize.Large);
+            var win = desktop.CreateWindow("INSTALLATION FAILED  |  ERROR", WindowSize.FullScreen);
 
             win.WriteRow(0, "[ERROR] FAILED TO INSTALL WEATHEROS TO DISK", ConsoleColor.Red, 2, fillRemaining: true);
             win.WriteRow(1, "An error occurred during partition formatting or file copying:", ConsoleColor.White, 2, fillRemaining: true);
             win.WriteSeparator(2);
 
             win.WriteRow(4, "DETAILS:", ConsoleColor.Yellow, 2, fillRemaining: true);
-            win.WriteRow(5, "  " + _statusResult, ConsoleColor.Red, 2, fillRemaining: true);
+            string status = _statusResult ?? "";
+            if (status.Length > 60) status = status.Substring(0, 60);
+            win.WriteRow(5, "  " + status, ConsoleColor.Red, 2, fillRemaining: true);
             win.WriteSeparator(8);
 
             win.WriteRow(10, "Your existing session in RAM has not been affected.", ConsoleColor.White, 2, fillRemaining: true);

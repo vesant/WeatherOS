@@ -16,6 +16,7 @@ namespace WeatherOS.Services
         public string Model { get; private set; } = "";
         public string Serial { get; private set; } = "";
         public string ChannelName { get; private set; } = "";
+        public byte[] Sector0Cache { get; set; } = null;
 
         public override BlockDeviceType Type => BlockDeviceType.HardDrive;
 
@@ -30,7 +31,7 @@ namespace WeatherOS.Services
             string cleanModel = SanitizeAtaModel(info.Model);
             if (string.IsNullOrEmpty(cleanModel))
             {
-                Model = (mBlockCount > 0 && mBlockCount < 64000000UL) ? "Live USB Boot Drive" : "Internal Fixed Storage";
+                Model = "Internal Fixed Storage";
             }
             else
             {
@@ -276,58 +277,58 @@ namespace WeatherOS.Services
             _initialized = true;
             _devices.Clear();
 
+            // 1. Always probe standard legacy IDE ports first (guaranteed fallback for all x86 PC BIOS & ICH7 Compatibility mode)
             try
             {
-                // Scan all PCI Mass Storage controllers (Class 0x01)
-                foreach (var device in Cosmos.HAL.PCI.Devices)
+                ProbeChannel(0x1F0, 0x3F6, "Standard IDE Primary (0x1F0)");
+                ProbeChannel(0x170, 0x376, "Standard IDE Secondary (0x170)");
+            }
+            catch { }
+
+            // 2. Scan PCI Mass Storage controllers (Class 0x01) for native PCI BAR I/O ports
+            try
+            {
+                if (Cosmos.HAL.PCI.Devices != null)
                 {
-                    if (device.ClassCode == 0x01) // Mass Storage
+                    foreach (var device in Cosmos.HAL.PCI.Devices)
                     {
-                        var pciNormal = new PCIDeviceNormal(device.bus, device.slot, device.function);
-                        pciNormal.EnableDevice();
-
-                        // Enable Bus Master (bit 2) and I/O Space (bit 0)
-                        uint cmdStatus = pciNormal.ReadRegister32(0x04);
-                        cmdStatus |= 0x0007u;
-                        pciNormal.WriteRegister32(0x04, cmdStatus);
-
-                        uint bar0 = pciNormal.ReadRegister32(0x10);
-                        uint bar1 = pciNormal.ReadRegister32(0x14);
-                        uint bar2 = pciNormal.ReadRegister32(0x18);
-                        uint bar3 = pciNormal.ReadRegister32(0x1C);
-                        uint bar4 = pciNormal.ReadRegister32(0x20);
-
-                        // 1. Primary Channel
-                        ushort priCmd = 0;
-                        ushort priCtrl = 0;
-                        if ((bar0 & 1) == 1 && (bar0 & 0xFFFC) > 0)
+                        if (device.ClassCode == 0x01) // Mass Storage
                         {
-                            priCmd = (ushort)(bar0 & 0xFFFC);
-                            priCtrl = ((bar1 & 1) == 1 && (bar1 & 0xFFFC) > 0) ? (ushort)(bar1 & 0xFFFC) : (ushort)(priCmd + 0x206);
-                        }
-                        else
-                        {
-                            priCmd = 0x1F0;
-                            priCtrl = 0x3F6;
-                        }
+                            var pciNormal = new PCIDeviceNormal(device.bus, device.slot, device.function);
+                            pciNormal.EnableDevice();
 
-                        ProbeChannel(priCmd, priCtrl, $"PCI [{device.bus:X2}:{device.slot:X2}.{device.function:X2}] Pri (0x{priCmd:X4})");
+                            // Enable Bus Master (bit 2) and I/O Space (bit 0)
+                            uint cmdStatus = pciNormal.ReadRegister32(0x04);
+                            cmdStatus |= 0x0007u;
+                            pciNormal.WriteRegister32(0x04, cmdStatus);
 
-                        // 2. Secondary Channel
-                        ushort secCmd = 0;
-                        ushort secCtrl = 0;
-                        if ((bar2 & 1) == 1 && (bar2 & 0xFFFC) > 0)
-                        {
-                            secCmd = (ushort)(bar2 & 0xFFFC);
-                            secCtrl = ((bar3 & 1) == 1 && (bar3 & 0xFFFC) > 0) ? (ushort)(bar3 & 0xFFFC) : (ushort)(secCmd + 0x206);
-                        }
-                        else
-                        {
-                            secCmd = 0x170;
-                            secCtrl = 0x376;
-                        }
+                            uint bar0 = pciNormal.ReadRegister32(0x10);
+                            uint bar1 = pciNormal.ReadRegister32(0x14);
+                            uint bar2 = pciNormal.ReadRegister32(0x18);
+                            uint bar3 = pciNormal.ReadRegister32(0x1C);
 
-                        ProbeChannel(secCmd, secCtrl, $"PCI [{device.bus:X2}:{device.slot:X2}.{device.function:X2}] Sec (0x{secCmd:X4})");
+                            // Primary Channel
+                            if ((bar0 & 1) == 1 && (bar0 & 0xFFFC) > 0)
+                            {
+                                ushort priCmd = (ushort)(bar0 & 0xFFFC);
+                                ushort priCtrl = ((bar1 & 1) == 1 && (bar1 & 0xFFFC) > 0) ? (ushort)((bar1 & 0xFFFC) + 2) : (ushort)(priCmd + 0x206);
+                                if (priCmd != 0x1F0)
+                                {
+                                    ProbeChannel(priCmd, priCtrl, $"PCI [{device.bus:X2}:{device.slot:X2}.{device.function:X2}] Pri (0x{priCmd:X4})");
+                                }
+                            }
+
+                            // Secondary Channel
+                            if ((bar2 & 1) == 1 && (bar2 & 0xFFFC) > 0)
+                            {
+                                ushort secCmd = (ushort)(bar2 & 0xFFFC);
+                                ushort secCtrl = ((bar3 & 1) == 1 && (bar3 & 0xFFFC) > 0) ? (ushort)((bar3 & 0xFFFC) + 2) : (ushort)(secCmd + 0x206);
+                                if (secCmd != 0x170)
+                                {
+                                    ProbeChannel(secCmd, secCtrl, $"PCI [{device.bus:X2}:{device.slot:X2}.{device.function:X2}] Sec (0x{secCmd:X4})");
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -374,17 +375,15 @@ namespace WeatherOS.Services
                     // Verify that Sector 0 can actually be read from this hardware channel
                     byte[] sec0 = new byte[512];
                     bool sec0Ok = CustomPciAtaBlockDevice.ReadSectorPio(cmdBase, ctrlBase, drvSel, false, 0, sec0);
-                    if (!sec0Ok) return; // Unresponsive floating channel or non-existent slave
+                    if (!sec0Ok) return; // Unresponsive channel or non-existent slave
 
-                    // Filter out floating bus noise (all 0xFF or all 0x00)
+                    // Filter out floating bus noise (all 0xFF only; do NOT filter all 0x00 as empty sectors are valid!)
                     bool allFF = true;
-                    bool all00 = true;
                     for (int b = 0; b < 16; b++)
                     {
-                        if (sec0[b] != 0xFF) allFF = false;
-                        if (sec0[b] != 0x00) all00 = false;
+                        if (sec0[b] != 0xFF) { allFF = false; break; }
                     }
-                    if (allFF || all00) return;
+                    if (allFF) return;
 
                     // Inspect MBR partition table to get true drive capacity if GParted partitioned the disk
                     if (sec0[510] == 0x55 && sec0[511] == 0xAA)
@@ -413,42 +412,35 @@ namespace WeatherOS.Services
                     {
                         var ed = _devices[i];
                         if (ed.CmdBase == cmdBase && ed.DriveSelect == drvSel) return;
+
+                        // Ghost mirror on the same ATA channel: if Master and Slave report same sector count, Slave is a ghost
+                        if (ed.CmdBase == cmdBase && ed.BlockCount > 0 && info.TotalSectors > 0)
+                        {
+                            long diff = (long)ed.BlockCount - (long)info.TotalSectors;
+                            if (diff < 0) diff = -diff;
+                            if (diff < 2048) return; // Same physical disk ghost mirror on same channel!
+                        }
+
+                        // Serial match
                         if (!string.IsNullOrEmpty(info.Serial) && string.Equals(ed.Serial, info.Serial, StringComparison.OrdinalIgnoreCase))
                         {
                             return; // Same drive already probed
                         }
 
-                        // If on the same I/O channel base (Master already probed), and this is Slave, ignore ghost mirror!
-                        if (ed.CmdBase == cmdBase)
+                        // Cached Sector 0 comparison
+                        if (ed.Sector0Cache != null)
                         {
-                            if (drvSel == 0xB0) return; // Slave on same channel is ghosting Master!
-                            if (ed.BlockCount == info.TotalSectors || Math.Abs((long)ed.BlockCount - (long)info.TotalSectors) < 2048)
+                            bool identicalSec0 = true;
+                            for (int b = 0; b < 32; b++)
                             {
-                                return; // Duplicate mirror on same channel
+                                if (sec0[b] != ed.Sector0Cache[b]) { identicalSec0 = false; break; }
                             }
-                        }
-
-                        // Check for identical Sector 0 data (bytes 0..64) or identical MBR
-                        byte[] edSec0 = new byte[512];
-                        try { ed.ReadBlock(0, 1, ref edSec0); } catch { }
-                        bool identicalSec0 = true;
-                        for (int b = 0; b < 64; b++)
-                        {
-                            if (sec0[b] != edSec0[b]) { identicalSec0 = false; break; }
-                        }
-                        if (identicalSec0 && (ed.BlockCount == info.TotalSectors || Math.Abs((long)ed.BlockCount - (long)info.TotalSectors) < 2048))
-                        {
-                            return; // Same physical disk mirror!
-                        }
-
-                        if (sec0[510] == 0x55 && sec0[511] == 0xAA && edSec0[510] == 0x55 && edSec0[511] == 0xAA)
-                        {
-                            bool sameMbr = true;
-                            for (int b = 440; b < 510; b++)
+                            if (identicalSec0)
                             {
-                                if (sec0[b] != edSec0[b]) { sameMbr = false; break; }
+                                long diff = (long)ed.BlockCount - (long)info.TotalSectors;
+                                if (diff < 0) diff = -diff;
+                                if (diff < 4096) return; // Same physical disk mirror!
                             }
-                            if (sameMbr) return; // Same physical disk mirror!
                         }
                     }
 
@@ -456,6 +448,7 @@ namespace WeatherOS.Services
                     if (info.TotalSectors == 0) return;
 
                     var dev = new CustomPciAtaBlockDevice(cmdBase, ctrlBase, drvSel, info, channelTag);
+                    dev.Sector0Cache = sec0;
                     _devices.Add(dev);
                 }
             }

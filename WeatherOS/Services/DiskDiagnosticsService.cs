@@ -524,18 +524,17 @@ namespace WeatherOS.Services
 
                 // 1. Select drive
                 pDrive.Byte = driveSelect;
-                byte status = pCmd.Byte;
-                status = pCmd.Byte;
-                status = pCmd.Byte;
-                status = pCmd.Byte;
+                for (int i = 0; i < 4; i++) { byte dummy = pCmd.Byte; } // 400ns delay
 
+                byte status = pCmd.Byte;
                 if (status == 0xFF) return info; // Floating bus
 
                 // Wait for drive not busy before issuing command
-                int preWait = 300000;
+                int preWait = 500000;
                 while (preWait-- > 0)
                 {
-                    if ((pCmd.Byte & 0x80) == 0) break;
+                    status = pCmd.Byte;
+                    if ((status & 0x80) == 0) break;
                 }
 
                 // 2. Zero LBA registers
@@ -546,56 +545,38 @@ namespace WeatherOS.Services
 
                 // 3. Issue IDENTIFY DEVICE (0xEC)
                 pCmd.Byte = 0xEC;
+                for (int i = 0; i < 4; i++) { byte dummy = pCmd.Byte; } // 400ns delay
 
-                // Wait for BSY to clear
-                int timeout = 500000;
-                while (timeout-- > 0)
-                {
-                    status = pCmd.Byte;
-                    if ((status & 0x80) == 0) break; // BSY cleared
-                }
-
-                info.StatusByte = status;
-                if (status == 0 || timeout <= 0) return info;
-
+                // Check for ATAPI signature (PATAPI/SATAPI: mid=0x14, high=0xEB or mid=0x69, high=0x96)
                 byte mid = pLbaMid.Byte;
                 byte high = pLbaHigh.Byte;
-
-                // Check for ATAPI (PATAPI/SATAPI: mid=0x14, high=0xEB)
-                if (mid == 0x14 && high == 0xEB)
+                if ((mid == 0x14 && high == 0xEB) || (mid == 0x69 && high == 0x96))
                 {
                     info.IsAtapi = true;
                     // Issue IDENTIFY PACKET DEVICE (0xA1)
                     pCmd.Byte = 0xA1;
-                    timeout = 300000;
-                    while (timeout-- > 0)
-                    {
-                        status = pCmd.Byte;
-                        if ((status & 0x80) == 0) break;
-                    }
-                    info.StatusByte = status;
+                    for (int i = 0; i < 4; i++) { byte dummy = pCmd.Byte; }
                 }
 
-                // Check if ERR bit is set
-                if ((status & 0x01) != 0)
-                {
-                    info.ErrorByte = pErr.Byte;
-                    return info;
-                }
-
-                // Wait for DRQ bit (0x08) to become asserted
-                timeout = 500000;
+                // Wait for BSY to clear AND DRQ (0x08) to become asserted
+                // Do NOT bail out if status is 0x00 while drive is preparing identify data!
+                int timeout = 2000000;
                 while (timeout-- > 0)
                 {
                     status = pCmd.Byte;
-                    if ((status & 0x80) == 0)
+                    if ((status & 0x80) == 0) // BSY is clear
                     {
-                        if ((status & 0x08) != 0) break; // Data ready
-                        if ((status & 0x01) != 0) return info; // Error
+                        if ((status & 0x08) != 0) break; // DRQ is set! Data ready!
+                        if ((status & 0x01) != 0) // ERR is set
+                        {
+                            info.ErrorByte = pErr.Byte;
+                            return info;
+                        }
                     }
                 }
 
-                if ((status & 0x08) == 0)
+                info.StatusByte = status;
+                if ((status & 0x08) == 0 || timeout <= 0)
                 {
                     return info;
                 }

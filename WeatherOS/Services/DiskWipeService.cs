@@ -12,6 +12,7 @@ namespace WeatherOS.Services
         public BlockDevice Device { get; set; }
         public string Name { get; set; } = "";
         public ulong SectorCount { get; set; }
+        public byte[] Sector0Cache { get; set; } = null;
         public ulong SizeBytes => SectorCount * 512;
         public string SizeDisplay
         {
@@ -79,48 +80,86 @@ namespace WeatherOS.Services
             return $"{mb} MB";
         }
 
+        public static bool IsLiveBootDrive(BlockDevice dev, ulong sectorCount, string model, byte[] sec0)
+        {
+            if (!string.IsNullOrEmpty(model))
+            {
+                if (model.Contains("USB") || model.Contains("Live") || model.Contains("Boot Medium") || model.Contains("Flash"))
+                    return true;
+            }
+
+            // WeatherOS ISO Live Boot Medium sector count (~3.3 GB / ~7,077,996 sectors)
+            if (sectorCount >= 6000000UL && sectorCount <= 8000000UL)
+            {
+                // ISO 9660 / El Torito signature: bytes 510-511 are not standard MBR 0x55, 0xAA
+                if (sec0 != null && sec0.Length >= 512)
+                {
+                    if (sec0[510] != 0x55 || sec0[511] != 0xAA) return true;
+                }
+                return true;
+            }
+
+            return false;
+        }
+
         private static bool IsDuplicateOfExisting(List<DiskDriveInfo> existingList, BlockDevice newDev, byte[] sec0)
         {
             if (existingList == null || existingList.Count == 0 || newDev == null) return false;
+
+            ulong newBlocks = newDev.BlockCount;
+            bool newIsLiveUsb = (newBlocks >= 6000000UL && newBlocks <= 8000000UL);
+
             for (int i = 0; i < existingList.Count; i++)
             {
                 var ex = existingList[i];
                 if (ex.Device == newDev) return true;
 
-                // Match if sector count is identical and first 64 bytes of Sector 0 are identical
-                if (ex.SectorCount == newDev.BlockCount && ex.SectorCount > 0 && sec0 != null && sec0.Length >= 64)
+                bool exIsLiveUsb = ex.Name.Contains("Live USB") || ex.Name.Contains("Boot Medium") || ex.Name.Contains("Boot Drive");
+
+                // CRITICAL RULE: A PC running Live OS only has ONE physical Live USB boot stick!
+                // If a Live USB drive is already registered, NEVER add another Live USB drive entry!
+                if (exIsLiveUsb && newIsLiveUsb)
                 {
-                    byte[] exSec0 = new byte[512];
-                    try { ex.Device.ReadBlock(0, 1, ref exSec0); } catch { }
-                    bool sameStart = true;
-                    for (int b = 0; b < 64; b++)
-                    {
-                        if (sec0[b] != exSec0[b]) { sameStart = false; break; }
-                    }
-                    if (sameStart) return true;
+                    return true;
                 }
 
-                // Match identical hardware mirror ONLY if sector 0 has non-zero identical MBR disk signature and partition table
-                if (sec0 != null && sec0.Length >= 512 && sec0[510] == 0x55 && sec0[511] == 0xAA)
+                // If sector counts are identical or within 2048 sectors (~1MB tolerance)
+                if (ex.SectorCount > 0 && newBlocks > 0)
                 {
-                    byte[] exSec0 = new byte[512];
-                    try { ex.Device.ReadBlock(0, 1, ref exSec0); } catch { }
-                    if (exSec0[510] == 0x55 && exSec0[511] == 0xAA)
+                    long diff = (long)ex.SectorCount - (long)newBlocks;
+                    if (diff < 0) diff = -diff;
+                    if (diff < 2048)
                     {
-                        bool hasNonZero = false;
-                        for (int b = 440; b < 510; b++)
+                        // Check if Sector 0 matches in first 32 bytes
+                        if (sec0 != null && ex.Sector0Cache != null)
                         {
-                            if (sec0[b] != 0) { hasNonZero = true; break; }
-                        }
-                        if (hasNonZero)
-                        {
-                            bool sameMbr = true;
-                            for (int b = 440; b < 510; b++)
+                            bool sameStart = true;
+                            for (int b = 0; b < 32; b++)
                             {
-                                if (sec0[b] != exSec0[b]) { sameMbr = false; break; }
+                                if (sec0[b] != ex.Sector0Cache[b]) { sameStart = false; break; }
                             }
-                            if (sameMbr) return true;
+                            if (sameStart) return true;
                         }
+                        else
+                        {
+                            return true;
+                        }
+                    }
+                }
+
+                // Compare Sector 0 signatures
+                if (sec0 != null && ex.Sector0Cache != null)
+                {
+                    bool same64 = true;
+                    for (int b = 0; b < 64; b++)
+                    {
+                        if (sec0[b] != ex.Sector0Cache[b]) { same64 = false; break; }
+                    }
+                    if (same64 && ex.SectorCount > 0 && newBlocks > 0)
+                    {
+                        long diff = (long)ex.SectorCount - (long)newBlocks;
+                        if (diff < 0) diff = -diff;
+                        if (diff < 4096) return true;
                     }
                 }
             }
@@ -152,7 +191,8 @@ namespace WeatherOS.Services
                             Index = list.Count,
                             Device = ad,
                             Name = $"Disk {list.Count} (SATA AHCI: {ad.Model})",
-                            SectorCount = ad.BlockCount
+                            SectorCount = ad.BlockCount,
+                            Sector0Cache = testSec
                         };
 
                         ProbeDriveFilesystems(ad, list.Count, info);
@@ -162,7 +202,7 @@ namespace WeatherOS.Services
             }
             catch { }
 
-            // 1.5. Probe Bare-Metal PCI ATA/IDE driver (Native PCI BAR ports on Intel ICH7-M)
+            // 1.5. Probe Bare-Metal PCI ATA/IDE driver (Standard & Native PCI ports on Intel ICH7-M)
             try
             {
                 var pciAtaDrives = CustomPciAtaDriverService.GetDevices();
@@ -177,7 +217,12 @@ namespace WeatherOS.Services
                         try { pd.ReadBlock(0, 1, ref testSec); } catch { continue; }
                         if (IsDuplicateOfExisting(list, pd, testSec)) continue;
 
-                        bool isUsb = (pd.BlockCount > 0 && pd.BlockCount < 64000000UL) || pd.Model.Contains("USB") || pd.Model.Contains("Live");
+                        bool isUsb = IsLiveBootDrive(pd, pd.BlockCount, pd.Model, testSec);
+                        if (isUsb && list.Exists(x => x.Name.Contains("Live USB") || x.Name.Contains("Boot Medium") || x.Name.Contains("Boot Drive")))
+                        {
+                            continue; // Don't duplicate Live USB
+                        }
+
                         string cleanModel = CustomPciAtaBlockDevice.SanitizeAtaModel(pd.Model);
                         if (string.IsNullOrEmpty(cleanModel)) cleanModel = isUsb ? "Live USB Boot Drive" : "Internal Fixed Storage";
 
@@ -186,10 +231,15 @@ namespace WeatherOS.Services
                             Index = list.Count,
                             Device = pd,
                             Name = isUsb ? $"Disk {list.Count} (Live USB Boot Drive, {FormatSectors(pd.BlockCount)})" : $"Disk {list.Count} ({cleanModel}, {FormatSectors(pd.BlockCount)})",
-                            SectorCount = pd.BlockCount
+                            SectorCount = pd.BlockCount,
+                            Sector0Cache = testSec
                         };
 
                         ProbeDriveFilesystems(pd, list.Count, info);
+                        if (info.ContainedFilesystems != null && info.ContainedFilesystems.Contains("WEATHEROS"))
+                        {
+                            info.Name = $"Disk {list.Count} (Internal Hard Disk [WEATHEROS], {FormatSectors(pd.BlockCount)})";
+                        }
                         list.Add(info);
                     }
                 }
@@ -234,12 +284,31 @@ namespace WeatherOS.Services
                         if (IsDuplicateOfExisting(list, dev, testSec)) continue;
 
                         // Probe ATA Hardware Port for True Model and 48-bit Capacity
-                        ushort ioBase = (i == 0) ? (ushort)0x1F0 : (ushort)0x170;
+                        ushort ioBase = 0x1F0;
                         byte drvSel = 0xA0; // Master
-                        var ataInfo = AtaDeviceDiagnostics.ProbeAta(ioBase, drvSel);
-                        if (!ataInfo.Exists && i == 1)
+                        if (dev is Cosmos.HAL.BlockDevice.Ata ataDev)
                         {
-                            ataInfo = AtaDeviceDiagnostics.ProbeAta(0x1F0, 0xB0); // Primary Slave
+                            ioBase = (ataDev.ControllerID == Cosmos.HAL.BlockDevice.Ata.ControllerIdEnum.Primary) ? (ushort)0x1F0 : (ushort)0x170;
+                            drvSel = (ataDev.BusPosition == Cosmos.HAL.BlockDevice.Ata.BusPositionEnum.Master) ? (byte)0xA0 : (byte)0xB0;
+                        }
+                        else
+                        {
+                            ioBase = (i == 0) ? (ushort)0x1F0 : (ushort)0x170;
+                            drvSel = (i == 1) ? (byte)0xB0 : (byte)0xA0;
+                        }
+
+                        var ataInfo = AtaDeviceDiagnostics.ProbeAta(ioBase, drvSel);
+                        if (!ataInfo.Exists && ioBase == 0x1F0 && drvSel == 0xA0)
+                        {
+                            ataInfo = AtaDeviceDiagnostics.ProbeAta(0x1F0, 0xB0); // Primary Slave fallback
+                        }
+                        if (!ataInfo.Exists)
+                        {
+                            ataInfo = AtaDeviceDiagnostics.ProbeAta(0x170, 0xA0); // Secondary Master fallback
+                        }
+                        if (!ataInfo.Exists)
+                        {
+                            ataInfo = AtaDeviceDiagnostics.ProbeAta(0x170, 0xB0); // Secondary Slave fallback
                         }
 
                         // Filter out ATAPI Optical Drives (CD/DVD Drives) - they cannot store FAT32 user files
@@ -249,17 +318,9 @@ namespace WeatherOS.Services
                         }
 
                         ulong safeCount = 0;
-                        string driveName = "";
-
-                        string cleanModel = CustomPciAtaBlockDevice.SanitizeAtaModel(ataInfo.Model);
-                        bool isUsbDev = (safeCount > 0 && safeCount < 64000000UL) || ataInfo.Model.Contains("USB") || ataInfo.Model.Contains("Live");
-                        if (string.IsNullOrEmpty(cleanModel)) cleanModel = isUsbDev ? "Live USB Boot Drive" : "Internal Hard Disk";
-
                         if (ataInfo.Exists && ataInfo.TotalSectors > 0)
                         {
                             safeCount = ataInfo.TotalSectors;
-                            isUsbDev = (safeCount < 64000000UL) || ataInfo.Model.Contains("USB") || ataInfo.Model.Contains("Live");
-                            driveName = isUsbDev ? $"Disk {list.Count} (Live USB Boot Drive, {FormatSectors(safeCount)})" : $"Disk {list.Count} ({cleanModel}, {FormatSectors(safeCount)})";
                         }
 
                         // Fallback 1: Inspect MBR partition table for partition bounds
@@ -300,20 +361,31 @@ namespace WeatherOS.Services
                             }
                         }
 
-                        if (string.IsNullOrEmpty(driveName))
+                        bool isUsbDev = IsLiveBootDrive(dev, safeCount, ataInfo.Model, testSec);
+                        if (isUsbDev && list.Exists(x => x.Name.Contains("Live USB") || x.Name.Contains("Boot Medium") || x.Name.Contains("Boot Drive")))
                         {
-                            driveName = isUsbDev ? $"Disk {list.Count} (Live USB Boot Drive, {FormatSectors(safeCount)})" : $"Disk {list.Count} (Internal Hard Disk #{i}, {FormatSectors(safeCount)})";
+                            continue; // Don't duplicate Live USB
                         }
+
+                        string cleanModel = CustomPciAtaBlockDevice.SanitizeAtaModel(ataInfo.Model);
+                        if (string.IsNullOrEmpty(cleanModel)) cleanModel = isUsbDev ? "Live USB Boot Drive" : $"Internal Hard Disk #{i}";
+
+                        string driveName = isUsbDev ? $"Disk {list.Count} (Live USB Boot Drive, {FormatSectors(safeCount)})" : $"Disk {list.Count} ({cleanModel}, {FormatSectors(safeCount)})";
 
                         var info = new DiskDriveInfo
                         {
                             Index = list.Count,
                             Device = dev,
                             Name = driveName,
-                            SectorCount = safeCount
+                            SectorCount = safeCount,
+                            Sector0Cache = testSec
                         };
 
                         ProbeDriveFilesystems(dev, list.Count, info);
+                        if (info.ContainedFilesystems != null && info.ContainedFilesystems.Contains("WEATHEROS"))
+                        {
+                            info.Name = $"Disk {list.Count} (Internal Hard Disk [WEATHEROS], {FormatSectors(safeCount)})";
+                        }
                         list.Add(info);
                     }
                 }
@@ -361,12 +433,19 @@ namespace WeatherOS.Services
                             safeDiskSectors = (totalPartSectors > 0) ? totalPartSectors : 2097152UL;
                         }
 
+                        bool isUsbVfs = IsLiveBootDrive(rootDev, safeDiskSectors, "", testSec);
+                        if (isUsbVfs && list.Exists(x => x.Name.Contains("Live USB") || x.Name.Contains("Boot Medium") || x.Name.Contains("Boot Drive")))
+                        {
+                            continue; // Don't duplicate Live USB
+                        }
+
                         var info = new DiskDriveInfo
                         {
                             Index = list.Count,
                             Device = rootDev,
-                            Name = $"Disk {d} (Internal Hard Disk, {FormatSectors(safeDiskSectors)})",
-                            SectorCount = safeDiskSectors
+                            Name = isUsbVfs ? $"Disk {list.Count} (Live USB Boot Drive, {FormatSectors(safeDiskSectors)})" : $"Disk {list.Count} (Internal Hard Disk, {FormatSectors(safeDiskSectors)})",
+                            SectorCount = safeDiskSectors,
+                            Sector0Cache = testSec
                         };
 
                         ProbeDriveFilesystems(rootDev, list.Count, info);
