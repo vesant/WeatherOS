@@ -67,10 +67,10 @@ namespace WeatherOS.Services
             if (aData == null) return;
             for (ulong s = 0; s < aBlockCount; s++)
             {
-                byte[] sec = new byte[512];
-                if (ReadSectorPio(CmdBase, CtrlBase, DriveSelect, IsLba48, aBlock + s, sec))
+                int off = (int)(s * 512);
+                if (!ReadSectorPio(CmdBase, CtrlBase, DriveSelect, IsLba48, aBlock + s, aData, off))
                 {
-                    Array.Copy(sec, 0, aData, (int)(s * 512), 512);
+                    ReadSectorPio(CmdBase, CtrlBase, DriveSelect, IsLba48, aBlock + s, aData, off);
                 }
             }
         }
@@ -80,19 +80,18 @@ namespace WeatherOS.Services
             if (aData == null) return;
             for (ulong s = 0; s < aBlockCount; s++)
             {
-                byte[] sec = new byte[512];
-                Array.Copy(aData, (int)(s * 512), sec, 0, 512);
-                bool ok = WriteSectorPio(CmdBase, CtrlBase, DriveSelect, IsLba48, aBlock + s, sec);
+                int off = (int)(s * 512);
+                bool ok = WriteSectorPio(CmdBase, CtrlBase, DriveSelect, IsLba48, aBlock + s, aData, off);
                 if (!ok)
                 {
                     // Retry once on failure
-                    WriteSectorPio(CmdBase, CtrlBase, DriveSelect, IsLba48, aBlock + s, sec);
+                    WriteSectorPio(CmdBase, CtrlBase, DriveSelect, IsLba48, aBlock + s, aData, off);
                 }
             }
             FlushPio(CmdBase, DriveSelect, IsLba48);
         }
 
-        public static bool ReadSectorPio(ushort cmdBase, ushort ctrlBase, byte drvSel, bool lba48, ulong lba, byte[] buffer)
+        public static bool ReadSectorPio(ushort cmdBase, ushort ctrlBase, byte drvSel, bool lba48, ulong lba, byte[] buffer, int offset = 0)
         {
             try
             {
@@ -144,8 +143,8 @@ namespace WeatherOS.Services
                 for (int w = 0; w < 256; w++)
                 {
                     ushort word = pData.Word;
-                    buffer[w * 2] = (byte)(word & 0xFF);
-                    buffer[w * 2 + 1] = (byte)(word >> 8);
+                    buffer[offset + (w * 2)] = (byte)(word & 0xFF);
+                    buffer[offset + (w * 2) + 1] = (byte)(word >> 8);
                 }
                 return true;
             }
@@ -155,7 +154,7 @@ namespace WeatherOS.Services
             }
         }
 
-        public static bool WriteSectorPio(ushort cmdBase, ushort ctrlBase, byte drvSel, bool lba48, ulong lba, byte[] buffer)
+        public static bool WriteSectorPio(ushort cmdBase, ushort ctrlBase, byte drvSel, bool lba48, ulong lba, byte[] buffer, int offset = 0)
         {
             try
             {
@@ -203,7 +202,7 @@ namespace WeatherOS.Services
 
                 for (int w = 0; w < 256; w++)
                 {
-                    ushort word = (ushort)(buffer[w * 2] | (buffer[w * 2 + 1] << 8));
+                    ushort word = (ushort)(buffer[offset + (w * 2)] | (buffer[offset + (w * 2) + 1] << 8));
                     pData.Word = word;
                 }
 

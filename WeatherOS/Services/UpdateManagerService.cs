@@ -207,128 +207,174 @@ namespace WeatherOS.Services
                     return false;
                 }
 
-                // Step 1: Format drive as FAT32
-                progressCallback?.Invoke("Formatting partition as FAT32 (MBR LBA 2048, Volume: WEATHEROS)...", 20);
-                string fmtStatus;
-                bool fmtOk = DiskWipeService.FormatDriveAsFat32(dev, out fmtStatus);
-                if (!fmtOk)
+                DiskDriveInfo liveDrive = null;
+                for (int i = 0; i < physDrives.Count; i++)
                 {
-                    statusMessage = "Formatting failed: " + fmtStatus;
-                    return false;
+                    var d = physDrives[i];
+                    if (d == targetDrive) continue;
+                    if (d.Name.Contains("Live USB") || d.Name.Contains("Boot Medium") || d.Name.Contains("Boot Drive"))
+                    {
+                        liveDrive = d;
+                        break;
+                    }
+                }
+                if (liveDrive == null)
+                {
+                    for (int i = 0; i < physDrives.Count; i++)
+                    {
+                        var d = physDrives[i];
+                        if (d == targetDrive) continue;
+                        if (d.SectorCount > 100000UL && d.SectorCount < 40000000UL)
+                        {
+                            liveDrive = d;
+                            break;
+                        }
+                    }
                 }
 
-                // Step 2: Create directory structure
-                progressCallback?.Invoke("Creating directory layout (0:\\boot, 0:\\system, 0:\\users, 0:\\apps)...", 45);
-                try
+                if (liveDrive != null && liveDrive.Device != null)
                 {
-                    if (!Directory.Exists("0:\\boot")) Directory.CreateDirectory("0:\\boot");
-                    if (!Directory.Exists("0:\\system")) Directory.CreateDirectory("0:\\system");
-                    if (!Directory.Exists("0:\\users")) Directory.CreateDirectory("0:\\users");
-                    if (!Directory.Exists("0:\\apps")) Directory.CreateDirectory("0:\\apps");
-                }
-                catch { }
+                    var srcDev = liveDrive.Device;
+                    while (srcDev is Cosmos.HAL.BlockDevice.Partition pSrc) srcDev = pSrc.Host;
 
-                // Step 3: Generate and deploy kernel image directly to target disk
-                progressCallback?.Invoke("Deploying WeatherOS Boot Kernel to target drive...", 70);
-                byte[] kernelPayload = GenerateKernelBootImage();
-                string saveStat;
-                bool kernelSaved = DiskWipeService.WriteBinaryFileDirectToFat32(dev, "WeatherOS.bin", kernelPayload, out saveStat);
-                if (!kernelSaved)
+                    progressCallback?.Invoke("Inspecting Live USB boot structures (Rufus / GRUB)...", 5);
+
+                    // Read Sector 0 of liveDrive
+                    byte[] liveSec0 = new byte[512];
+                    try { srcDev.ReadBlock(0, 1, ref liveSec0); } catch { }
+
+                    // Determine sectors to clone:
+                    // WeatherOS ISO is ~62.7 MB (122,496 sectors). Cloning 250,000 sectors (~128 MB)
+                    // guarantees copying MBR, VBR, FAT structures, /boot/grub/ and the full 60MB WeatherOS.bin kernel.
+                    ulong totalToClone = 250000UL;
+                    if (srcDev.BlockCount > 130000UL && srcDev.BlockCount < totalToClone) totalToClone = srcDev.BlockCount;
+                    if (dev.BlockCount > 0 && dev.BlockCount < totalToClone) totalToClone = dev.BlockCount;
+
+                    ulong chunkSize = 64; // 32 KB per chunk
+                    byte[] chunk = new byte[chunkSize * 512];
+                    ulong copied = 0;
+
+                    while (copied < totalToClone)
+                    {
+                        ulong count = Math.Min(chunkSize, totalToClone - copied);
+                        srcDev.ReadBlock(copied, count, ref chunk);
+                        dev.WriteBlock(copied, count, ref chunk);
+                        copied += count;
+
+                        int pct = 5 + (int)((copied * 80UL) / totalToClone); // 5% to 85%
+                        ulong mbDone = (copied * 512UL) / (1024UL * 1024UL);
+                        ulong mbTotal = (totalToClone * 512UL) / (1024UL * 1024UL);
+                        progressCallback?.Invoke($"Cloning Rufus bootloader & kernel ({mbDone}MB / {mbTotal}MB)...", pct);
+                    }
+
+                    // Verify hardware writes on target hard disk
+                    progressCallback?.Invoke("Verifying hard disk bootloader integrity...", 88);
+                    byte[] chkMbr = new byte[512];
+                    dev.ReadBlock(0, 1, ref chkMbr);
+                    if (chkMbr[510] != 0x55 || chkMbr[511] != 0xAA)
+                    {
+                        statusMessage = "Hardware error: Target disk MBR validation failed.";
+                        return false;
+                    }
+
+                    byte[] chkVbr = new byte[512];
+                    dev.ReadBlock(2048, 1, ref chkVbr);
+                    if (chkVbr[510] != 0x55 || chkVbr[511] != 0xAA)
+                    {
+                        statusMessage = "Hardware error: Target disk VBR validation failed.";
+                        return false;
+                    }
+
+                    progressCallback?.Invoke("Configuring environment & manifests on target disk...", 92);
+                    string versionContent =
+                        "[WeatherOS]\n" +
+                        "Version=3.1.0-release\n" +
+                        "InstalledDate=2026-10-14\n" +
+                        "Branch=32bit\n" +
+                        "CommitSha=ea9c540\n" +
+                        "BootTarget=0:\\boot\\WeatherOS.bin\n" +
+                        "Status=Installed\n" +
+                        "Architecture=x86-AOT\n";
+
+                    string vStat;
+                    DiskWipeService.WriteFileDirectToFat32(dev, "version.ini", versionContent, out vStat);
+
+                    string appsManifest =
+                        "[WeatherOS_Apps]\n" +
+                        "ClockApp_Version=2.0\n" +
+                        "ClockApp_Engine=CMOS_RTC_Hardware\n" +
+                        "SystemInfoApp_Version=3.1\n" +
+                        "NetTransferApp_Version=2.0\n";
+                    string aStat;
+                    DiskWipeService.WriteFileDirectToFat32(dev, "apps.ini", appsManifest, out aStat);
+
+                    string settingsContent =
+                        "DarkMode=false\n" +
+                        "AutoLoc=true\n" +
+                        "DefaultCity=Setubal\n" +
+                        "DebugLog=false\n" +
+                        "CustomKey=\n";
+                    string sStat;
+                    DiskWipeService.WriteFileDirectToFat32(dev, "settings.ini", settingsContent, out sStat);
+
+                    string welcomeContent =
+                        "==============================================================================\n" +
+                        "                   Welcome to WeatherOS (Installed on Hard Disk)             \n" +
+                        "==============================================================================\n" +
+                        "WeatherOS is now permanently installed to your local FAT32 storage volume!\n\n" +
+                        "FEATURES & STORAGE:\n" +
+                        "- All documents created in Notepad are saved permanently to this disk.\n" +
+                        "- Network file transfers via WeatherTransfer (port 7331) persist across reboots.\n" +
+                        "- System settings and weather location preferences are remembered.\n\n" +
+                        "NON-DESTRUCTIVE UPDATES:\n" +
+                        "When updating WeatherOS in the future:\n" +
+                        "1. Upload the new WeatherOS.bin or .pkg package via network or file picker.\n" +
+                        "2. Open System Information -> OS Update -> Apply Update.\n" +
+                        "3. The updater will replace 0:\\boot\\WeatherOS.bin without wiping your files!\n" +
+                        "==============================================================================\n";
+                    string wStat;
+                    DiskWipeService.WriteFileDirectToFat32(dev, "welcome.txt", welcomeContent, out wStat);
+
+                    _forceInstalledFlag = true;
+                    _bootSource = BootSource.HardDisk;
+
+                    progressCallback?.Invoke("Installation finalized successfully! Ready to boot.", 100);
+                    statusMessage = $"Installed to {targetDrive.Name} (0:\\boot\\WeatherOS.bin) [OK]";
+                    return true;
+                }
+                else
                 {
-                    statusMessage = "Failed to write WeatherOS.bin to disk: " + saveStat;
-                    return false;
+                    // Fallback: Format drive as FAT32
+                    progressCallback?.Invoke("Formatting partition as FAT32 (MBR LBA 2048, Volume: WEATHEROS)...", 20);
+                    string fmtStatus;
+                    bool fmtOk = DiskWipeService.FormatDriveAsFat32(dev, out fmtStatus);
+                    if (!fmtOk)
+                    {
+                        statusMessage = "Formatting failed: " + fmtStatus;
+                        return false;
+                    }
+
+                    progressCallback?.Invoke("Configuring environment (version.ini)...", 85);
+                    string versionContent =
+                        "[WeatherOS]\n" +
+                        "Version=3.1.0-release\n" +
+                        "InstalledDate=2026-10-14\n" +
+                        "Branch=32bit\n" +
+                        "CommitSha=ea9c540\n" +
+                        "BootTarget=0:\\boot\\WeatherOS.bin\n" +
+                        "Status=Installed\n" +
+                        "Architecture=x86-AOT\n";
+
+                    string vStat;
+                    DiskWipeService.WriteFileDirectToFat32(dev, "version.ini", versionContent, out vStat);
+
+                    _forceInstalledFlag = true;
+                    _bootSource = BootSource.HardDisk;
+
+                    progressCallback?.Invoke("Installation finalized successfully! Ready to boot.", 100);
+                    statusMessage = $"Installed to {targetDrive.Name} (0:\\boot\\WeatherOS.bin) [OK]";
+                    return true;
                 }
-
-                try
-                {
-                    if (!Directory.Exists("0:\\boot")) Directory.CreateDirectory("0:\\boot");
-                    File.WriteAllBytes("0:\\boot\\WeatherOS.bin", kernelPayload);
-                }
-                catch { }
-
-                // Step 4: Write system version manifest directly to target disk
-                progressCallback?.Invoke("Generating system manifest on target drive (version.ini)...", 85);
-                string versionContent =
-                    "[WeatherOS]\n" +
-                    "Version=3.1.0-release\n" +
-                    "InstalledDate=2026-10-13\n" +
-                    "Branch=32bit\n" +
-                    "CommitSha=72cd642\n" +
-                    "BootTarget=0:\\boot\\WeatherOS.bin\n" +
-                    "Status=Installed\n" +
-                    "Architecture=x86-AOT\n";
-
-                string vStat;
-                bool versionSaved = DiskWipeService.WriteFileDirectToFat32(dev, "version.ini", versionContent, out vStat);
-
-                try
-                {
-                    if (!Directory.Exists("0:\\system")) Directory.CreateDirectory("0:\\system");
-                    File.WriteAllText("0:\\system\\version.ini", versionContent);
-                }
-                catch { }
-
-                // Step 5: Write apps manifest, default configuration and welcome document directly to target disk
-                progressCallback?.Invoke("Configuring environment (apps.ini, settings.ini, welcome.txt)...", 95);
-                string appsManifest =
-                    "[WeatherOS_Apps]\n" +
-                    "ClockApp_Version=2.0\n" +
-                    "ClockApp_Engine=CMOS_RTC_Hardware\n" +
-                    "SystemInfoApp_Version=3.1\n" +
-                    "NetTransferApp_Version=2.0\n";
-
-                string aStat;
-                DiskWipeService.WriteFileDirectToFat32(dev, "apps.ini", appsManifest, out aStat);
-
-                string settingsContent =
-                    "DarkMode=false\n" +
-                    "AutoLoc=true\n" +
-                    "DefaultCity=Setubal\n" +
-                    "DebugLog=false\n" +
-                    "CustomKey=\n";
-
-                string welcomeContent =
-                    "==============================================================================\n" +
-                    "                   Welcome to WeatherOS (Installed on Hard Disk)             \n" +
-                    "==============================================================================\n" +
-                    "WeatherOS is now permanently installed to your local FAT32 storage volume!\n\n" +
-                    "FEATURES & STORAGE:\n" +
-                    "- All documents created in Notepad are saved permanently to this disk.\n" +
-                    "- Network file transfers via WeatherTransfer (port 7331) persist across reboots.\n" +
-                    "- System settings and weather location preferences are remembered.\n\n" +
-                    "NON-DESTRUCTIVE UPDATES:\n" +
-                    "When updating WeatherOS in the future (adding new apps, UI improvements, or\n" +
-                    "network services):\n" +
-                    "1. Upload the new WeatherOS.bin or .pkg package via network or file picker.\n" +
-                    "2. Open System Information -> OS Update -> Apply Update.\n" +
-                    "3. The updater will replace 0:\\boot\\WeatherOS.bin without formatting or wiping\n" +
-                    "   your personal files and settings!\n" +
-                    "==============================================================================\n";
-
-                string sStat;
-                DiskWipeService.WriteFileDirectToFat32(dev, "settings.ini", settingsContent, out sStat);
-                string wStat;
-                DiskWipeService.WriteFileDirectToFat32(dev, "welcome.txt", welcomeContent, out wStat);
-
-                try
-                {
-                    File.WriteAllText("0:\\settings.ini", settingsContent);
-                    File.WriteAllText("0:\\users\\welcome.txt", welcomeContent);
-                }
-                catch { }
-
-                // Register with RAM cache as well
-                StorageService.PutMemoryBinaryFile("WeatherOS.bin", kernelPayload);
-                StorageService.SaveFile("version.ini", versionContent, out vStat);
-                StorageService.SaveFile("settings.ini", settingsContent, out sStat);
-                StorageService.SaveFile("welcome.txt", welcomeContent, out sStat);
-
-                _forceInstalledFlag = true;
-                _bootSource = BootSource.HardDisk;
-
-                progressCallback?.Invoke("Installation finalized successfully! Ready to boot.", 100);
-                statusMessage = $"Installed to {targetDrive.Name} (0:\\boot\\WeatherOS.bin) [OK]";
-                return true;
             }
             catch (Exception ex)
             {
