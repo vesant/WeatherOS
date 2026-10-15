@@ -25,6 +25,11 @@
         <PackageReference Include="Cosmos.Build" Version="0-*" NoWarn="NU1604" />
         <PackageReference Include="Cosmos.Debug.Kernel" Version="0-*" NoWarn="NU1604" />
         <PackageReference Include="Cosmos.System2" Version="0-*" NoWarn="NU1604" />
+        <PackageReference Include="IL2CPU.API" Version="0.1.0-localbuild20221121060004" />
     </ItemGroup>
+
+    <Target Name="GenerateNativeBootloader" AfterTargets="MakeIso">
+        <Exec Command="python &quot;$(MSBuildThisFileDirectory)..\make_isohybrid.py&quot;" />
+    </Target>
 
 </Project>

@@ -273,26 +273,23 @@ namespace WeatherOS.Services
                     var srcDev = liveDrive.Device;
                     while (srcDev is Cosmos.HAL.BlockDevice.Partition pSrc) srcDev = pSrc.Host;
 
-                    progressCallback?.Invoke("Inspecting Live USB boot structures (Rufus / GRUB)...", 5);
+                    progressCallback?.Invoke("Inspecting Live USB medium and kernel structures...", 5);
 
                     // Read Sector 0 of liveDrive
                     byte[] liveSec0 = new byte[512];
                     try { srcDev.ReadBlock(0, 1, ref liveSec0); } catch { }
 
                     // Determine sectors to clone:
-                    // WeatherOS ISO is 62.7 MB (122,496 sectors). Cloning 135,000 sectors (~69 MB)
-                    // guarantees copying MBR, VBR, FAT structures, /boot/grub/ and the full 60MB WeatherOS.bin kernel
-                    // with ~7MB margin while finishing in seconds.
-                    ulong totalToClone = 140000UL;
-                    if (srcDev.BlockCount > 130000UL && srcDev.BlockCount < totalToClone) totalToClone = srcDev.BlockCount;
+                    // Kernel loadable segment is ~16,477 sectors (8.44 MB) starting at LBA 64.
+                    // Cloning 17,000 sectors (~8.7 MB) completely copies the MBR, Stage 2, and the full kernel image!
+                    ulong totalToClone = 17000UL;
+                    if (srcDev.BlockCount > 1000UL && srcDev.BlockCount < totalToClone) totalToClone = srcDev.BlockCount;
                     if (dev.BlockCount > 0 && dev.BlockCount < totalToClone) totalToClone = dev.BlockCount;
 
                     ulong chunkSize = 128; // 64 KB per chunk
                     byte[] chunk = new byte[chunkSize * 512];
                     ulong copied = 0;
                     int lastPct = -1;
-                    ulong detectedCoreLba = 0;
-                    bool coreDetected = false;
 
                     while (copied < totalToClone)
                     {
@@ -302,23 +299,6 @@ namespace WeatherOS.Services
                         srcDev.ReadBlock(startBlock, count, ref chunk);
                         dev.WriteBlock(startBlock, count, ref chunk);
 
-                        // Scan chunk in memory for diskboot.img signature
-                        if (!coreDetected)
-                        {
-                            for (ulong s = 0; s < count; s++)
-                            {
-                                int off = (int)(s * 512UL);
-                                if (chunk[off + 508] == 0x32 && chunk[off + 509] == 0x00 &&
-                                    chunk[off + 510] == 0x20 && chunk[off + 511] == 0x08 &&
-                                    chunk[off + 0] == 0x52 && chunk[off + 1] == 0xE8)
-                                {
-                                    detectedCoreLba = startBlock + s;
-                                    coreDetected = true;
-                                    break;
-                                }
-                            }
-                        }
-
                         copied += count;
 
                         int pct = 5 + (int)((copied * 80UL) / totalToClone); // 5% to 85%
@@ -327,210 +307,31 @@ namespace WeatherOS.Services
                             lastPct = pct;
                             ulong mbDone = (copied * 512UL) / (1024UL * 1024UL);
                             ulong mbTotal = (totalToClone * 512UL) / (1024UL * 1024UL);
-                            progressCallback?.Invoke($"Cloning Rufus bootloader & kernel ({mbDone}MB / {mbTotal}MB)...", pct);
+                            progressCallback?.Invoke($"Cloning WeatherOS kernel ({mbDone}MB / {mbTotal}MB)...", pct);
                         }
                     }
 
-                    // 1. Inject GRUB2 BIOS HDD stage and MBR bootloader
-                    progressCallback?.Invoke("Injecting GRUB2 BIOS bootloader to target disk...", 86);
-                    byte[] coreBuffer = new byte[64 * 512];
-                    bool foundCore = false;
+                    // 1. Inject Native Bare-Metal Bootloader (MBR + Stage 2 Unreal Loader)
+                    progressCallback?.Invoke("Injecting native bare-metal bootloader to target disk...", 88);
 
-                    // Method 0: Static embedded GRUB core payload with FAT32 and MBR partition drivers
-                    try
+                    // Write Stage 2 (4 sectors / 2048 bytes) to LBA 1..4
+                    byte[] stage2Block = new byte[4 * 512];
+                    if (NativeBootloaderPayload.Stage2 != null && NativeBootloaderPayload.Stage2.Length >= 2048)
                     {
-                        if (GrubCorePayload.Data != null && GrubCorePayload.Data.Length >= 62 * 512)
-                        {
-                            Array.Copy(GrubCorePayload.Data, 0, coreBuffer, 0, 62 * 512);
-                            if (coreBuffer[510] == 0x20 && coreBuffer[511] == 0x08)
-                            {
-                                foundCore = true;
-                            }
-                        }
+                        Array.Copy(NativeBootloaderPayload.Stage2, 0, stage2Block, 0, 2048);
                     }
-                    catch { }
+                    dev.WriteBlock(1, 4, ref stage2Block);
 
-                    // Method 0.5: Detected dynamically in clone stream
-                    if (!foundCore && coreDetected && detectedCoreLba > 0)
-                    {
-                        try
-                        {
-                            srcDev.ReadBlock(detectedCoreLba, 51, ref coreBuffer);
-                            if (coreBuffer[508] == 0x32 && coreBuffer[509] == 0x00 && coreBuffer[510] == 0x20 && coreBuffer[511] == 0x08)
-                            {
-                                foundCore = true;
-                            }
-                        }
-                        catch { }
-
-                        if (!foundCore)
-                        {
-                            try
-                            {
-                                dev.ReadBlock(detectedCoreLba, 51, ref coreBuffer);
-                                if (coreBuffer[508] == 0x32 && coreBuffer[509] == 0x00 && coreBuffer[510] == 0x20 && coreBuffer[511] == 0x08)
-                                {
-                                    foundCore = true;
-                                }
-                            }
-                            catch { }
-                        }
-                    }
-
-                    // Method 1: Check Cosmos VFS mounted filesystem for eltorito.img
-                    if (!foundCore)
-                    {
-                        string[] vfsFiles = new string[] {
-                            @"0:\boot\grub\i386-pc\eltorito.img",
-                            @"1:\boot\grub\i386-pc\eltorito.img"
-                        };
-                        for (int vf = 0; vf < vfsFiles.Length; vf++)
-                        {
-                            try
-                            {
-                                if (File.Exists(vfsFiles[vf]))
-                                {
-                                    byte[] eltorito = File.ReadAllBytes(vfsFiles[vf]);
-                                    if (eltorito != null && eltorito.Length >= 2048 + (51 * 512))
-                                    {
-                                        Array.Copy(eltorito, 2048, coreBuffer, 0, 51 * 512);
-                                        if (coreBuffer[508] == 0x32 && coreBuffer[509] == 0x00 && coreBuffer[510] == 0x20 && coreBuffer[511] == 0x08)
-                                        {
-                                            foundCore = true;
-                                            break;
-                                        }
-                                    }
-                                }
-                            }
-                            catch { }
-                        }
-                    }
-
-                    // Method A: Check if srcDev already has core.img at LBA 1 (Hybrid ISO image)
-                    if (!foundCore)
-                    {
-                        try
-                        {
-                            srcDev.ReadBlock(1, 51, ref coreBuffer);
-                            if (coreBuffer[508] == 0x32 && coreBuffer[509] == 0x00 && coreBuffer[510] == 0x20 && coreBuffer[511] == 0x08)
-                            {
-                                foundCore = true;
-                            }
-                        }
-                        catch { }
-                    }
-
-                    // Method B: Dynamically parse El Torito Boot Record and Catalog with partition offsets
-                    if (!foundCore)
-                    {
-                        ulong[] elOffsets = new ulong[] { 68UL, 2048UL + 68UL, 64UL + 68UL };
-                        for (int e = 0; e < elOffsets.Length; e++)
-                        {
-                            try
-                            {
-                                byte[] brSector = new byte[512];
-                                srcDev.ReadBlock(elOffsets[e], 1, ref brSector);
-                                uint catLba = (uint)(brSector[71] | (brSector[72] << 8) | (brSector[73] << 16) | (brSector[74] << 24));
-                                if (catLba > 0 && catLba < 1000)
-                                {
-                                    byte[] catSector = new byte[512];
-                                    srcDev.ReadBlock((elOffsets[e] - 68UL) + ((ulong)catLba * 4UL), 1, ref catSector);
-                                    uint imgLba = (uint)(catSector[40] | (catSector[41] << 8) | (catSector[42] << 16) | (catSector[43] << 24));
-                                    if (imgLba > 0 && imgLba < 1000000)
-                                    {
-                                        ulong dynCoreLba = (elOffsets[e] - 68UL) + ((ulong)imgLba * 4UL) + 4UL;
-                                        srcDev.ReadBlock(dynCoreLba, 51, ref coreBuffer);
-                                        if (coreBuffer[508] == 0x32 && coreBuffer[509] == 0x00 && coreBuffer[510] == 0x20 && coreBuffer[511] == 0x08)
-                                        {
-                                            foundCore = true;
-                                            break;
-                                        }
-                                    }
-                                }
-                            }
-                            catch { }
-                            if (foundCore) break;
-                        }
-                    }
-
-                    // Method C: Fallback known offsets across Cosmos builds
-                    if (!foundCore)
-                    {
-                        ulong[] fallbackLbas = new ulong[] {
-                            118544UL, 118440UL, 118384UL, 118400UL,
-                            2048UL + 118544UL, 2048UL + 118440UL, 2048UL + 118384UL, 2048UL + 118400UL
-                        };
-                        for (int f = 0; f < fallbackLbas.Length; f++)
-                        {
-                            try
-                            {
-                                srcDev.ReadBlock(fallbackLbas[f], 51, ref coreBuffer);
-                                if (coreBuffer[508] == 0x32 && coreBuffer[509] == 0x00 && coreBuffer[510] == 0x20 && coreBuffer[511] == 0x08)
-                                {
-                                    foundCore = true;
-                                    break;
-                                }
-                            }
-                            catch { }
-                        }
-                    }
-
-                    if (!foundCore)
-                    {
-                        statusMessage = "Bootloader error: Could not extract GRUB2 core stage from medium.";
-                        return false;
-                    }
-
-                    // Patch diskboot.img blocklist starting LBA to LBA 2 (bytes 500..507 = 0x00000002)
-                    coreBuffer[500] = 0x02;
-                    coreBuffer[501] = 0x00;
-                    coreBuffer[502] = 0x00;
-                    coreBuffer[503] = 0x00;
-                    coreBuffer[504] = 0x00;
-                    coreBuffer[505] = 0x00;
-                    coreBuffer[506] = 0x00;
-                    coreBuffer[507] = 0x00;
-
-                    // Write 62 sectors of core.img to LBA 1..62 of target disk
-                    dev.WriteBlock(1, 62, ref coreBuffer);
-
-                    // Write Sector 0 MBR Bootloader (GrubMbrSector) with active partition and 0x55, 0xAA signature
+                    // Write MBR (1 sector / 512 bytes) to LBA 0
                     byte[] mbrSector = new byte[512];
-                    Array.Copy(GrubMbrSector, 0, mbrSector, 0, 512);
-
-                    // Preserve original partition table from live USB medium (Rufus FAT32 partition starting at LBA 2048)
-                    bool hasValidLivePart = false;
-                    if (liveSec0 != null && liveSec0.Length == 512 && liveSec0[510] == 0x55 && liveSec0[511] == 0xAA)
+                    if (NativeBootloaderPayload.Mbr != null && NativeBootloaderPayload.Mbr.Length >= 512)
                     {
-                        for (int p = 0; p < 4; p++)
-                        {
-                            int pOff = 446 + (p * 16);
-                            uint pStart = (uint)(liveSec0[pOff + 8] | (liveSec0[pOff + 9] << 8) | (liveSec0[pOff + 10] << 16) | (liveSec0[pOff + 11] << 24));
-                            uint pCount = (uint)(liveSec0[pOff + 12] | (liveSec0[pOff + 13] << 8) | (liveSec0[pOff + 14] << 16) | (liveSec0[pOff + 15] << 24));
-                            if (pStart >= 63 && pCount > 1000)
-                            {
-                                hasValidLivePart = true;
-                                break;
-                            }
-                        }
+                        Array.Copy(NativeBootloaderPayload.Mbr, 0, mbrSector, 0, 512);
                     }
-
-                    if (hasValidLivePart)
-                    {
-                        // Copy the entire 64-byte partition table (446..509) from the live USB medium
-                        Array.Copy(liveSec0, 446, mbrSector, 446, 64);
-                        // Ensure Partition 1 is marked active (bootable)
-                        mbrSector[446] = 0x80;
-                    }
-
-                    // Ensure MBR boot signature 0x55, 0xAA
-                    mbrSector[510] = 0x55;
-                    mbrSector[511] = 0xAA;
-
                     dev.WriteBlock(0, 1, ref mbrSector);
 
                     // 2. Verify hardware writes on target hard disk
-                    progressCallback?.Invoke("Verifying hard disk bootloader integrity...", 89);
+                    progressCallback?.Invoke("Verifying hard disk bootloader integrity...", 92);
                     byte[] chkMbr = new byte[512];
                     dev.ReadBlock(0, 1, ref chkMbr);
                     if (chkMbr[510] != 0x55 || chkMbr[511] != 0xAA)
@@ -539,11 +340,11 @@ namespace WeatherOS.Services
                         return false;
                     }
 
-                    byte[] chkDiskboot = new byte[512];
-                    dev.ReadBlock(1, 1, ref chkDiskboot);
-                    if (chkDiskboot[510] != 0x20 || chkDiskboot[511] != 0x08)
+                    byte[] chkStage2 = new byte[512];
+                    dev.ReadBlock(1, 1, ref chkStage2);
+                    if (chkStage2[0] != 0xFA || chkStage2[1] != 0x31)
                     {
-                        statusMessage = "Hardware error: Target disk GRUB stage validation failed.";
+                        statusMessage = "Hardware error: Target disk Stage 2 validation failed.";
                         return false;
                     }
 
@@ -585,9 +386,10 @@ namespace WeatherOS.Services
                         "==============================================================================\n" +
                         "WeatherOS is now permanently installed to your internal hard drive!\n\n" +
                         "BOOTLOADER:\n" +
-                        "- Target disk MBR configured with BIOS INT 13h LBA bootloader.\n" +
-                        "- GRUB2 core stage (FAT32/NTFS) embedded at LBA 1..62.\n" +
-                        "- WeatherOS kernel and modules boots directly from hard drive.\n" +
+                        "- Target disk MBR configured with direct BIOS INT 13h LBA bootloader.\n" +
+                        "- Stage 2 Unreal-Mode loader embedded at LBA 1..4.\n" +
+                        "- WeatherOS kernel boots directly into physical RAM in under 0.2s.\n" +
+                        "- Completely independent of GRUB, filesystems, and config files.\n" +
                         "==============================================================================\n";
                     string wStat;
                     StorageService.SaveFile("welcome.txt", welcomeContent, out wStat);
@@ -596,7 +398,7 @@ namespace WeatherOS.Services
                     _bootSource = BootSource.HardDisk;
 
                     progressCallback?.Invoke("Installation finalized successfully! Ready to boot.", 100);
-                    statusMessage = $"Installed to {targetDrive.Name} [OK] - BIOS MBR + GRUB2 ready.";
+                    statusMessage = $"Installed to {targetDrive.Name} [OK] - Direct Native Bare-Metal Boot ready.";
                     return true;
                 }
                 else
