@@ -283,8 +283,8 @@ namespace WeatherOS.Services
                     // WeatherOS ISO is 62.7 MB (122,496 sectors). Cloning 135,000 sectors (~69 MB)
                     // guarantees copying MBR, VBR, FAT structures, /boot/grub/ and the full 60MB WeatherOS.bin kernel
                     // with ~7MB margin while finishing in seconds.
-                    ulong totalToClone = 135000UL;
-                    if (srcDev.BlockCount > 125000UL && srcDev.BlockCount < totalToClone) totalToClone = srcDev.BlockCount;
+                    ulong totalToClone = 140000UL;
+                    if (srcDev.BlockCount > 130000UL && srcDev.BlockCount < totalToClone) totalToClone = srcDev.BlockCount;
                     if (dev.BlockCount > 0 && dev.BlockCount < totalToClone) totalToClone = dev.BlockCount;
 
                     ulong chunkSize = 128; // 64 KB per chunk

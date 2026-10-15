@@ -37,45 +37,82 @@ GRUB_MBR = bytes([
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x55, 0xAA
 ])
 
-def patch_iso(iso_path):
-    if not os.path.exists(iso_path):
-        print(f"File not found: {iso_path}")
-        return False
+def build_bootable_fat32_image():
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    iso_staging = os.path.join(script_dir, "WeatherOS", "bin", "cosmos", "Debug", "net6.0", "ISO", "boot")
+    if not os.path.exists(iso_staging):
+        iso_staging = os.path.join(script_dir, "bin", "cosmos", "Debug", "net6.0", "ISO", "boot")
     
-    with open(iso_path, "r+b") as f:
-        data = bytearray(f.read())
-        total_sectors = len(data) // 512
-        core_sector = None
+    if not os.path.exists(iso_staging):
+        print(f"Staging boot directory not found: {iso_staging}")
+        return False
 
-        core_path = "rufus_grub202_core.img"
-        if not os.path.exists(core_path):
-            core_path = os.path.join(os.path.dirname(__file__), "rufus_grub202_core.img")
-        if not os.path.exists(core_path):
-            core_path = os.path.join(os.path.dirname(__file__), "..", "rufus_grub202_core.img")
-        
-        with open(core_path, "rb") as cf:
-            core = bytearray(cf.read())
-        
-        if len(core) < 62 * 512:
-            core.extend(b'\x00' * (62 * 512 - len(core)))
-        core = core[:62 * 512]
-        
-        # Inject MBR into Sector 0
-        data[0:512] = GRUB_MBR
-        
-        # Inject core into Sectors 1..62
-        data[512 : 512 + len(core)] = core
-        
-        f.seek(0)
-        f.write(data)
-        print(f"Successfully converted {iso_path} to bootable isohybrid (MBR + GRUB FAT32/MBR core stage at LBA 1..62).")
-        return True
+    temp_raw = os.path.join(script_dir, "WeatherOS_build.raw")
+    if os.path.exists(temp_raw):
+        try: os.remove(temp_raw)
+        except: pass
+
+    print("Generating 68MB FAT32 disk image with FATtools...")
+    from FATtools.scripts.main import main
+    # 1. mkvdisk
+    sys.argv = ['fattools', 'mkvdisk', '-s', '68M', '-m', '-f', temp_raw]
+    main()
+
+    # 2. mkfat
+    sys.argv = ['fattools', 'mkfat', '-p', 'MBR', '-t', 'FAT32', temp_raw]
+    main()
+
+    # 3. cp boot directory
+    sys.argv = ['fattools', 'cp', iso_staging, temp_raw]
+    main()
+
+    # 4. Inject GRUB MBR and core.img
+    core_path = os.path.join(script_dir, "rufus_grub202_core.img")
+    if not os.path.exists(core_path):
+        core_path = os.path.join(script_dir, "..", "rufus_grub202_core.img")
+    
+    with open(core_path, "rb") as cf:
+        core = bytearray(cf.read())
+    if len(core) < 62 * 512:
+        core.extend(b'\x00' * (62 * 512 - len(core)))
+    core = core[:62 * 512]
+
+    with open(temp_raw, "r+b") as df:
+        sec0 = bytearray(df.read(512))
+        mbr = bytearray(GRUB_MBR)
+        # Preserve FAT32 partition table (446..510) and ensure Partition 1 is marked active (0x80)
+        mbr[446:510] = sec0[446:510]
+        mbr[446] = 0x80
+        mbr[510] = 0x55
+        mbr[511] = 0xAA
+        df.seek(0)
+        df.write(mbr)
+        # Inject GRUB core into Sectors 1..62
+        df.seek(512)
+        df.write(core)
+
+    print("Successfully injected BIOS MBR and GRUB2 core into FAT32 image!")
+
+    # Distribute to all target formats (.iso, .img, .raw)
+    targets = [
+        os.path.join(script_dir, "WeatherOS.iso"),
+        os.path.join(script_dir, "WeatherOS.img"),
+        os.path.join(script_dir, "WeatherOS.raw"),
+        os.path.join(script_dir, "WeatherOS", "bin", "cosmos", "Debug", "net6.0", "WeatherOS.iso"),
+        os.path.join(script_dir, "WeatherOS", "bin", "Debug", "net6.0", "WeatherOS.iso"),
+        os.path.join(script_dir, "..", "WeatherOS.iso"),
+        os.path.join(script_dir, "..", "WeatherOS.img"),
+        os.path.join(script_dir, "..", "WeatherOS.raw"),
+    ]
+
+    import shutil
+    for t in targets:
+        t_dir = os.path.dirname(t)
+        if os.path.exists(t_dir):
+            shutil.copyfile(temp_raw, t)
+            print(f"Updated image: {t} ({os.path.getsize(t)} bytes)")
+
+    return True
 
 if __name__ == "__main__":
-    paths = [
-        "WeatherOS/bin/cosmos/Debug/net6.0/WeatherOS.iso",
-        "WeatherOS/bin/Debug/net6.0/WeatherOS.iso"
-    ]
-    for p in paths:
-        if os.path.exists(p):
-            patch_iso(p)
+    build_bootable_fat32_image()
