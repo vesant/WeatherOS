@@ -333,16 +333,16 @@ namespace WeatherOS.Services
 
                     // 1. Inject GRUB2 BIOS HDD stage and MBR bootloader
                     progressCallback?.Invoke("Injecting GRUB2 BIOS bootloader to target disk...", 86);
-                    byte[] coreBuffer = new byte[51 * 512];
+                    byte[] coreBuffer = new byte[64 * 512];
                     bool foundCore = false;
 
-                    // Method 0: Static embedded GRUB core payload (failsafe kernel image asset)
+                    // Method 0: Static embedded GRUB core payload with FAT32 and MBR partition drivers
                     try
                     {
-                        if (GrubCorePayload.Data != null && GrubCorePayload.Data.Length >= 51 * 512)
+                        if (GrubCorePayload.Data != null && GrubCorePayload.Data.Length >= 62 * 512)
                         {
-                            Array.Copy(GrubCorePayload.Data, 0, coreBuffer, 0, 51 * 512);
-                            if (coreBuffer[508] == 0x32 && coreBuffer[509] == 0x00 && coreBuffer[510] == 0x20 && coreBuffer[511] == 0x08)
+                            Array.Copy(GrubCorePayload.Data, 0, coreBuffer, 0, 62 * 512);
+                            if (coreBuffer[510] == 0x20 && coreBuffer[511] == 0x08)
                             {
                                 foundCore = true;
                             }
@@ -491,8 +491,8 @@ namespace WeatherOS.Services
                     coreBuffer[506] = 0x00;
                     coreBuffer[507] = 0x00;
 
-                    // Write 51 sectors of core.img to LBA 1..51 of target disk
-                    dev.WriteBlock(1, 51, ref coreBuffer);
+                    // Write 62 sectors of core.img to LBA 1..62 of target disk
+                    dev.WriteBlock(1, 62, ref coreBuffer);
 
                     // Write Sector 0 MBR Bootloader (GrubMbrSector) with active partition and 0x55, 0xAA signature
                     byte[] mbrSector = new byte[512];
@@ -586,7 +586,7 @@ namespace WeatherOS.Services
                         "WeatherOS is now permanently installed to your internal hard drive!\n\n" +
                         "BOOTLOADER:\n" +
                         "- Target disk MBR configured with BIOS INT 13h LBA bootloader.\n" +
-                        "- GRUB2 core stage embedded at LBA 1..51.\n" +
+                        "- GRUB2 core stage (FAT32/NTFS) embedded at LBA 1..62.\n" +
                         "- WeatherOS kernel and modules boots directly from hard drive.\n" +
                         "==============================================================================\n";
                     string wStat;

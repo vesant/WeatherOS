@@ -47,33 +47,28 @@ def patch_iso(iso_path):
         total_sectors = len(data) // 512
         core_sector = None
 
-        # Search for diskboot.img signature
-        for i in range(total_sectors):
-            off = i * 512
-            if (data[off+508:off+512] == b'\x32\x00\x20\x08' and 
-                data[off:off+2] == b'\x52\xe8'):
-                core_sector = i
-                break
+        core_path = "rufus_grub202_core.img"
+        if not os.path.exists(core_path):
+            core_path = os.path.join(os.path.dirname(__file__), "rufus_grub202_core.img")
+        if not os.path.exists(core_path):
+            core_path = os.path.join(os.path.dirname(__file__), "..", "rufus_grub202_core.img")
         
-        if core_sector is None:
-            print(f"Could not find GRUB core stage in {iso_path}!")
-            return False
+        with open(core_path, "rb") as cf:
+            core = bytearray(cf.read())
         
-        print(f"Found GRUB core stage at sector {core_sector} in {iso_path}")
-        core = data[core_sector * 512 : (core_sector + 51) * 512]
-        
-        # Patch LBA to LBA 2 (bytes 500..507 = 2)
-        core[500:508] = (2).to_bytes(8, 'little')
+        if len(core) < 62 * 512:
+            core.extend(b'\x00' * (62 * 512 - len(core)))
+        core = core[:62 * 512]
         
         # Inject MBR into Sector 0
         data[0:512] = GRUB_MBR
         
-        # Inject core into Sectors 1..51
+        # Inject core into Sectors 1..62
         data[512 : 512 + len(core)] = core
         
         f.seek(0)
         f.write(data)
-        print(f"Successfully converted {iso_path} to bootable isohybrid (MBR + GRUB core stage at LBA 1..51).")
+        print(f"Successfully converted {iso_path} to bootable isohybrid (MBR + GRUB FAT32/MBR core stage at LBA 1..62).")
         return True
 
 if __name__ == "__main__":
