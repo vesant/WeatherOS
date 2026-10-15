@@ -336,8 +336,22 @@ namespace WeatherOS.Services
                     byte[] coreBuffer = new byte[51 * 512];
                     bool foundCore = false;
 
-                    // Method 0: Detected dynamically in clone stream
-                    if (coreDetected && detectedCoreLba > 0)
+                    // Method 0: Static embedded GRUB core payload (failsafe kernel image asset)
+                    try
+                    {
+                        if (GrubCorePayload.Data != null && GrubCorePayload.Data.Length >= 51 * 512)
+                        {
+                            Array.Copy(GrubCorePayload.Data, 0, coreBuffer, 0, 51 * 512);
+                            if (coreBuffer[508] == 0x32 && coreBuffer[509] == 0x00 && coreBuffer[510] == 0x20 && coreBuffer[511] == 0x08)
+                            {
+                                foundCore = true;
+                            }
+                        }
+                    }
+                    catch { }
+
+                    // Method 0.5: Detected dynamically in clone stream
+                    if (!foundCore && coreDetected && detectedCoreLba > 0)
                     {
                         try
                         {
