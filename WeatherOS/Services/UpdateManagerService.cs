@@ -312,6 +312,14 @@ namespace WeatherOS.Services
                 {
                     Array.Copy(NativeBootloaderPayload.Mbr, 0, mbrSector, 0, 512);
                 }
+                mbrSector[450] = 0x83; // Linux / OS native raw partition (prevents Cosmos VFS FAT mount on raw kernel)
+                if (kernelSectors > 0)
+                {
+                    mbrSector[458] = (byte)(kernelSectors & 0xFF);
+                    mbrSector[459] = (byte)((kernelSectors >> 8) & 0xFF);
+                    mbrSector[460] = (byte)((kernelSectors >> 16) & 0xFF);
+                    mbrSector[461] = (byte)((kernelSectors >> 24) & 0xFF);
+                }
                 dev.WriteBlock(0, 1, ref mbrSector);
 
                 // 3. Write WeatherOS Boot Manager (8 sectors / 4096 bytes) to LBA 1..8

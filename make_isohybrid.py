@@ -96,7 +96,9 @@ def build_native_bootable_image():
     stage2_bytes = stage2_bytes[:4096]
 
     # Patch partition table entry 1 in MBR to point to LBA 64 and size rem_sectors
+    # Offset 446 + 4 = 450 (Type: 0x83 Linux / OS Native Raw Partition - prevents Cosmos VFS FAT mount)
     # Offset 446 + 8 = 454 (LBA start), offset 446 + 12 = 458 (LBA count)
+    mbr_bytes[450] = 0x83
     struct.pack_into("<I", mbr_bytes, 454, 64)
     struct.pack_into("<I", mbr_bytes, 458, rem_sectors)
 

@@ -96,10 +96,13 @@ pad: times 440 - ($ - start) db 0
 dd 0x57454154       ; "WEAT"
 dw 0x0000           ; Reserved
 
-; Partition 1: Active boot partition covering kernel (FAT32 LBA - 100% BIOS compatible)
+; Partition 1: Active boot partition covering monolithic kernel (Linux/OS native raw partition 0x83)
+; NOTE: Do NOT use FAT types (0x0C, 0x0B, etc.) because Cosmos VFS attempts to mount FAT partitions,
+; reading the kernel ELF/Multiboot header at sector 64 as a FAT BPB, which divides by SectorsPerCluster (0)
+; and throws DivideByZeroException!
 db 0x80             ; Bootable flag
 db 0x01, 0x02, 0x00 ; Starting CHS (Head 1, Sector 2, Cyl 0 = LBA 64)
-db 0x0C             ; Type: FAT32 LBA (0x0C)
+db 0x83             ; Type: Linux / OS native raw partition (0x83)
 db 0xFE, 0xFF, 0xFF ; Ending CHS
 dd 64               ; Starting LBA
 dd 16541            ; Sector count

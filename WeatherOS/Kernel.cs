@@ -27,7 +27,7 @@ namespace WeatherOS
 
         protected override void OnBoot()
         {
-            Cosmos.System.Global.Init(new Cosmos.HAL.TextScreen(), false, true, false, false);
+            Cosmos.System.Global.Init(new Cosmos.HAL.TextScreen(), false, false, false, false);
         }
 
         protected override void BeforeRun()
@@ -93,15 +93,15 @@ namespace WeatherOS
                 _isVfsMounted = false;
             }
 
+            // Pre-seed all system files, documents, manifests and cumulative package in memory
+            StorageService.InitDefaultMemoryFiles();
+            UpdateManagerService.InitDefaultUpdatePackage();
+
             _weatherService = new WeatherService();
             _tuiDesktop = new TuiDesktop(_weatherService);
             _serialSensorService = new SerialSensorService();
 
             InitializeCommandManager();
-
-            // Pre-seed all system files, documents, manifests and cumulative package in memory
-            StorageService.InitDefaultMemoryFiles();
-            UpdateManagerService.InitDefaultUpdatePackage();
 
             // Initial Boot Screen: Select between Live RAM Mode and Hard Disk Installer
             var bootChoice = Graphics.BootMenu.Show();
