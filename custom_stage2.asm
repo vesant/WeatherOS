@@ -8,11 +8,6 @@ stage2_start:
     and al, 0xFC
     out 0x61, al
 
-    ; Immediate hardware visual marker '2' (Green on Blue) at row 0, col 1
-    mov ax, 0xB800
-    mov es, ax
-    mov word [es:2], 0x1A32    ; '2' (Green on Blue)
-
     cli
     xor ax, ax
     mov ds, ax
@@ -25,14 +20,12 @@ stage2_start:
 
     mov [boot_drive], dl
 
-    ; 1. Print banner
+    ; 1. Print WeatherOS Boot Manager banner
     mov si, msg_booting
     call print_str
 
     ; 2. Robust A20 Gate Enable
     call enable_a20
-    mov si, msg_a20_ok
-    call print_str
 
     mov si, msg_loading
     call print_str
@@ -319,115 +312,7 @@ prot_start:
 
     lidt [idt_emergency_ptr]
 
-    ; Visual marker: write 'W','O','S','3','2' to top-left of VGA text screen
-    mov dword [0x000B8000], 0x0F4F0F57 ; 'W', 'O'
-    mov dword [0x000B8004], 0x0F320F53 ; 'S', '2'
-
-    ; Row 0: Print 'K','R','N','=' to 0x000B8008 and 8 bytes at 0x0240fc20
-    mov dword [0x000B8008], 0x0E520E4B ; 'K', 'R'
-    mov dword [0x000B800C], 0x0E3D0E4E ; 'N', '='
-
-    mov esi, [entry_point]
-    mov edi, 0x000B8010
-    mov ecx, 8
-.dump_kentry:
-    lodsb
-    mov ah, al
-    shr al, 4
-    and al, 0x0F
-    cmp al, 10
-    jb .k1
-    add al, 'A' - 10
-    jmp .k2
-.k1: add al, '0'
-.k2:
-    mov [edi], al
-    mov byte [edi + 1], 0x0E
-    mov al, ah
-    and al, 0x0F
-    cmp al, 10
-    jb .k3
-    add al, 'A' - 10
-    jmp .k4
-.k3: add al, '0'
-.k4:
-    mov [edi + 2], al
-    mov byte [edi + 3], 0x0E
-    add edi, 4
-    dec ecx
-    jnz .dump_kentry
-
-    ; Row 2 (0x000B8140): Print 'M','B','2','=' and 8 bytes at 0x02000000
-    mov dword [0x000B8140], 0x0A420A4D ; 'M', 'B' (green on black)
-    mov dword [0x000B8144], 0x0A3D0A32 ; '2', '='
-    mov esi, 0x02000000
-    mov edi, 0x000B8148
-    mov ecx, 8
-.dump_mb2:
-    lodsb
-    mov ah, al
-    shr al, 4
-    and al, 0x0F
-    cmp al, 10
-    jb .m1
-    add al, 'A' - 10
-    jmp .m2
-.m1: add al, '0'
-.m2:
-    mov [edi], al
-    mov byte [edi + 1], 0x0A
-    mov al, ah
-    and al, 0x0F
-    cmp al, 10
-    jb .m3
-    add al, 'A' - 10
-    jmp .m4
-.m3: add al, '0'
-.m4:
-    mov [edi + 2], al
-    mov byte [edi + 3], 0x0A
-    add edi, 4
-    dec ecx
-    jnz .dump_mb2
-
-    ; Row 3 (0x000B81E0): Search for MB2 magic 0xE85250D6 in physical RAM 0x00100000 .. 0x08000000
-    mov dword [0x000B81E0], 0x0B4E0B46 ; 'F', 'N' (cyan on black)
-    mov dword [0x000B81E4], 0x0B3A0B44 ; 'D', ':'
-    mov edi, 0x00100000
-    mov ecx, (64 * 1024 * 1024) / 4    ; Search 64 MB
-    mov eax, 0xE85250D6
-    cld
-    repne scasd
-    jnz .not_found
-
-    ; Found! Address is edi - 4
-    sub edi, 4
-    mov edx, edi
-    mov edi, 0x000B81E8
-    mov ecx, 8
-.print_fnd_loop:
-    rol edx, 4
-    mov al, dl
-    and al, 0x0F
-    cmp al, 10
-    jb .f_dec
-    add al, 'A' - 10
-    jmp .f_store
-.f_dec: add al, '0'
-.f_store:
-    mov [edi], al
-    mov byte [edi + 1], 0x0B
-    add edi, 2
-    dec ecx
-    jnz .print_fnd_loop
-    jmp .search_done
-
-.not_found:
-    mov dword [0x000B81E8], 0x0C4F0C4E ; 'N', 'O'
-    mov dword [0x000B81EC], 0x0C450C4E ; 'N', 'E'
-
-.search_done:
-    ; Multiboot 2 protocol register requirements:
+    ; Clean launch: set Multiboot 2 protocol registers
     ; EAX = 0x36d76289 (Magic)
     ; EBX = physical address of Multiboot 2 info structure (0x00010000)
     mov eax, 0x36d76289
@@ -437,7 +322,7 @@ prot_start:
     mov esp, 0x02050040
     mov dword [0x02050040], ebx
 
-    ; Jump directly to Cosmos Kernel entry point (immediate, no memory dereference)!
+    ; Jump directly to WeatherOS Monolithic Kernel entry point
     mov edx, [entry_point]
     jmp edx
 
@@ -579,69 +464,27 @@ print_char:
     int 0x10
     ret
 
-; Robust A20 gate check and enable (BIOS -> Fast A20 -> KBC 8042)
+; Standard, Safe A20 gate enable (BIOS -> Fast A20)
 enable_a20:
     call check_a20
     jnz .done                      ; ZF=0 means already enabled!
 
-    ; 1. Try BIOS INT 15h AX=2401h
+    ; 1. Try BIOS INT 15h AX=2401h (Standard on 100% of x86 BIOSes since 1995)
     mov ax, 0x2401
     int 0x15
     call check_a20
     jnz .done
 
-    ; 2. Try Fast A20 (port 0x92)
+    ; 2. Try Fast A20 (port 0x92) - carefully preserving all non-A20 bits
     in al, 0x92
+    test al, 0x02
+    jnz .done                      ; Already enabled
     or al, 0x02
-    and al, 0xFE                   ; Never set bit 0 (fast reset)
+    and al, 0xFE                   ; Ensure bit 0 (Fast Reset) is NEVER set
     out 0x92, al
     call check_a20
-    jnz .done
 
-    ; 3. Try Keyboard Controller (8042)
-    cli
-    call a20_wait_input
-    mov al, 0xAD                  ; Disable keyboard
-    out 0x64, al
-
-    call a20_wait_input
-    mov al, 0xD0                  ; Read output port
-    out 0x64, al
-
-    call a20_wait_output
-    in al, 0x60
-    push ax
-
-    call a20_wait_input
-    mov al, 0xD1                  ; Write output port
-    out 0x64, al
-
-    call a20_wait_input
-    pop ax
-    or al, 2                      ; Enable A20 bit
-    out 0x60, al
-
-    call a20_wait_input
-    mov al, 0xAE                  ; Enable keyboard
-    out 0x64, al
-
-    call a20_wait_input
-    sti
-
-    call check_a20
 .done:
-    ret
-
-a20_wait_input:
-    in al, 0x64
-    test al, 2
-    jnz a20_wait_input
-    ret
-
-a20_wait_output:
-    in al, 0x64
-    test al, 1
-    jz a20_wait_output
     ret
 
 ; Returns: AX = 1 (ZF=0) if A20 enabled, AX = 0 (ZF=1) if A20 disabled
@@ -690,12 +533,11 @@ check_a20:
     xor ax, ax                    ; Set ZF = 1 (disabled)
     ret
 
-msg_booting db 13, 10, '=== WeatherOS Native Bare-Metal Bootloader ===', 13, 10, 0
-msg_a20_ok db 'A20 Gate: Enabled', 13, 10, 0
-msg_loading db 'Loading kernel into physical RAM (32 MB): ', 13, 10, 0
-msg_ok db 13, 10, ' [OK - 100% LOADED]', 13, 10, 0
-msg_jumping db 13, 10, 'Entering 32-bit Protected Mode and launching kernel...', 13, 10, 0
-msg_err db 13, 10, 'DISK READ ERROR!', 13, 10, 0
+msg_booting db 13, 10, 'WeatherOS Boot Manager v3.1 (x86 32-bit)', 13, 10, 0
+msg_loading db 'Loading WeatherOS Kernel into RAM... ', 0
+msg_ok db ' [OK]', 13, 10, 0
+msg_jumping db 'Starting WeatherOS Kernel...', 13, 10, 0
+msg_err db 13, 10, 'WeatherOS Boot Error: Failed to read kernel from storage.', 13, 10, 0
 
 boot_drive db 0
 cur_lba dd 64
