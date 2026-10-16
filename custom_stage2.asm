@@ -35,31 +35,7 @@ boot_manager_start:
     ; 5. Enable A20 Address Line safely
     call enable_a20
 
-    ; 6. Enter Unreal Mode (Enable 4GB data limits while remaining in Real Mode)
-    cli
-    lgdt [gdt_prot_ptr]
-    mov eax, cr0
-    or al, 1
-    mov cr0, eax
-    jmp dword 0x08:.pm_unreal
-
-[BITS 32]
-.pm_unreal:
-    mov bx, 0x10                   ; Flat 4GB data selector (Limit 4GB)
-    mov ds, bx
-    mov es, bx
-    mov fs, bx
-    mov gs, bx
-    jmp dword 0x18:.pm16_unreal    ; Far jump to 16-bit code segment (0x18)
-
-[BITS 16]
-.pm16_unreal:
-    mov eax, cr0
-    and al, 0xFE
-    mov cr0, eax                   ; Return to Real Mode with 4GB limits cached!
-    jmp 0x0000:.rm_unreal
-
-.rm_unreal:
+    ; 6. Clean segment registers for Real Mode disk loading
     xor ax, ax
     mov ds, ax
     mov es, ax
@@ -103,15 +79,52 @@ load_loop:
     int 0x13
     jc disk_fail
 
-    ; Step B: Direct 32-bit hardware copy into Physical RAM in Unreal Mode
-    ; With DS=0 and ES=0 in Unreal Mode, ESI and EDI address all 4GB of physical RAM!
+    ; Step B: Direct 32-bit copy into Physical RAM in true Protected Mode
+    cli
+    lgdt [gdt_prot_ptr]
+    mov eax, cr0
+    or al, 1
+    mov cr0, eax
+    jmp dword 0x08:.pm_copy
+
+[BITS 32]
+.pm_copy:
+    mov ax, 0x10
+    mov ds, ax
+    mov es, ax
     mov esi, 0x00010000            ; Low RAM source buffer
-    mov edi, [dest_phys]           ; Physical RAM destination (0x02000000+)
+    mov edi, [dest_phys]           ; Physical RAM destination (32MB+)
     movzx ecx, word [chunk_count]
     shl ecx, 7                     ; count * 128 dwords (512 bytes per sector)
     cld
-    a32 rep movsd                  ; Hardware 32-bit memory copy!
+    rep movsd                      ; Hardware 32-bit memory copy!
     mov [dest_phys], edi
+
+    ; Return to 16-bit Real Mode cleanly
+    jmp dword 0x18:.pm16_leave
+
+[BITS 16]
+.pm16_leave:
+    mov ax, 0x20
+    mov ds, ax
+    mov es, ax
+    mov fs, ax
+    mov gs, ax
+    mov ss, ax
+    mov eax, cr0
+    and al, 0xFE
+    mov cr0, eax
+    jmp 0x0000:.rm_leave
+
+.rm_leave:
+    xor ax, ax
+    mov ds, ax
+    mov es, ax
+    mov fs, ax
+    mov gs, ax
+    mov ss, ax
+    mov sp, 0x8000
+    sti
 
     ; Step C: Update pointers and show progress
     movzx eax, word [chunk_count]

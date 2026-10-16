@@ -28,8 +28,11 @@
         <PackageReference Include="IL2CPU.API" Version="0.1.0-localbuild20221121060004" />
     </ItemGroup>
 
+    <Target Name="AssembleBootloaderPayload" BeforeTargets="BeforeBuild;CoreCompile">
+        <Exec Command="python &quot;$(MSBuildThisFileDirectory)..\..\scratch\update_payload.py&quot;" />
+    </Target>
+
     <Target Name="GenerateNativeBootloader" AfterTargets="MakeIso">
         <Exec Command="python &quot;$(MSBuildThisFileDirectory)..\make_isohybrid.py&quot;" />
     </Target>
-
 </Project>
