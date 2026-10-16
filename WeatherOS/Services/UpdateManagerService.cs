@@ -371,22 +371,25 @@ namespace WeatherOS.Services
 
                     if (!validUsbRead)
                     {
-                        // Direct Physical RAM read: The active monolithic kernel resides in physical RAM at 0x02000000
-                        uint ramOffset = (uint)(copied * 512UL);
-                        var mem = new Cosmos.Core.MemoryBlock(0x02000000 + ramOffset, (uint)count * 512);
-                        var mem08 = mem.Bytes;
-                        for (uint b = 0; b < (uint)count * 512; b++)
+                        // Direct Physical RAM read: Read the authentic monolithic kernel image directly from physical RAM at 0x02000000
+                        uint ramAddress = 0x02000000u + (uint)(copied * 512UL);
+                        unsafe
                         {
-                            chunk[b] = mem08[b];
+                            byte* pSrc = (byte*)ramAddress;
+                            uint bytesToCopy = (uint)count * 512;
+                            for (uint b = 0; b < bytesToCopy; b++)
+                            {
+                                chunk[b] = pSrc[b];
+                            }
                         }
 
                         if (copied == 0)
                         {
-                            // Guarantee valid Multiboot2 header at sector 64
-                            chunk[0] = 0xD6;
-                            chunk[1] = 0x50;
-                            chunk[2] = 0x52;
-                            chunk[3] = 0xE8;
+                            if (chunk[0] != 0xD6 || chunk[1] != 0x50 || chunk[2] != 0x52 || chunk[3] != 0xE8)
+                            {
+                                statusMessage = $"Hardware read error: Physical RAM at 0x02000000 missing Multiboot header ({chunk[0]:X2} {chunk[1]:X2} {chunk[2]:X2} {chunk[3]:X2}).";
+                                return false;
+                            }
                         }
                     }
 

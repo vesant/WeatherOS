@@ -78,6 +78,8 @@ load_loop:
     mov dl, [boot_drive]
     int 0x13
     jc disk_fail
+    test ah, ah
+    jnz disk_fail
 
     ; Step B: Direct 32-bit copy into Physical RAM in true Protected Mode
     cli
@@ -297,9 +299,31 @@ prot_start:
     mov esp, 0x02050040
     mov dword [0x02050040], ebx
 
+    ; Verify Multiboot 2 Header in physical RAM (0x02000000)
+    ; Header must begin with magic 0xE85250D6 (bytes: D6 50 52 E8)
+    cmp dword [0x02000000], 0xE85250D6
+    jne bad_kernel_signature
+
     ; Jump directly to WeatherOS Monolithic Kernel entry point
     mov edx, [entry_point]
     jmp edx
+
+bad_kernel_signature:
+    mov edi, 0x000B8000
+    mov esi, msg_bad_kernel
+.bks_loop:
+    lodsb
+    or al, al
+    jz .bks_halt
+    mov ah, 0x4F                       ; White text on red background
+    stosw
+    jmp .bks_loop
+.bks_halt:
+    cli
+    hlt
+    jmp .bks_halt
+
+msg_bad_kernel db 'WeatherOS Boot Manager: Kernel payload verification failed at 0x02000000!', 0
 
 %macro ISR_NOERR 1
 isr_stub_%1:
@@ -653,8 +677,8 @@ chunk_count dw 0
 chunk_index dw 0
 
 ; Patchable variables (updated by make_isohybrid.py)
-rem_sectors dd 16428
-entry_point dd 0x24107c2
+rem_sectors dd 16430
+entry_point dd 0x2410866
 
 align 4
 dap_read:
