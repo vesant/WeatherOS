@@ -3,6 +3,11 @@
 
 section .text
 stage2_start:
+    ; Immediate hardware visual marker '2' (Green on Blue) at row 0, col 1
+    mov ax, 0xB800
+    mov es, ax
+    mov word [es:2], 0x1A32    ; '2' (Green on Blue)
+
     cli
     xor ax, ax
     mov ds, ax

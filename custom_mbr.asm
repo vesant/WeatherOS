@@ -2,6 +2,14 @@
 [ORG 0x7C00]
 section .text
 start:
+    ; 0. Immediate hardware visual & audio markers (proves BIOS executed Sector 0)
+    mov ax, 0xB800
+    mov es, ax
+    mov word [es:0], 0x1F4D    ; Display 'M' (White on Blue) at top-left
+    in al, 0x61
+    or al, 3
+    out 0x61, al               ; Click PC speaker
+
     cli
     xor ax, ax
     mov ds, ax
@@ -85,7 +93,7 @@ dw 0x0000           ; Reserved
 
 ; Partition 1: Active boot partition covering kernel (FAT32 LBA - 100% BIOS compatible)
 db 0x80             ; Bootable flag
-db 0x00, 0x02, 0x00 ; Starting CHS (Head 0, Sector 2, Cyl 0)
+db 0x01, 0x02, 0x00 ; Starting CHS (Head 1, Sector 2, Cyl 0 = LBA 64)
 db 0x0C             ; Type: FAT32 LBA (0x0C)
 db 0xFE, 0xFF, 0xFF ; Ending CHS
 dd 64               ; Starting LBA
