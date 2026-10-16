@@ -63,6 +63,10 @@ namespace Cosmos.HAL.Network
                 return false;
             }
 
+            ushort pciCmd = (ushort)pciDevice.ReadRegister16(0x04);
+            pciCmd |= (1 << 0) | (1 << 1) | (1 << 2); // IO space, Memory space, Bus Master
+            pciCmd &= unchecked((ushort)~(1 << 10)); // Clear INTx disable
+            pciDevice.WriteRegister16(0x04, pciCmd);
             pciDevice.EnableDevice();
             Console.WriteLine("r8102e: pci device enabled (bus master & memory)");
 
@@ -286,12 +290,18 @@ namespace Cosmos.HAL.Network
 
         private int currentTxDesc = 0;
 
+        public override bool QueueBytes(byte[] buffer)
+        {
+            if (buffer == null || buffer.Length == 0) return false;
+            return QueueBytes(buffer, 0, buffer.Length);
+        }
+
         public override bool QueueBytes(byte[] buffer, int offset, int length)
         {
             uint descOffset = (uint)(currentTxDesc * 16);
             
             // Wait briefly for descriptor if still owned by NIC
-            int spins = 5000;
+            int spins = 50;
             while ((Read32(txDescBlock, descOffset) & 0x80000000) != 0 && spins > 0)
             {
                 mmio.Bytes[0x38] = 0x40; // Kick doorbell in case previous poll was missed
@@ -345,8 +355,8 @@ namespace Cosmos.HAL.Network
         {
             if (rxDescBlock == null || txDescBlock == null || mmio == null) return;
 
-            // 1. Process RX Ring
-            while (true)
+            // 1. Process RX Ring (at most 4 descriptors per poll)
+            for (int d = 0; d < 4; d++)
             {
                 uint offset = (uint)(currentRxDesc * 16);
                 uint cmdStatus = Read32(rxDescBlock, offset);
@@ -364,17 +374,24 @@ namespace Cosmos.HAL.Network
                 HardwareRxBytes += length;
                 HardwareRxPackets++;
 
-                // Read into managed array for Cosmos NetworkStack
-                byte[] packet = new byte[length];
-                for (uint i = 0; i < length; i++)
+                if (length > 0)
                 {
-                    packet[i] = rxBuffers[currentRxDesc][i];
-                }
+                    // Read into managed array for Cosmos NetworkStack
+                    byte[] packet = new byte[length];
+                    for (uint i = 0; i < length; i++)
+                    {
+                        packet[i] = rxBuffers[currentRxDesc][i];
+                    }
 
-                // Send to NetworkStack (or our custom Interceptor)
-                if (DataReceived != null)
-                {
-                    DataReceived(packet);
+                    // Send to NetworkStack (or our custom Interceptor)
+                    if (DataReceived != null)
+                    {
+                        try
+                        {
+                            DataReceived(packet);
+                        }
+                        catch { }
+                    }
                 }
                 
                 // Give descriptor back to MAC

@@ -684,7 +684,6 @@ msg_booting db 13, 10, '=== WeatherOS Native Bare-Metal Bootloader ===', 13, 10,
 msg_a20_ok db 'A20 Gate: Enabled', 13, 10, 0
 msg_loading db 'Loading kernel into physical RAM (32 MB): ', 13, 10, 0
 msg_ok db 13, 10, ' [OK - 100% LOADED]', 13, 10, 0
-msg_press_enter db 'Kernel loaded successfully.', 13, 10, 'Press ENTER to launch WeatherOS...', 13, 10, 0
 msg_jumping db 13, 10, 'Entering 32-bit Protected Mode and launching kernel...', 13, 10, 0
 msg_err db 13, 10, 'DISK READ ERROR!', 13, 10, 0
 
@@ -697,8 +696,8 @@ mb_counter db 0
 save_cnt db 0
 
 ; Patchable variables (updated by make_isohybrid.py)
-rem_sectors dd 16396
-entry_point dd 0x240fc20
+rem_sectors dd 16399
+entry_point dd 0x240fc38
 
 align 4
 dap_read:

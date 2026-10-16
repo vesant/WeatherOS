@@ -98,13 +98,21 @@ namespace WeatherOS.Services
             catch { }
         }
 
-        private static Cosmos.Core.IOPort _ioDelayPort = new Cosmos.Core.IOPort(0x80);
         public static void HardwareDelayMs(int ms)
         {
-            int count = ms * 1000;
-            for (int i = 0; i < count; i++)
+            if (ms <= 0) return;
+            try
             {
-                _ioDelayPort.Byte = 0;
+                var port = new Cosmos.Core.IOPort(0x80);
+                int count = ms * 50;
+                for (int i = 0; i < count; i++)
+                {
+                    port.Byte = 0;
+                }
+            }
+            catch
+            {
+                for (int i = 0; i < ms * 10000; i++) { }
             }
         }
 
@@ -124,56 +132,52 @@ namespace WeatherOS.Services
             if (WeatherOS.Kernel.CustomNIC != null && !WeatherOS.Kernel.CustomNIC.IsPhyLinkUp())
             {
                 if (!isGui) System.Console.WriteLine("[net] raw_tcp: no physical link detected (cable unplugged).");
+                SetDefaultFallbackIp();
                 return;
             }
 
-            // 1. DHCP Discover with real-time Retransmissions (up to 600ms)
-            if (!isGui) System.Console.WriteLine("[net] raw_tcp: broadcasting DHCP Discover...");
+            // 1. DHCP Discover with real-time Retransmissions (up to 250ms max)
+            if (!isGui) System.Console.Write("[net] raw_tcp: broadcasting DHCP Discover");
             _dhcpOfferReceived = false;
             _dhcpAckReceived = false;
             byte[] dhcp = BuildDhcpPacket(1, null, null); // Discover
             nic.QueueBytes(dhcp);
 
-            int elapsedMs = 0;
-            int retransMs = 0;
-            while (!_dhcpOfferReceived && elapsedMs < 600)
+            for (int i = 0; i < 25 && !_dhcpOfferReceived; i++)
             {
                 WeatherOS.Kernel.CustomNIC?.HackPoll();
                 HardwareDelayMs(10);
-                elapsedMs += 10;
-                retransMs += 10;
-                if (retransMs >= 300)
+                if (i == 12)
                 {
-                    retransMs = 0;
-                    nic.QueueBytes(dhcp); // Retransmit Discover
+                    nic.QueueBytes(dhcp); // Retransmit Discover once at 120ms
                 }
+                if (!isGui && (i % 5 == 0)) System.Console.Write(".");
             }
+            if (!isGui) System.Console.WriteLine();
             
             if (_dhcpOfferReceived)
             {
-                // 1b. DHCP Request
+                // 1b. DHCP Request (up to 250ms max)
                 byte[] dhcpReq = BuildDhcpPacket(3, _ipSource, _dhcpServerIp);
                 nic.QueueBytes(dhcpReq);
-                int reqMs = 0;
-                while (!_dhcpAckReceived && reqMs < 600)
+                for (int i = 0; i < 25 && !_dhcpAckReceived; i++)
                 {
                     WeatherOS.Kernel.CustomNIC?.HackPoll();
                     HardwareDelayMs(10);
-                    reqMs += 10;
                 }
 
                 if (!isGui)
                 {
                     if (WeatherOS.Services.WeatherService.IsDebugModeActive)
-                        System.Console.WriteLine($"\n[net] raw_tcp: DHCP OK! IP: {_ipSource[0]}.{_ipSource[1]}.{_ipSource[2]}.{_ipSource[3]}");
+                        System.Console.WriteLine($"[net] raw_tcp: DHCP OK! IP: {_ipSource[0]}.{_ipSource[1]}.{_ipSource[2]}.{_ipSource[3]}");
                     else
-                        System.Console.WriteLine($"\n[net] raw_tcp: DHCP OK! IP: {_ipSource[0]}.{_ipSource[1]}.***.*** [Secured]");
+                        System.Console.WriteLine($"[net] raw_tcp: DHCP OK! IP: {_ipSource[0]}.{_ipSource[1]}.***.*** [Secured]");
                 }
             }
             else
             {
                 // 2. DHCP silent; probe candidate gateways via fast ARP
-                if (!isGui) System.Console.WriteLine("\n[net] raw_tcp: DHCP silent. Probing router gateways...");
+                if (!isGui) System.Console.WriteLine("[net] raw_tcp: DHCP silent. Probing router gateways...");
 
                 byte[][] candidateGateways = new byte[][] {
                     new byte[] { 192, 168, 31, 1 },  // Xiaomi / XiaoQiang
@@ -190,12 +194,10 @@ namespace WeatherOS.Services
                     _arpReplyReceived = false;
                     SendArpRequest(cand);
 
-                    int arpMs = 0;
-                    while (!_arpReplyReceived && arpMs < 40)
+                    for (int a = 0; a < 4 && !_arpReplyReceived; a++)
                     {
                         WeatherOS.Kernel.CustomNIC?.HackPoll();
                         HardwareDelayMs(5);
-                        arpMs += 5;
                     }
 
                     if (_arpReplyReceived)
@@ -206,19 +208,20 @@ namespace WeatherOS.Services
                             _ipSource = new byte[] { _gatewayIp[0], _gatewayIp[1], _gatewayIp[2], 155 };
                         }
                         if (!isGui)
-                            System.Console.WriteLine($"\n[net] raw_tcp: Gateway detected: {_gatewayIp[0]}.{_gatewayIp[1]}.{_gatewayIp[2]}.{_gatewayIp[3]} (MAC: {_macDest[0]:X2}:{_macDest[1]:X2}:{_macDest[2]:X2}:{_macDest[3]:X2}:{_macDest[4]:X2}:{_macDest[5]:X2})");
+                            System.Console.WriteLine($"[net] raw_tcp: Gateway detected: {_gatewayIp[0]}.{_gatewayIp[1]}.{_gatewayIp[2]}.{_gatewayIp[3]} (MAC: {_macDest[0]:X2}:{_macDest[1]:X2}:{_macDest[2]:X2}:{_macDest[3]:X2}:{_macDest[4]:X2}:{_macDest[5]:X2})");
                         break;
                     }
                 }
 
                 if (_ipSource[0] == 0)
                 {
-                    _ipSource = new byte[] { 192, 168, 31, 155 };
-                    _gatewayIp = new byte[] { 192, 168, 31, 1 };
+                    SetDefaultFallbackIp();
+                    if (!isGui)
+                        System.Console.WriteLine($"[net] raw_tcp: Fallback IP: {_ipSource[0]}.{_ipSource[1]}.{_ipSource[2]}.{_ipSource[3]} (Gateway: {_gatewayIp[0]}.{_gatewayIp[1]}.{_gatewayIp[2]}.{_gatewayIp[3]})");
                 }
             }
 
-            // Configure Cosmos NetworkStack with active IP
+            // Sync with Cosmos NetworkStack
             try
             {
                 var myIp = new Cosmos.System.Network.IPv4.Address(_ipSource[0], _ipSource[1], _ipSource[2], _ipSource[3]);
@@ -229,6 +232,12 @@ namespace WeatherOS.Services
             catch { }
 
             nic.DataReceived = _oldHandler;
+        }
+
+        private static void SetDefaultFallbackIp()
+        {
+            _ipSource = new byte[] { 192, 168, 31, 100 };
+            _gatewayIp = new byte[] { 192, 168, 31, 1 };
         }
 
         private static byte[] BuildDhcpPacket(byte msgType, byte[] requestedIp, byte[] serverIp)
@@ -907,11 +916,12 @@ namespace WeatherOS.Services
                     {
                         byte dhcpMsgType = 0;
                         int optIdx = dhcpOff + 240;
-                        while (optIdx < packet.Length && packet[optIdx] != 255)
+                        while (optIdx + 1 < packet.Length && packet[optIdx] != 255)
                         {
                             byte opt = packet[optIdx];
                             if (opt == 0) { optIdx++; continue; }
                             byte len = packet[optIdx + 1];
+                            if (len == 0 || optIdx + 2 + len > packet.Length) break;
                             if (opt == 53 && len >= 1) dhcpMsgType = packet[optIdx + 2];
                             if (opt == 3 && len >= 4) Array.Copy(packet, optIdx + 2, _gatewayIp, 0, 4);
                             if (opt == 54 && len >= 4) Array.Copy(packet, optIdx + 2, _dhcpServerIp, 0, 4);
