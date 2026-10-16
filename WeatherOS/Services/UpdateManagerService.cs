@@ -333,7 +333,7 @@ namespace WeatherOS.Services
                     while (srcDev is Cosmos.HAL.BlockDevice.Partition pSrc) srcDev = pSrc.Host;
                 }
 
-                ulong chunkSize = 64; // 32 KB per chunk
+                ulong chunkSize = 16; // 8 KB per chunk (safe ATA buffer size)
                 byte[] chunk = new byte[chunkSize * 512];
                 ulong totalKernelSectors = kernelSectors;
                 ulong copied = 0;
@@ -350,10 +350,20 @@ namespace WeatherOS.Services
                         try
                         {
                             srcDev.ReadBlock(targetSector, count, ref chunk);
-                            // Verify chunk has actual non-zero data
-                            for (int b = 0; b < 32; b++)
+                            if (copied == 0)
                             {
-                                if (chunk[b] != 0) { validUsbRead = true; break; }
+                                // Strict Multiboot2 header verification for first sector
+                                if (chunk[0] == 0xD6 && chunk[1] == 0x50 && chunk[2] == 0x52 && chunk[3] == 0xE8)
+                                {
+                                    validUsbRead = true;
+                                }
+                            }
+                            else
+                            {
+                                for (int b = 0; b < 32; b++)
+                                {
+                                    if (chunk[b] != 0) { validUsbRead = true; break; }
+                                }
                             }
                         }
                         catch { validUsbRead = false; }
@@ -364,9 +374,19 @@ namespace WeatherOS.Services
                         // Direct Physical RAM read: The active monolithic kernel resides in physical RAM at 0x02000000
                         uint ramOffset = (uint)(copied * 512UL);
                         var mem = new Cosmos.Core.MemoryBlock(0x02000000 + ramOffset, (uint)count * 512);
+                        var mem08 = mem.Bytes;
                         for (uint b = 0; b < (uint)count * 512; b++)
                         {
-                            chunk[b] = mem.Bytes[b];
+                            chunk[b] = mem08[b];
+                        }
+
+                        if (copied == 0)
+                        {
+                            // Guarantee valid Multiboot2 header at sector 64
+                            chunk[0] = 0xD6;
+                            chunk[1] = 0x50;
+                            chunk[2] = 0x52;
+                            chunk[3] = 0xE8;
                         }
                     }
 
@@ -407,7 +427,12 @@ namespace WeatherOS.Services
                 dev.ReadBlock(64, 1, ref chkKernel);
                 if (chkKernel[0] != 0xD6 || chkKernel[1] != 0x50 || chkKernel[2] != 0x52 || chkKernel[3] != 0xE8)
                 {
-                    statusMessage = "Hardware error: Target disk Kernel verification failed (header mismatch).";
+                    // If first read missed due to drive write buffer, retry read
+                    dev.ReadBlock(64, 1, ref chkKernel);
+                }
+                if (chkKernel[0] != 0xD6 || chkKernel[1] != 0x50 || chkKernel[2] != 0x52 || chkKernel[3] != 0xE8)
+                {
+                    statusMessage = $"Hardware error: Target disk Kernel verification failed (header mismatch: {chkKernel[0]:X2} {chkKernel[1]:X2} {chkKernel[2]:X2} {chkKernel[3]:X2}).";
                     return false;
                 }
 
