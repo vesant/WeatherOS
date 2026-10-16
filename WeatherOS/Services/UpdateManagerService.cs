@@ -243,31 +243,6 @@ namespace WeatherOS.Services
                     return false;
                 }
 
-                DiskDriveInfo liveDrive = null;
-                for (int i = 0; i < physDrives.Count; i++)
-                {
-                    var d = physDrives[i];
-                    if (d == targetDrive) continue;
-                    if (d.Name.Contains("Live USB") || d.Name.Contains("Boot Medium") || d.Name.Contains("Boot Drive"))
-                    {
-                        liveDrive = d;
-                        break;
-                    }
-                }
-                if (liveDrive == null)
-                {
-                    for (int i = 0; i < physDrives.Count; i++)
-                    {
-                        var d = physDrives[i];
-                        if (d == targetDrive) continue;
-                        if (d.SectorCount > 100000UL && d.SectorCount < 40000000UL)
-                        {
-                            liveDrive = d;
-                            break;
-                        }
-                    }
-                }
-
                 // 1. Determine kernel sector count from NativeBootloaderPayload MBR partition 1
                 uint kernelSectors = 16404;
                 if (NativeBootloaderPayload.Mbr != null && NativeBootloaderPayload.Mbr.Length >= 462)
@@ -323,15 +298,29 @@ namespace WeatherOS.Services
                 }
                 catch { }
 
-                // 5. Deploy WeatherOS 32-bit Monolithic Kernel to Sectors 64..
+                // 5. Deploy WeatherOS 32-bit Monolithic Kernel directly from authentic Physical RAM to Sectors 64..
                 progressCallback?.Invoke("Deploying WeatherOS 32-bit Kernel to hard disk...", 15);
 
-                Cosmos.HAL.BlockDevice.BlockDevice srcDev = null;
-                if (liveDrive != null && liveDrive.Device != null)
+                // Dynamically resolve entry point from NativeBootloaderPayload.Stage2
+                uint entryPoint = 0x02410A1Cu;
+                if (NativeBootloaderPayload.Stage2 != null)
                 {
-                    srcDev = liveDrive.Device;
-                    while (srcDev is Cosmos.HAL.BlockDevice.Partition pSrc) srcDev = pSrc.Host;
+                    for (int p = 2000; p < NativeBootloaderPayload.Stage2.Length - 4; p++)
+                    {
+                        uint candidate = (uint)(NativeBootloaderPayload.Stage2[p] |
+                                               (NativeBootloaderPayload.Stage2[p + 1] << 8) |
+                                               (NativeBootloaderPayload.Stage2[p + 2] << 16) |
+                                               (NativeBootloaderPayload.Stage2[p + 3] << 24));
+                        if (candidate >= 0x02400000u && candidate <= 0x02600000u)
+                        {
+                            entryPoint = candidate;
+                            break;
+                        }
+                    }
                 }
+                uint entryOffset = entryPoint - 0x02000000u;
+                ulong entrySector = 64UL + (ulong)(entryOffset / 512u);
+                uint entryByteOffset = entryOffset % 512u;
 
                 ulong chunkSize = 16; // 8 KB per chunk (safe ATA buffer size)
                 byte[] chunk = new byte[chunkSize * 512];
@@ -344,52 +333,37 @@ namespace WeatherOS.Services
                     ulong count = Math.Min(chunkSize, totalKernelSectors - copied);
                     ulong targetSector = 64UL + copied;
 
-                    bool validUsbRead = false;
-                    if (srcDev != null)
+                    // Direct Physical RAM read: In Live OS session, physical RAM at 0x02000000 holds the authentic running kernel.
+                    uint ramAddress = 0x02000000u + (uint)(copied * 512UL);
+                    unsafe
                     {
-                        try
+                        byte* pSrc = (byte*)ramAddress;
+                        uint bytesToCopy = (uint)count * 512;
+                        for (uint b = 0; b < bytesToCopy; b++)
                         {
-                            srcDev.ReadBlock(targetSector, count, ref chunk);
-                            if (copied == 0)
-                            {
-                                // Strict Multiboot2 header verification for first sector
-                                if (chunk[0] == 0xD6 && chunk[1] == 0x50 && chunk[2] == 0x52 && chunk[3] == 0xE8)
-                                {
-                                    validUsbRead = true;
-                                }
-                            }
-                            else
-                            {
-                                for (int b = 0; b < 32; b++)
-                                {
-                                    if (chunk[b] != 0) { validUsbRead = true; break; }
-                                }
-                            }
+                            chunk[b] = pSrc[b];
                         }
-                        catch { validUsbRead = false; }
                     }
 
-                    if (!validUsbRead)
+                    if (copied == 0)
                     {
-                        // Direct Physical RAM read: Read the authentic monolithic kernel image directly from physical RAM at 0x02000000
-                        uint ramAddress = 0x02000000u + (uint)(copied * 512UL);
-                        unsafe
+                        // Strict Multiboot2 header verification for first sector (0xE85250D6)
+                        if (chunk[0] != 0xD6 || chunk[1] != 0x50 || chunk[2] != 0x52 || chunk[3] != 0xE8)
                         {
-                            byte* pSrc = (byte*)ramAddress;
-                            uint bytesToCopy = (uint)count * 512;
-                            for (uint b = 0; b < bytesToCopy; b++)
-                            {
-                                chunk[b] = pSrc[b];
-                            }
+                            statusMessage = $"Hardware read error: Physical RAM at 0x02000000 missing Multiboot header ({chunk[0]:X2} {chunk[1]:X2} {chunk[2]:X2} {chunk[3]:X2}).";
+                            return false;
                         }
+                    }
 
-                        if (copied == 0)
+                    // Strict Entry Point Verification: Verify entry point machine code in RAM
+                    // Instruction: mov esp, 0x02050040 (0xBC, 0x40, 0x00, 0x05, 0x02)
+                    if (targetSector <= entrySector && (targetSector + count) > entrySector)
+                    {
+                        uint offInChunk = (uint)((entrySector - targetSector) * 512UL + entryByteOffset);
+                        if (chunk[offInChunk] != 0xBC || chunk[offInChunk + 1] != 0x40)
                         {
-                            if (chunk[0] != 0xD6 || chunk[1] != 0x50 || chunk[2] != 0x52 || chunk[3] != 0xE8)
-                            {
-                                statusMessage = $"Hardware read error: Physical RAM at 0x02000000 missing Multiboot header ({chunk[0]:X2} {chunk[1]:X2} {chunk[2]:X2} {chunk[3]:X2}).";
-                                return false;
-                            }
+                            statusMessage = $"Payload corruption: Entry point at 0x{entryPoint:X8} in RAM invalid ({chunk[offInChunk]:X2} {chunk[offInChunk + 1]:X2}). Expected BC 40.";
+                            return false;
                         }
                     }
 
@@ -418,11 +392,11 @@ namespace WeatherOS.Services
 
                 byte[] chkBootMgr = new byte[512];
                 dev.ReadBlock(1, 1, ref chkBootMgr);
-                byte exp0 = NativeBootloaderPayload.Stage2 != null && NativeBootloaderPayload.Stage2.Length > 0 ? NativeBootloaderPayload.Stage2[0] : (byte)0xE4;
-                byte exp1 = NativeBootloaderPayload.Stage2 != null && NativeBootloaderPayload.Stage2.Length > 1 ? NativeBootloaderPayload.Stage2[1] : (byte)0x61;
+                byte exp0 = NativeBootloaderPayload.Stage2 != null && NativeBootloaderPayload.Stage2.Length > 0 ? NativeBootloaderPayload.Stage2[0] : (byte)0xFA;
+                byte exp1 = NativeBootloaderPayload.Stage2 != null && NativeBootloaderPayload.Stage2.Length > 1 ? NativeBootloaderPayload.Stage2[1] : (byte)0xFC;
                 if (chkBootMgr[0] != exp0 || chkBootMgr[1] != exp1)
                 {
-                    statusMessage = "Hardware error: Target disk Boot Manager validation failed.";
+                    statusMessage = $"Hardware error: Target disk Boot Manager validation failed ({chkBootMgr[0]:X2} {chkBootMgr[1]:X2} != {exp0:X2} {exp1:X2}).";
                     return false;
                 }
 
@@ -436,6 +410,19 @@ namespace WeatherOS.Services
                 if (chkKernel[0] != 0xD6 || chkKernel[1] != 0x50 || chkKernel[2] != 0x52 || chkKernel[3] != 0xE8)
                 {
                     statusMessage = $"Hardware error: Target disk Kernel verification failed (header mismatch: {chkKernel[0]:X2} {chkKernel[1]:X2} {chkKernel[2]:X2} {chkKernel[3]:X2}).";
+                    return false;
+                }
+
+                // Verify Kernel Entry Point on target hard disk
+                byte[] chkEntry = new byte[512];
+                dev.ReadBlock(entrySector, 1, ref chkEntry);
+                if (chkEntry[entryByteOffset] != 0xBC || chkEntry[entryByteOffset + 1] != 0x40)
+                {
+                    dev.ReadBlock(entrySector, 1, ref chkEntry);
+                }
+                if (chkEntry[entryByteOffset] != 0xBC || chkEntry[entryByteOffset + 1] != 0x40)
+                {
+                    statusMessage = $"Hardware error: Target disk Entry Point (LBA {entrySector}) verification failed (got {chkEntry[entryByteOffset]:X2} {chkEntry[entryByteOffset + 1]:X2}, expected BC 40).";
                     return false;
                 }
 

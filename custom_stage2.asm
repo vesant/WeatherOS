@@ -304,9 +304,30 @@ prot_start:
     cmp dword [0x02000000], 0xE85250D6
     jne bad_kernel_signature
 
-    ; Jump directly to WeatherOS Monolithic Kernel entry point
+    ; Verify Entry Point code: mov esp, 0x02050040 (0xBC 0x40 0x00 0x05 -> 0x050040BC)
     mov edx, [entry_point]
+    cmp dword [edx], 0x050040BC
+    jne bad_kernel_entry
+
+    ; Jump directly to WeatherOS Monolithic Kernel entry point
     jmp edx
+
+bad_kernel_entry:
+    mov edi, 0x000B8000
+    mov esi, msg_bad_entry
+.bke_loop:
+    lodsb
+    or al, al
+    jz .bke_halt
+    mov ah, 0x4F                       ; White text on red background
+    stosw
+    jmp .bke_loop
+.bke_halt:
+    cli
+    hlt
+    jmp .bke_halt
+
+msg_bad_entry db 'WeatherOS Boot Manager: Kernel entry point validation failed!', 0
 
 bad_kernel_signature:
     mov edi, 0x000B8000
@@ -677,8 +698,8 @@ chunk_count dw 0
 chunk_index dw 0
 
 ; Patchable variables (updated by make_isohybrid.py)
-rem_sectors dd 16430
-entry_point dd 0x2410866
+rem_sectors dd 16435
+entry_point dd 0x2410a24
 
 align 4
 dap_read:
