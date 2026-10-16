@@ -257,6 +257,53 @@ namespace WeatherOS.Services
                     }
                 }
 
+                // 1.5. Dynamically scan physical RAM for authentic running Kernel_Start entry point
+                // Signature: mov esp, 0x02050040; cli (0xBC, 0x40, 0x00, 0x05, 0x02, 0xFA)
+                uint entryPoint = 0;
+                unsafe
+                {
+                    byte* pRam = (byte*)0x02410000u;
+                    for (uint i = 0; i < 0x8000u; i++)
+                    {
+                        if (pRam[i] == 0xBC && pRam[i + 1] == 0x40 && pRam[i + 2] == 0x00 &&
+                            pRam[i + 3] == 0x05 && pRam[i + 4] == 0x02 && pRam[i + 5] == 0xFA)
+                        {
+                            entryPoint = 0x02410000u + i;
+                            break;
+                        }
+                    }
+                }
+
+                if (entryPoint == 0)
+                {
+                    statusMessage = "Integrity error: Running kernel entry point signature (mov esp, 0x02050040) not found in physical RAM.";
+                    return false;
+                }
+
+                // Patch Stage2 payload with the dynamically verified entryPoint before writing to disk
+                if (NativeBootloaderPayload.Stage2 != null)
+                {
+                    for (int p = 2000; p < NativeBootloaderPayload.Stage2.Length - 4; p++)
+                    {
+                        uint candidate = (uint)(NativeBootloaderPayload.Stage2[p] |
+                                               (NativeBootloaderPayload.Stage2[p + 1] << 8) |
+                                               (NativeBootloaderPayload.Stage2[p + 2] << 16) |
+                                               (NativeBootloaderPayload.Stage2[p + 3] << 24));
+                        if (candidate >= 0x02400000u && candidate <= 0x02600000u)
+                        {
+                            NativeBootloaderPayload.Stage2[p] = (byte)(entryPoint & 0xFF);
+                            NativeBootloaderPayload.Stage2[p + 1] = (byte)((entryPoint >> 8) & 0xFF);
+                            NativeBootloaderPayload.Stage2[p + 2] = (byte)((entryPoint >> 16) & 0xFF);
+                            NativeBootloaderPayload.Stage2[p + 3] = (byte)((entryPoint >> 24) & 0xFF);
+                            break;
+                        }
+                    }
+                }
+
+                uint entryOffset = entryPoint - 0x02000000u;
+                ulong entrySector = 64UL + (ulong)(entryOffset / 512u);
+                uint entryByteOffset = entryOffset % 512u;
+
                 progressCallback?.Invoke("Writing WeatherOS Master Boot Record & Boot Manager...", 5);
 
                 // 2. Write MBR (1 sector / 512 bytes) to LBA 0
@@ -300,27 +347,6 @@ namespace WeatherOS.Services
 
                 // 5. Deploy WeatherOS 32-bit Monolithic Kernel directly from authentic Physical RAM to Sectors 64..
                 progressCallback?.Invoke("Deploying WeatherOS 32-bit Kernel to hard disk...", 15);
-
-                // Dynamically resolve entry point from NativeBootloaderPayload.Stage2
-                uint entryPoint = 0x02410A1Cu;
-                if (NativeBootloaderPayload.Stage2 != null)
-                {
-                    for (int p = 2000; p < NativeBootloaderPayload.Stage2.Length - 4; p++)
-                    {
-                        uint candidate = (uint)(NativeBootloaderPayload.Stage2[p] |
-                                               (NativeBootloaderPayload.Stage2[p + 1] << 8) |
-                                               (NativeBootloaderPayload.Stage2[p + 2] << 16) |
-                                               (NativeBootloaderPayload.Stage2[p + 3] << 24));
-                        if (candidate >= 0x02400000u && candidate <= 0x02600000u)
-                        {
-                            entryPoint = candidate;
-                            break;
-                        }
-                    }
-                }
-                uint entryOffset = entryPoint - 0x02000000u;
-                ulong entrySector = 64UL + (ulong)(entryOffset / 512u);
-                uint entryByteOffset = entryOffset % 512u;
 
                 ulong chunkSize = 16; // 8 KB per chunk (safe ATA buffer size)
                 byte[] chunk = new byte[chunkSize * 512];
