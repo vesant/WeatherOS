@@ -268,173 +268,174 @@ namespace WeatherOS.Services
                     }
                 }
 
+                // 1. Determine kernel sector count from NativeBootloaderPayload MBR partition 1
+                uint kernelSectors = 16404;
+                if (NativeBootloaderPayload.Mbr != null && NativeBootloaderPayload.Mbr.Length >= 462)
+                {
+                    uint parsedSec = (uint)(NativeBootloaderPayload.Mbr[458] | 
+                                            (NativeBootloaderPayload.Mbr[459] << 8) | 
+                                            (NativeBootloaderPayload.Mbr[460] << 16) | 
+                                            (NativeBootloaderPayload.Mbr[461] << 24));
+                    if (parsedSec >= 1000 && parsedSec <= 100000)
+                    {
+                        kernelSectors = parsedSec;
+                    }
+                }
+
+                progressCallback?.Invoke("Injecting native bare-metal MBR & Stage 2 bootloader...", 5);
+
+                // 2. Write MBR (1 sector / 512 bytes) to LBA 0
+                byte[] mbrSector = new byte[512];
+                if (NativeBootloaderPayload.Mbr != null && NativeBootloaderPayload.Mbr.Length >= 512)
+                {
+                    Array.Copy(NativeBootloaderPayload.Mbr, 0, mbrSector, 0, 512);
+                }
+                dev.WriteBlock(0, 1, ref mbrSector);
+
+                // 3. Write Stage 2 (8 sectors / 4096 bytes) to LBA 1..8
+                byte[] stage2Block = new byte[8 * 512];
+                if (NativeBootloaderPayload.Stage2 != null)
+                {
+                    int copyLen = Math.Min(stage2Block.Length, NativeBootloaderPayload.Stage2.Length);
+                    Array.Copy(NativeBootloaderPayload.Stage2, 0, stage2Block, 0, copyLen);
+                }
+                dev.WriteBlock(1, 8, ref stage2Block);
+
+                // 4. Zero-fill Sectors 9..63 (Reserved area)
+                byte[] zeroSector = new byte[512];
+                for (ulong s = 9; s < 64; s++)
+                {
+                    dev.WriteBlock(s, 1, ref zeroSector);
+                }
+
+                // 5. Deploy Kernel loadable segment to Sectors 64..
+                // If Live USB drive is accessible via block device, try reading from it.
+                // Otherwise (standard for bare-metal x86 booted via BIOS), read directly from Physical RAM at 0x02000000!
+                progressCallback?.Invoke("Deploying WeatherOS kernel to target disk...", 15);
+
+                Cosmos.HAL.BlockDevice.BlockDevice srcDev = null;
                 if (liveDrive != null && liveDrive.Device != null)
                 {
-                    var srcDev = liveDrive.Device;
+                    srcDev = liveDrive.Device;
                     while (srcDev is Cosmos.HAL.BlockDevice.Partition pSrc) srcDev = pSrc.Host;
+                }
 
-                    progressCallback?.Invoke("Inspecting Live USB medium and kernel structures...", 5);
+                ulong chunkSize = 64; // 32 KB per chunk
+                byte[] chunk = new byte[chunkSize * 512];
+                ulong totalKernelSectors = kernelSectors;
+                ulong copied = 0;
+                int lastPct = -1;
 
-                    // Read Sector 0 of liveDrive
-                    byte[] liveSec0 = new byte[512];
-                    try { srcDev.ReadBlock(0, 1, ref liveSec0); } catch { }
+                while (copied < totalKernelSectors)
+                {
+                    ulong count = Math.Min(chunkSize, totalKernelSectors - copied);
+                    ulong targetSector = 64UL + copied;
 
-                    // Determine sectors to clone:
-                    // Kernel loadable segment is ~16,477 sectors (8.44 MB) starting at LBA 64.
-                    // Cloning 17,000 sectors (~8.7 MB) completely copies the MBR, Stage 2, and the full kernel image!
-                    ulong totalToClone = 17000UL;
-                    if (srcDev.BlockCount > 1000UL && srcDev.BlockCount < totalToClone) totalToClone = srcDev.BlockCount;
-                    if (dev.BlockCount > 0 && dev.BlockCount < totalToClone) totalToClone = dev.BlockCount;
-
-                    ulong chunkSize = 128; // 64 KB per chunk
-                    byte[] chunk = new byte[chunkSize * 512];
-                    ulong copied = 0;
-                    int lastPct = -1;
-
-                    while (copied < totalToClone)
+                    bool readFromUsb = false;
+                    if (srcDev != null)
                     {
-                        ulong count = Math.Min(chunkSize, totalToClone - copied);
-                        ulong startBlock = copied;
-
-                        srcDev.ReadBlock(startBlock, count, ref chunk);
-                        dev.WriteBlock(startBlock, count, ref chunk);
-
-                        copied += count;
-
-                        int pct = 5 + (int)((copied * 80UL) / totalToClone); // 5% to 85%
-                        if (pct != lastPct)
+                        try
                         {
-                            lastPct = pct;
-                            ulong mbDone = (copied * 512UL) / (1024UL * 1024UL);
-                            ulong mbTotal = (totalToClone * 512UL) / (1024UL * 1024UL);
-                            progressCallback?.Invoke($"Cloning WeatherOS kernel ({mbDone}MB / {mbTotal}MB)...", pct);
+                            srcDev.ReadBlock(targetSector, count, ref chunk);
+                            readFromUsb = true;
+                        }
+                        catch { readFromUsb = false; }
+                    }
+
+                    if (!readFromUsb)
+                    {
+                        // Direct Physical RAM read: Stage 2 loaded the kernel into RAM at 0x02000000
+                        uint ramOffset = (uint)(copied * 512UL);
+                        var mem = new Cosmos.Core.MemoryBlock(0x02000000 + ramOffset, (uint)count * 512);
+                        for (uint b = 0; b < (uint)count * 512; b++)
+                        {
+                            chunk[b] = mem.Bytes[b];
                         }
                     }
 
-                    // 1. Inject Native Bare-Metal Bootloader (MBR + Stage 2 Unreal Loader)
-                    progressCallback?.Invoke("Injecting native bare-metal bootloader to target disk...", 88);
+                    dev.WriteBlock(targetSector, count, ref chunk);
+                    copied += count;
 
-                    // Write Stage 2 (8 sectors / 4096 bytes) to LBA 1..8
-                    byte[] stage2Block = new byte[8 * 512];
-                    if (NativeBootloaderPayload.Stage2 != null)
+                    int pct = 15 + (int)((copied * 75UL) / totalKernelSectors); // 15% to 90%
+                    if (pct != lastPct)
                     {
-                        int copyLen = Math.Min(stage2Block.Length, NativeBootloaderPayload.Stage2.Length);
-                        Array.Copy(NativeBootloaderPayload.Stage2, 0, stage2Block, 0, copyLen);
+                        lastPct = pct;
+                        ulong mbDone = (copied * 512UL) / (1024UL * 1024UL);
+                        ulong mbTotal = (totalKernelSectors * 512UL) / (1024UL * 1024UL);
+                        progressCallback?.Invoke($"Writing WeatherOS kernel ({mbDone}MB / {mbTotal}MB)...", pct);
                     }
-                    dev.WriteBlock(1, 8, ref stage2Block);
-
-                    // Write MBR (1 sector / 512 bytes) to LBA 0
-                    byte[] mbrSector = new byte[512];
-                    if (NativeBootloaderPayload.Mbr != null && NativeBootloaderPayload.Mbr.Length >= 512)
-                    {
-                        Array.Copy(NativeBootloaderPayload.Mbr, 0, mbrSector, 0, 512);
-                    }
-                    dev.WriteBlock(0, 1, ref mbrSector);
-
-                    // 2. Verify hardware writes on target hard disk
-                    progressCallback?.Invoke("Verifying hard disk bootloader integrity...", 92);
-                    byte[] chkMbr = new byte[512];
-                    dev.ReadBlock(0, 1, ref chkMbr);
-                    if (chkMbr[510] != 0x55 || chkMbr[511] != 0xAA)
-                    {
-                        statusMessage = "Hardware error: Target disk MBR validation failed.";
-                        return false;
-                    }
-
-                    byte[] chkStage2 = new byte[512];
-                    dev.ReadBlock(1, 1, ref chkStage2);
-                    if (chkStage2[0] != 0xFA || chkStage2[1] != 0x31)
-                    {
-                        statusMessage = "Hardware error: Target disk Stage 2 validation failed.";
-                        return false;
-                    }
-
-                    progressCallback?.Invoke("Configuring environment & manifests...", 95);
-                    string versionContent =
-                        "[WeatherOS]\n" +
-                        "Version=3.1.0-release\n" +
-                        "InstalledDate=2026-10-14\n" +
-                        "Branch=32bit\n" +
-                        "CommitSha=ea9c540\n" +
-                        "BootTarget=0:\\boot\\WeatherOS.bin\n" +
-                        "Status=Installed\n" +
-                        "Architecture=x86-AOT\n";
-
-                    string vStat;
-                    StorageService.SaveFile("version.ini", versionContent, out vStat);
-
-                    string appsManifest =
-                        "[WeatherOS_Apps]\n" +
-                        "ClockApp_Version=2.0\n" +
-                        "ClockApp_Engine=CMOS_RTC_Hardware\n" +
-                        "SystemInfoApp_Version=3.1\n" +
-                        "NetTransferApp_Version=2.0\n";
-                    string aStat;
-                    StorageService.SaveFile("apps.ini", appsManifest, out aStat);
-
-                    string settingsContent =
-                        "DarkMode=false\n" +
-                        "AutoLoc=true\n" +
-                        "DefaultCity=Setubal\n" +
-                        "DebugLog=false\n" +
-                        "CustomKey=\n";
-                    string sStat;
-                    StorageService.SaveFile("settings.ini", settingsContent, out sStat);
-
-                    string welcomeContent =
-                        "==============================================================================\n" +
-                        "                   Welcome to WeatherOS (Installed on Hard Disk)             \n" +
-                        "==============================================================================\n" +
-                        "WeatherOS is now permanently installed to your internal hard drive!\n\n" +
-                        "BOOTLOADER:\n" +
-                        "- Target disk MBR configured with direct BIOS INT 13h LBA bootloader.\n" +
-                        "- Stage 2 Unreal-Mode loader embedded at LBA 1..4.\n" +
-                        "- WeatherOS kernel boots directly into physical RAM in under 0.2s.\n" +
-                        "- Completely independent of GRUB, filesystems, and config files.\n" +
-                        "==============================================================================\n";
-                    string wStat;
-                    StorageService.SaveFile("welcome.txt", welcomeContent, out wStat);
-
-                    _forceInstalledFlag = true;
-                    _bootSource = BootSource.HardDisk;
-
-                    progressCallback?.Invoke("Installation finalized successfully! Ready to boot.", 100);
-                    statusMessage = $"Installed to {targetDrive.Name} [OK] - Direct Native Bare-Metal Boot ready.";
-                    return true;
                 }
-                else
+
+                // 6. Verify hardware writes on target hard disk
+                progressCallback?.Invoke("Verifying hard disk bootloader integrity...", 92);
+                byte[] chkMbr = new byte[512];
+                dev.ReadBlock(0, 1, ref chkMbr);
+                if (chkMbr[510] != 0x55 || chkMbr[511] != 0xAA)
                 {
-                    // Fallback: Format drive as FAT32
-                    progressCallback?.Invoke("Formatting partition as FAT32 (MBR LBA 2048, Volume: WEATHEROS)...", 20);
-                    string fmtStatus;
-                    bool fmtOk = DiskWipeService.FormatDriveAsFat32(dev, out fmtStatus);
-                    if (!fmtOk)
-                    {
-                        statusMessage = "Formatting failed: " + fmtStatus;
-                        return false;
-                    }
-
-                    progressCallback?.Invoke("Configuring environment (version.ini)...", 85);
-                    string versionContent =
-                        "[WeatherOS]\n" +
-                        "Version=3.1.0-release\n" +
-                        "InstalledDate=2026-10-14\n" +
-                        "Branch=32bit\n" +
-                        "CommitSha=ea9c540\n" +
-                        "BootTarget=0:\\boot\\WeatherOS.bin\n" +
-                        "Status=Installed\n" +
-                        "Architecture=x86-AOT\n";
-
-                    string vStat;
-                    DiskWipeService.WriteFileDirectToFat32(dev, "version.ini", versionContent, out vStat);
-
-                    _forceInstalledFlag = true;
-                    _bootSource = BootSource.HardDisk;
-
-                    progressCallback?.Invoke("Installation finalized successfully! Ready to boot.", 100);
-                    statusMessage = $"Installed to {targetDrive.Name} (0:\\boot\\WeatherOS.bin) [OK]";
-                    return true;
+                    statusMessage = "Hardware error: Target disk MBR validation failed.";
+                    return false;
                 }
+
+                byte[] chkStage2 = new byte[512];
+                dev.ReadBlock(1, 1, ref chkStage2);
+                if (chkStage2[0] != 0xFA || chkStage2[1] != 0x31)
+                {
+                    statusMessage = "Hardware error: Target disk Stage 2 validation failed.";
+                    return false;
+                }
+
+                progressCallback?.Invoke("Configuring environment & manifests...", 96);
+                string versionContent =
+                    "[WeatherOS]\n" +
+                    "Version=3.1.0-release\n" +
+                    "InstalledDate=2026-10-14\n" +
+                    "Branch=32bit\n" +
+                    "CommitSha=ea9c540\n" +
+                    "BootTarget=0:\\boot\\WeatherOS.bin\n" +
+                    "Status=Installed\n" +
+                    "Architecture=x86-AOT\n";
+
+                string vStat;
+                StorageService.SaveFile("version.ini", versionContent, out vStat);
+
+                string appsManifest =
+                    "[WeatherOS_Apps]\n" +
+                    "ClockApp_Version=2.0\n" +
+                    "ClockApp_Engine=CMOS_RTC_Hardware\n" +
+                    "SystemInfoApp_Version=3.1\n" +
+                    "NetTransferApp_Version=2.0\n";
+                string aStat;
+                StorageService.SaveFile("apps.ini", appsManifest, out aStat);
+
+                string settingsContent =
+                    "DarkMode=false\n" +
+                    "AutoLoc=true\n" +
+                    "DefaultCity=Setubal\n" +
+                    "DebugLog=false\n" +
+                    "CustomKey=\n";
+                string sStat;
+                StorageService.SaveFile("settings.ini", settingsContent, out sStat);
+
+                string welcomeContent =
+                    "==============================================================================\n" +
+                    "                   Welcome to WeatherOS (Installed on Hard Disk)             \n" +
+                    "==============================================================================\n" +
+                    "WeatherOS is now permanently installed to your internal hard drive!\n\n" +
+                    "BOOTLOADER:\n" +
+                    "- Target disk MBR configured with direct BIOS INT 13h LBA bootloader.\n" +
+                    "- Stage 2 Unreal-Mode loader embedded at LBA 1..8.\n" +
+                    "- WeatherOS kernel boots directly into physical RAM in under 0.2s.\n" +
+                    "- Completely independent of GRUB, filesystems, and config files.\n" +
+                    "==============================================================================\n";
+                string wStat;
+                StorageService.SaveFile("welcome.txt", welcomeContent, out wStat);
+
+                _forceInstalledFlag = true;
+                _bootSource = BootSource.HardDisk;
+
+                progressCallback?.Invoke("Installation finalized successfully! Ready to boot.", 100);
+                statusMessage = $"Installed to {targetDrive.Name} [OK] - Direct Native Bare-Metal Boot ready.";
+                return true;
             }
             catch (Exception ex)
             {
