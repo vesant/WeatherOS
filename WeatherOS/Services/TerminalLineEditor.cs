@@ -21,7 +21,11 @@ namespace WeatherOS.Services
 
             while (true)
             {
-                var keyEvent = KeyboardManager.ReadKey();
+                KeyEvent keyEvent;
+                while (!WeatherOS.Graphics.TuiDesktop.TryReadDesktopKey(out keyEvent))
+                {
+                    WeatherOS.Graphics.TuiDesktop.HardwareDelayMs(10);
+                }
 
                 if (keyEvent.Key == ConsoleKeyEx.Enter)
                 {

@@ -245,18 +245,34 @@ namespace WeatherOS.Graphics
                             // Actively poll network hardware in real time
                             WeatherOS.Kernel.CustomNIC?.HackPoll();
 
-                            if (KeyboardManager.TryReadKey(out var keyEvent))
+                            if (TryReadDesktopKey(out var keyEvent))
                             {
                                 ProcessKeyEvent(keyEvent);
                                 break;
                             }
-                            System.Threading.Thread.Sleep(100);
+                            HardwareDelayMs(100);
                         }
                     }
                     else
                     {
-                        var keyEvent = KeyboardManager.ReadKey();
-                        ProcessKeyEvent(keyEvent);
+                        // Non-blocking dual-path keyboard poll with zero freeze
+                        KeyEvent keyEvent = default;
+                        bool hasKey = false;
+                        while (_isActive && !hasKey)
+                        {
+                            WeatherOS.Kernel.CustomNIC?.HackPoll();
+                            if (TryReadDesktopKey(out keyEvent))
+                            {
+                                hasKey = true;
+                                break;
+                            }
+                            HardwareDelayMs(15);
+                        }
+
+                        if (_isActive && hasKey)
+                        {
+                            ProcessKeyEvent(keyEvent);
+                        }
                     }
                 }
             }
@@ -868,6 +884,151 @@ namespace WeatherOS.Graphics
             System.Console.BackgroundColor = winBg;
             System.Console.ForegroundColor = ConsoleColor.Yellow;
             System.Console.Write(msg);
+        }
+
+        public static void HardwareDelayMs(int ms)
+        {
+            if (ms <= 0) return;
+            try
+            {
+                var port = new Cosmos.Core.IOPort(0x80);
+                int count = ms * 200;
+                for (int i = 0; i < count; i++)
+                {
+                    port.Byte = 0;
+                }
+            }
+            catch
+            {
+                for (int i = 0; i < ms * 10000; i++) { }
+            }
+        }
+
+        private static bool _ps2Extended = false;
+
+        public static bool TryReadDesktopKey(out KeyEvent keyEvent)
+        {
+            keyEvent = default;
+
+            // 1. Cosmos KeyboardManager FIFO queue
+            try
+            {
+                if (KeyboardManager.TryReadKey(out keyEvent))
+                {
+                    return true;
+                }
+            }
+            catch { }
+
+            // 2. Direct 8042 PS/2 Hardware Port Polling (Ports 0x64 Status, 0x60 Data)
+            // Toshiba NB100 laptop built-in keyboard sends scancodes directly to port 0x60
+            try
+            {
+                var pStatus = new Cosmos.Core.IOPort(0x64);
+                byte status = pStatus.Byte;
+                // Bit 0: Output buffer full (data ready)
+                if ((status & 0x01) != 0)
+                {
+                    var pData = new Cosmos.Core.IOPort(0x60);
+                    byte scancode = pData.Byte;
+                    // Bit 5: If set, data came from PS/2 mouse/touchpad - ignore to prevent jitter
+                    if ((status & 0x20) == 0)
+                    {
+                        if (scancode == 0xE0)
+                        {
+                            _ps2Extended = true;
+                            return false;
+                        }
+
+                        bool isExt = _ps2Extended;
+                        _ps2Extended = false;
+
+                        // Check for key-down (bit 7 clear)
+                        if ((scancode & 0x80) == 0)
+                        {
+                            ConsoleKeyEx key = ConsoleKeyEx.NoName;
+                            char keyChar = '\0';
+
+                            if (isExt)
+                            {
+                                switch (scancode)
+                                {
+                                    case 0x48: key = ConsoleKeyEx.UpArrow; break;
+                                    case 0x50: key = ConsoleKeyEx.DownArrow; break;
+                                    case 0x4B: key = ConsoleKeyEx.LeftArrow; break;
+                                    case 0x4D: key = ConsoleKeyEx.RightArrow; break;
+                                    case 0x47: key = ConsoleKeyEx.Home; break;
+                                    case 0x4F: key = ConsoleKeyEx.End; break;
+                                    case 0x49: key = ConsoleKeyEx.PageUp; break;
+                                    case 0x51: key = ConsoleKeyEx.PageDown; break;
+                                    case 0x53: key = ConsoleKeyEx.Delete; break;
+                                    case 0x1C: key = ConsoleKeyEx.Enter; keyChar = '\r'; break;
+                                }
+                            }
+                            else
+                            {
+                                switch (scancode)
+                                {
+                                    case 0x01: key = ConsoleKeyEx.Escape; break;
+                                    case 0x02: key = ConsoleKeyEx.D1; keyChar = '1'; break;
+                                    case 0x03: key = ConsoleKeyEx.D2; keyChar = '2'; break;
+                                    case 0x04: key = ConsoleKeyEx.D3; keyChar = '3'; break;
+                                    case 0x05: key = ConsoleKeyEx.D4; keyChar = '4'; break;
+                                    case 0x06: key = ConsoleKeyEx.D5; keyChar = '5'; break;
+                                    case 0x07: key = ConsoleKeyEx.D6; keyChar = '6'; break;
+                                    case 0x08: key = ConsoleKeyEx.D7; keyChar = '7'; break;
+                                    case 0x09: key = ConsoleKeyEx.D8; keyChar = '8'; break;
+                                    case 0x0A: key = ConsoleKeyEx.D9; keyChar = '9'; break;
+                                    case 0x0B: key = ConsoleKeyEx.D0; keyChar = '0'; break;
+                                    case 0x0E: key = ConsoleKeyEx.Backspace; keyChar = '\b'; break;
+                                    case 0x0F: key = ConsoleKeyEx.Tab; keyChar = '\t'; break;
+                                    case 0x10: key = ConsoleKeyEx.Q; keyChar = 'q'; break;
+                                    case 0x11: key = ConsoleKeyEx.W; keyChar = 'w'; break;
+                                    case 0x12: key = ConsoleKeyEx.E; keyChar = 'e'; break;
+                                    case 0x13: key = ConsoleKeyEx.R; keyChar = 'r'; break;
+                                    case 0x14: key = ConsoleKeyEx.T; keyChar = 't'; break;
+                                    case 0x15: key = ConsoleKeyEx.Y; keyChar = 'y'; break;
+                                    case 0x16: key = ConsoleKeyEx.U; keyChar = 'u'; break;
+                                    case 0x17: key = ConsoleKeyEx.I; keyChar = 'i'; break;
+                                    case 0x18: key = ConsoleKeyEx.O; keyChar = 'o'; break;
+                                    case 0x19: key = ConsoleKeyEx.P; keyChar = 'p'; break;
+                                    case 0x1C: key = ConsoleKeyEx.Enter; keyChar = '\r'; break;
+                                    case 0x1E: key = ConsoleKeyEx.A; keyChar = 'a'; break;
+                                    case 0x1F: key = ConsoleKeyEx.S; keyChar = 's'; break;
+                                    case 0x20: key = ConsoleKeyEx.D; keyChar = 'd'; break;
+                                    case 0x21: key = ConsoleKeyEx.F; keyChar = 'f'; break;
+                                    case 0x22: key = ConsoleKeyEx.G; keyChar = 'g'; break;
+                                    case 0x23: key = ConsoleKeyEx.H; keyChar = 'h'; break;
+                                    case 0x24: key = ConsoleKeyEx.J; keyChar = 'j'; break;
+                                    case 0x25: key = ConsoleKeyEx.K; keyChar = 'k'; break;
+                                    case 0x26: key = ConsoleKeyEx.L; keyChar = 'l'; break;
+                                    case 0x2C: key = ConsoleKeyEx.Z; keyChar = 'z'; break;
+                                    case 0x2D: key = ConsoleKeyEx.X; keyChar = 'x'; break;
+                                    case 0x2E: key = ConsoleKeyEx.C; keyChar = 'c'; break;
+                                    case 0x2F: key = ConsoleKeyEx.V; keyChar = 'v'; break;
+                                    case 0x30: key = ConsoleKeyEx.B; keyChar = 'b'; break;
+                                    case 0x31: key = ConsoleKeyEx.N; keyChar = 'n'; break;
+                                    case 0x32: key = ConsoleKeyEx.M; keyChar = 'm'; break;
+                                    case 0x39: key = ConsoleKeyEx.Spacebar; keyChar = ' '; break;
+                                    case 0x48: key = ConsoleKeyEx.UpArrow; break;
+                                    case 0x4B: key = ConsoleKeyEx.LeftArrow; break;
+                                    case 0x4D: key = ConsoleKeyEx.RightArrow; break;
+                                    case 0x50: key = ConsoleKeyEx.DownArrow; break;
+                                }
+                            }
+
+                            if (key != ConsoleKeyEx.NoName)
+                            {
+                                keyEvent = new KeyEvent { Key = key, KeyChar = keyChar };
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+            catch { }
+
+            return false;
         }
     }
 }
