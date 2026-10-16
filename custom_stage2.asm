@@ -182,7 +182,7 @@ load_done:
 
     cmp ecx, 20
     jb .e820_skip
-    mov dword [es:di + 20], 0
+    mov dword [es:di + 20], 1
     inc bp
     add di, 24
     cmp bp, 30
@@ -308,6 +308,13 @@ prot_start:
     mov edx, [entry_point]
     cmp dword [edx], 0x050040BC
     jne bad_kernel_entry
+
+    ; Zero-initialize BSS / heap padding (64 KB immediately following kernel load)
+    mov edi, [dest_phys]
+    mov ecx, 16384                     ; 16384 dwords = 64 KB
+    xor eax, eax
+    cld
+    rep stosd
 
     ; Jump directly to WeatherOS Monolithic Kernel entry point
     jmp edx
@@ -698,8 +705,8 @@ chunk_count dw 0
 chunk_index dw 0
 
 ; Patchable variables (updated by make_isohybrid.py)
-rem_sectors dd 16445
-entry_point dd 0x2410b01
+rem_sectors dd 16448
+entry_point dd 0x2410b00
 
 align 4
 dap_read:

@@ -69,15 +69,15 @@ def build_native_bootable_image():
     stage2_asm = os.path.join(script_dir, "custom_stage2.asm") if os.path.exists(os.path.join(script_dir, "custom_stage2.asm")) else os.path.join(root_dir, "custom_stage2.asm")
 
     # Update patchable parameters in custom_stage2.asm
-    with open(stage2_asm, "r", encoding="utf-8") as f:
-        s2_src = f.read()
-
     import re
-    s2_src = re.sub(r'rem_sectors dd \d+', f'rem_sectors dd {rem_sectors}', s2_src)
-    s2_src = re.sub(r'entry_point dd 0x[0-9a-fA-F]+', f'entry_point dd {hex(e_entry)}', s2_src)
-
-    with open(stage2_asm, "w", encoding="utf-8") as f:
-        f.write(s2_src)
+    for s2_path in set([stage2_asm, os.path.join(root_dir, "custom_stage2.asm"), os.path.join(script_dir, "custom_stage2.asm")]):
+        if os.path.exists(s2_path):
+            with open(s2_path, "r", encoding="utf-8") as f:
+                s2_src = f.read()
+            s2_src = re.sub(r'rem_sectors dd \d+', f'rem_sectors dd {rem_sectors}', s2_src)
+            s2_src = re.sub(r'entry_point dd 0x[0-9a-fA-F]+', f'entry_point dd {hex(e_entry)}', s2_src)
+            with open(s2_path, "w", encoding="utf-8") as f:
+                f.write(s2_src)
 
     mbr_bin = os.path.join(root_dir, "custom_mbr.bin")
     stage2_bin = os.path.join(root_dir, "custom_stage2.bin")

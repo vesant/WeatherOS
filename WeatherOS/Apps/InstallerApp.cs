@@ -309,16 +309,37 @@ namespace WeatherOS.Apps
                 return;
             }
 
-            if (keyEvent.Key == ConsoleKeyEx.DownArrow)
+            if (keyEvent.Key == ConsoleKeyEx.DownArrow || keyEvent.Key == ConsoleKeyEx.Tab)
             {
                 if (_availableDrives != null && _selectedDriveIndex < _availableDrives.Count - 1)
                 {
                     _selectedDriveIndex++;
                 }
+                else if (_availableDrives != null && _availableDrives.Count > 0)
+                {
+                    _selectedDriveIndex = 0; // Wrap to top
+                }
                 return;
             }
 
-            if (keyEvent.Key == ConsoleKeyEx.Enter)
+            // Direct selection via numbers 0, 1, 2, 3
+            if (keyEvent.Key == ConsoleKeyEx.D0 || keyEvent.Key == ConsoleKeyEx.Num0 || keyEvent.KeyChar == '0')
+            {
+                if (_availableDrives != null && _availableDrives.Count > 0) _selectedDriveIndex = 0;
+                return;
+            }
+            if (keyEvent.Key == ConsoleKeyEx.D1 || keyEvent.Key == ConsoleKeyEx.Num1 || keyEvent.KeyChar == '1')
+            {
+                if (_availableDrives != null && _availableDrives.Count > 1) _selectedDriveIndex = 1;
+                return;
+            }
+            if (keyEvent.Key == ConsoleKeyEx.D2 || keyEvent.Key == ConsoleKeyEx.Num2 || keyEvent.KeyChar == '2')
+            {
+                if (_availableDrives != null && _availableDrives.Count > 2) _selectedDriveIndex = 2;
+                return;
+            }
+
+            if (keyEvent.Key == ConsoleKeyEx.Enter || keyEvent.KeyChar == '\r' || keyEvent.KeyChar == '\n' || keyEvent.Key == ConsoleKeyEx.Spacebar)
             {
                 if (_availableDrives != null && _availableDrives.Count > 0)
                 {
@@ -335,7 +356,8 @@ namespace WeatherOS.Apps
                 return;
             }
 
-            if (keyEvent.Key == ConsoleKeyEx.Enter || keyEvent.KeyChar == 'y' || keyEvent.KeyChar == 'Y')
+            if (keyEvent.Key == ConsoleKeyEx.Enter || keyEvent.KeyChar == '\r' || keyEvent.KeyChar == '\n' ||
+                keyEvent.KeyChar == 'y' || keyEvent.KeyChar == 'Y' || keyEvent.Key == ConsoleKeyEx.Spacebar)
             {
                 var d = (_availableDrives != null && _selectedDriveIndex < _availableDrives.Count)
                     ? _availableDrives[_selectedDriveIndex]
@@ -356,7 +378,8 @@ namespace WeatherOS.Apps
 
         private void HandleCompleteInput(TuiDesktop desktop, KeyEvent keyEvent)
         {
-            if (keyEvent.Key == ConsoleKeyEx.Enter || keyEvent.Key == ConsoleKeyEx.R || keyEvent.KeyChar == 'r' || keyEvent.KeyChar == 'R')
+            if (keyEvent.Key == ConsoleKeyEx.Enter || keyEvent.KeyChar == '\r' || keyEvent.KeyChar == '\n' || 
+                keyEvent.Key == ConsoleKeyEx.R || keyEvent.KeyChar == 'r' || keyEvent.KeyChar == 'R' || keyEvent.Key == ConsoleKeyEx.Spacebar)
             {
                 Power.Reboot();
                 return;

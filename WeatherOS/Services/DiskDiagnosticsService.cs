@@ -527,15 +527,17 @@ namespace WeatherOS.Services
                 for (int i = 0; i < 4; i++) { byte dummy = pCmd.Byte; } // 400ns delay
 
                 byte status = pCmd.Byte;
-                if (status == 0xFF) return info; // Floating bus
+                if (status == 0xFF || status == 0x00) return info; // Floating bus or no device present
 
                 // Wait for drive not busy before issuing command
-                int preWait = 500000;
+                int preWait = 20000;
                 while (preWait-- > 0)
                 {
                     status = pCmd.Byte;
+                    if (status == 0xFF || status == 0x00) return info;
                     if ((status & 0x80) == 0) break;
                 }
+                if ((status & 0x80) != 0) return info; // Drive stuck busy
 
                 // 2. Zero LBA registers
                 pSecCount.Byte = 0;
@@ -559,11 +561,11 @@ namespace WeatherOS.Services
                 }
 
                 // Wait for BSY to clear AND DRQ (0x08) to become asserted
-                // Do NOT bail out if status is 0x00 while drive is preparing identify data!
-                int timeout = 2000000;
+                int timeout = 30000;
                 while (timeout-- > 0)
                 {
                     status = pCmd.Byte;
+                    if (status == 0xFF || status == 0x00) return info; // Bus floating or no drive present
                     if ((status & 0x80) == 0) // BSY is clear
                     {
                         if ((status & 0x08) != 0) break; // DRQ is set! Data ready!

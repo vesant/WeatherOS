@@ -297,19 +297,9 @@ namespace WeatherOS.Services
                             drvSel = (i == 1) ? (byte)0xB0 : (byte)0xA0;
                         }
 
-                        var ataInfo = AtaDeviceDiagnostics.ProbeAta(ioBase, drvSel);
-                        if (!ataInfo.Exists && ioBase == 0x1F0 && drvSel == 0xA0)
-                        {
-                            ataInfo = AtaDeviceDiagnostics.ProbeAta(0x1F0, 0xB0); // Primary Slave fallback
-                        }
-                        if (!ataInfo.Exists)
-                        {
-                            ataInfo = AtaDeviceDiagnostics.ProbeAta(0x170, 0xA0); // Secondary Master fallback
-                        }
-                        if (!ataInfo.Exists)
-                        {
-                            ataInfo = AtaDeviceDiagnostics.ProbeAta(0x170, 0xB0); // Secondary Slave fallback
-                        }
+                        var ataInfo = (dev is Cosmos.HAL.BlockDevice.Ata) 
+                            ? AtaDeviceDiagnostics.ProbeAta(ioBase, drvSel) 
+                            : new AtaIdentifyInfo();
 
                         // Filter out ATAPI Optical Drives (CD/DVD Drives) - they cannot store FAT32 user files
                         if (ataInfo.Exists && ataInfo.IsAtapi)
@@ -519,18 +509,6 @@ namespace WeatherOS.Services
                             {
                                 info.Name = $"Disk {diskIdx} ({cleanLabel}, {info.SizeDisplay})";
                             }
-                        }
-                    }
-                }
-
-                var parts = FileSystemProbeService.ProbeAllPartitions();
-                foreach (var p in parts)
-                {
-                    if (p.DiskIndex == diskIdx || p.DiskIndex == 0)
-                    {
-                        if (!info.ContainedFilesystems.Contains(p.FileSystemType))
-                        {
-                            info.ContainedFilesystems.Add(p.FileSystemType);
                         }
                     }
                 }

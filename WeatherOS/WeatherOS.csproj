@@ -33,6 +33,10 @@
         <Exec Command="python &quot;$(MSBuildThisFileDirectory)..\..\scratch\update_payload.py&quot;" />
     </Target>
 
+    <Target Name="AlignKernelStart" AfterTargets="IL2CPU" BeforeTargets="Nasm">
+        <Exec Command="python &quot;$(MSBuildThisFileDirectory)..\..\scratch\patch_kernel_alignment.py&quot; &quot;$(MSBuildThisFileDirectory)bin\cosmos\$(Configuration)\$(TargetFramework)\$(TargetName).asm&quot;" />
+    </Target>
+
     <Target Name="GenerateNativeBootloader" AfterTargets="MakeIso">
         <Exec Command="python &quot;$(MSBuildThisFileDirectory)..\make_isohybrid.py&quot;" />
     </Target>
