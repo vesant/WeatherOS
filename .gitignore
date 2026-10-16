@@ -5,6 +5,11 @@ obj/
 *.suo
 *.db
 *.log
-/WeatherOS.img
-/WeatherOS.iso
-/WeatherOS.raw
+*.iso
+*.img
+*.raw
+*.bin
+*.vdi
+*.pyc
+__pycache__/
+WeatherOS_build.raw

@@ -68,8 +68,8 @@ def build_native_bootable_image():
         return False
 
     # 4. Assemble custom_mbr.asm and custom_stage2.asm
-    mbr_asm = os.path.join(root_dir, "custom_mbr.asm")
-    stage2_asm = os.path.join(root_dir, "custom_stage2.asm")
+    mbr_asm = os.path.join(script_dir, "custom_mbr.asm") if os.path.exists(os.path.join(script_dir, "custom_mbr.asm")) else os.path.join(root_dir, "custom_mbr.asm")
+    stage2_asm = os.path.join(script_dir, "custom_stage2.asm") if os.path.exists(os.path.join(script_dir, "custom_stage2.asm")) else os.path.join(root_dir, "custom_stage2.asm")
 
     # Update patchable parameters in custom_stage2.asm
     with open(stage2_asm, "r", encoding="utf-8") as f:
@@ -93,10 +93,10 @@ def build_native_bootable_image():
     with open(stage2_bin, "rb") as f:
         stage2_bytes = bytearray(f.read())
 
-    # Ensure Stage 2 is padded to exactly 4 sectors (2048 bytes)
-    if len(stage2_bytes) < 2048:
-        stage2_bytes.extend(b'\x00' * (2048 - len(stage2_bytes)))
-    stage2_bytes = stage2_bytes[:2048]
+    # Ensure Stage 2 is padded to exactly 8 sectors (4096 bytes)
+    if len(stage2_bytes) < 4096:
+        stage2_bytes.extend(b'\x00' * (4096 - len(stage2_bytes)))
+    stage2_bytes = stage2_bytes[:4096]
 
     # Patch partition table entry 1 in MBR to point to LBA 64 and size rem_sectors
     # Offset 446 + 8 = 454 (LBA start), offset 446 + 12 = 458 (LBA count)
@@ -153,19 +153,64 @@ def build_native_bootable_image():
     else:
         print("Warning: UpdateIDT STI pattern not found in kernel segment!")
 
+    # Patch D: DelegateImpl STI neutralization
+    # IL2CPU DelegateImpl emits 'sti' (0xFB) at the end of every multicast delegate invoke,
+    # enabling hardware interrupts prematurely during early initialization before any device driver is ready.
+    # We find all occurrences matching the delegate pattern: popad (0x61), inc edx (0x42), jmp, sti (0xFB)
+    # and replace 'sti' with 'nop' (0x90).
+    delegate_pattern = bytes.fromhex("6142")
+    delegates_patched = 0
+    search_pos = 0
+    while True:
+        idx = kernel_segment.find(delegate_pattern, search_pos)
+        if idx == -1:
+            break
+        # Check if within next 8 bytes there is an STI followed by INTs_LastKnownAddress write
+        check_window = kernel_segment[idx : idx + 20]
+        sti_offset = -1
+        for j in range(2, min(10, len(check_window))):
+            if check_window[j] == 0xFB and j + 7 <= len(check_window):
+                if check_window[j+1:j+7] == bytes.fromhex("c705fd8d0502"):
+                    sti_offset = idx + j
+                    break
+        if sti_offset != -1:
+            kernel_segment[sti_offset] = 0x90
+            delegates_patched += 1
+        search_pos = idx + 2
+
+    print(f"Patched {delegates_patched} premature delegate STI instructions with NOPs!")
+
+    # Visual checkpoints in Kernel_Start:
+    k_entry_offset = e_entry - ppaddr
+    flush_offset = k_entry_offset + 57
+    print(f"Kernel_Start at segment offset {hex(k_entry_offset)}, Boot_FlushCsGDT at {hex(flush_offset)}")
+
+    # Checkpoint 2 (Boot_FlushCsGDT): Replace first port 0x80 delay (10 bytes) with 'G','D' at 0x000B800C
+    delay_pattern = bytes.fromhex("66ba8000b822000000ee")
+    first_delay = kernel_segment.find(delay_pattern, flush_offset)
+    if first_delay != -1:
+        kernel_segment[first_delay : first_delay + 10] = bytes.fromhex("c7050c800b00470f440f")
+        print(f"Injected 'GD' checkpoint at Boot_FlushCsGDT ({hex(first_delay)})")
+
+    # Checkpoint 3 (After PIC init): Replace 7th port 0x80 delay (10 bytes) with 'P','I' at 0x000B8010
+    seventh_delay = kernel_segment.rfind(delay_pattern, flush_offset, flush_offset + 180)
+    if seventh_delay != -1:
+        kernel_segment[seventh_delay : seventh_delay + 10] = bytes.fromhex("c70510800b00500f490f")
+        print(f"Injected 'PI' checkpoint after PIC initialization ({hex(seventh_delay)})")
+
     rem_bytes = (512 - (len(kernel_segment) % 512)) % 512
     if rem_bytes > 0:
         kernel_segment.extend(b'\x00' * rem_bytes)
 
     # 6. Assemble complete bare-metal disk image:
     # Sector 0: MBR (512 bytes)
-    # Sectors 1..4: Stage 2 (2048 bytes)
-    # Sectors 5..63: Zero padding (29,696 bytes)
+    # Sectors 1..8: Stage 2 (4096 bytes)
+    # Sectors 9..63: Zero padding (28,160 bytes)
     # Sectors 64..: Kernel loadable segment
     full_image = bytearray()
     full_image.extend(mbr_bytes)
     full_image.extend(stage2_bytes)
-    full_image.extend(b'\x00' * (59 * 512)) # Sectors 5..63
+    full_image.extend(b'\x00' * (55 * 512)) # Sectors 9..63
     full_image.extend(kernel_segment)
 
     total_sectors = len(full_image) // 512
