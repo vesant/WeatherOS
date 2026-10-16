@@ -2,13 +2,15 @@
 [ORG 0x7C00]
 section .text
 start:
-    ; 0. Immediate hardware visual & audio markers (proves BIOS executed Sector 0)
+    ; 0. Ensure PC speaker is strictly muted (clear bits 0 and 1 of port 0x61)
+    in al, 0x61
+    and al, 0xFC
+    out 0x61, al
+
+    ; Immediate hardware visual marker 'M' (proves BIOS executed Sector 0)
     mov ax, 0xB800
     mov es, ax
     mov word [es:0], 0x1F4D    ; Display 'M' (White on Blue) at top-left
-    in al, 0x61
-    or al, 3
-    out 0x61, al               ; Click PC speaker
 
     cli
     xor ax, ax

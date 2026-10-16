@@ -3,6 +3,11 @@
 
 section .text
 stage2_start:
+    ; Ensure PC speaker is muted
+    in al, 0x61
+    and al, 0xFC
+    out 0x61, al
+
     ; Immediate hardware visual marker '2' (Green on Blue) at row 0, col 1
     mov ax, 0xB800
     mov es, ax
