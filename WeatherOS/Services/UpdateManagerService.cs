@@ -314,13 +314,14 @@ namespace WeatherOS.Services
                     // 1. Inject Native Bare-Metal Bootloader (MBR + Stage 2 Unreal Loader)
                     progressCallback?.Invoke("Injecting native bare-metal bootloader to target disk...", 88);
 
-                    // Write Stage 2 (4 sectors / 2048 bytes) to LBA 1..4
-                    byte[] stage2Block = new byte[4 * 512];
-                    if (NativeBootloaderPayload.Stage2 != null && NativeBootloaderPayload.Stage2.Length >= 2048)
+                    // Write Stage 2 (8 sectors / 4096 bytes) to LBA 1..8
+                    byte[] stage2Block = new byte[8 * 512];
+                    if (NativeBootloaderPayload.Stage2 != null)
                     {
-                        Array.Copy(NativeBootloaderPayload.Stage2, 0, stage2Block, 0, 2048);
+                        int copyLen = Math.Min(stage2Block.Length, NativeBootloaderPayload.Stage2.Length);
+                        Array.Copy(NativeBootloaderPayload.Stage2, 0, stage2Block, 0, copyLen);
                     }
-                    dev.WriteBlock(1, 4, ref stage2Block);
+                    dev.WriteBlock(1, 8, ref stage2Block);
 
                     // Write MBR (1 sector / 512 bytes) to LBA 0
                     byte[] mbrSector = new byte[512];

@@ -696,8 +696,8 @@ mb_counter db 0
 save_cnt db 0
 
 ; Patchable variables (updated by make_isohybrid.py)
-rem_sectors dd 16399
-entry_point dd 0x240fc38
+rem_sectors dd 16404
+entry_point dd 0x240fc9a
 
 align 4
 dap_read:
