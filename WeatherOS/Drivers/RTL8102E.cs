@@ -343,6 +343,8 @@ namespace Cosmos.HAL.Network
         /// </summary>
         public void HackPoll()
         {
+            if (rxDescBlock == null || txDescBlock == null || mmio == null) return;
+
             // 1. Process RX Ring
             while (true)
             {

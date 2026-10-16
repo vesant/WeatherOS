@@ -152,16 +152,6 @@ load_done:
     mov si, msg_ok
     call print_str
 
-    ; 5. Prompt user to press ENTER
-    mov si, msg_press_enter
-    call print_str
-
-.wait_enter:
-    mov ah, 0x00
-    int 0x16
-    cmp al, 13                     ; Enter key
-    jne .wait_enter
-
     mov si, msg_jumping
     call print_str
 

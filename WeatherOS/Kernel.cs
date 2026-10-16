@@ -24,14 +24,19 @@ namespace WeatherOS
         {
             try
             {
-                CustomNIC = new Cosmos.HAL.Network.RTL8102E();
-                if (CustomNIC.Initialize())
+                var rtl = new Cosmos.HAL.Network.RTL8102E();
+                if (rtl.Initialize())
                 {
-                    Cosmos.HAL.NetworkDevice.Devices.Add(CustomNIC);
+                    CustomNIC = rtl;
+                    Cosmos.HAL.NetworkDevice.Devices.Insert(0, CustomNIC);
                     System.Console.WriteLine("Custom RTL8102E Driver Loaded!");
                 }
+                else
+                {
+                    CustomNIC = null;
+                }
             }
-            catch { }
+            catch { CustomNIC = null; }
 
             try
             {

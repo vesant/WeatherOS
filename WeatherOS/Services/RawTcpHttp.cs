@@ -98,6 +98,16 @@ namespace WeatherOS.Services
             catch { }
         }
 
+        private static Cosmos.Core.IOPort _ioDelayPort = new Cosmos.Core.IOPort(0x80);
+        public static void HardwareDelayMs(int ms)
+        {
+            int count = ms * 1000;
+            for (int i = 0; i < count; i++)
+            {
+                _ioDelayPort.Byte = 0;
+            }
+        }
+
         public static void DoAutoConfig(Cosmos.HAL.NetworkDevice nic)
         {
             _macSource = nic.MACAddress.bytes;
@@ -117,7 +127,7 @@ namespace WeatherOS.Services
                 return;
             }
 
-            // 1. DHCP Discover with real-time Retransmissions (up to 800ms)
+            // 1. DHCP Discover with real-time Retransmissions (up to 600ms)
             if (!isGui) System.Console.WriteLine("[net] raw_tcp: broadcasting DHCP Discover...");
             _dhcpOfferReceived = false;
             _dhcpAckReceived = false;
@@ -126,13 +136,13 @@ namespace WeatherOS.Services
 
             int elapsedMs = 0;
             int retransMs = 0;
-            while (!_dhcpOfferReceived && elapsedMs < 800)
+            while (!_dhcpOfferReceived && elapsedMs < 600)
             {
                 WeatherOS.Kernel.CustomNIC?.HackPoll();
-                System.Threading.Thread.Sleep(10);
+                HardwareDelayMs(10);
                 elapsedMs += 10;
                 retransMs += 10;
-                if (retransMs >= 400)
+                if (retransMs >= 300)
                 {
                     retransMs = 0;
                     nic.QueueBytes(dhcp); // Retransmit Discover
@@ -145,10 +155,10 @@ namespace WeatherOS.Services
                 byte[] dhcpReq = BuildDhcpPacket(3, _ipSource, _dhcpServerIp);
                 nic.QueueBytes(dhcpReq);
                 int reqMs = 0;
-                while (!_dhcpAckReceived && reqMs < 800)
+                while (!_dhcpAckReceived && reqMs < 600)
                 {
                     WeatherOS.Kernel.CustomNIC?.HackPoll();
-                    System.Threading.Thread.Sleep(10);
+                    HardwareDelayMs(10);
                     reqMs += 10;
                 }
 
@@ -181,10 +191,10 @@ namespace WeatherOS.Services
                     SendArpRequest(cand);
 
                     int arpMs = 0;
-                    while (!_arpReplyReceived && arpMs < 60)
+                    while (!_arpReplyReceived && arpMs < 40)
                     {
                         WeatherOS.Kernel.CustomNIC?.HackPoll();
-                        System.Threading.Thread.Sleep(5);
+                        HardwareDelayMs(5);
                         arpMs += 5;
                     }
 
@@ -312,7 +322,7 @@ namespace WeatherOS.Services
             while (!_arpReplyReceived && elapsed < timeoutMs)
             {
                 WeatherOS.Kernel.CustomNIC?.HackPoll();
-                System.Threading.Thread.Sleep(5);
+                HardwareDelayMs(5);
                 elapsed += 5;
             }
 
@@ -471,7 +481,7 @@ namespace WeatherOS.Services
             for (int drain = 0; drain < 30; drain++)
             {
                 WeatherOS.Kernel.CustomNIC?.HackPoll();
-                System.Threading.Thread.Sleep(1);
+                HardwareDelayMs(1);
             }
 
             _synAckReceived = false;
@@ -497,7 +507,7 @@ namespace WeatherOS.Services
                     while (!_synAckReceived && synTimeout < 40) // 40 * 5ms = 200ms
                     {
                         WeatherOS.Kernel.CustomNIC?.HackPoll();
-                        System.Threading.Thread.Sleep(5);
+                        HardwareDelayMs(5);
                         synTimeout++;
                     }
                     if (_synAckReceived) break;
@@ -524,7 +534,7 @@ namespace WeatherOS.Services
                 while (!_finReceived && dataMs < 1800)
                 {
                     WeatherOS.Kernel.CustomNIC?.HackPoll();
-                    System.Threading.Thread.Sleep(5);
+                    HardwareDelayMs(5);
                     dataMs += 5;
 
                     if (_rxLength > lastRxLen)
@@ -641,7 +651,7 @@ namespace WeatherOS.Services
             for (int drain = 0; drain < 25; drain++)
             {
                 WeatherOS.Kernel.CustomNIC?.HackPoll();
-                System.Threading.Thread.Sleep(1);
+                HardwareDelayMs(1);
             }
 
             _synAckReceived = false;
@@ -660,7 +670,7 @@ namespace WeatherOS.Services
                 while (!_synAckReceived && synTimeout < 50)
                 {
                     WeatherOS.Kernel.CustomNIC?.HackPoll();
-                    System.Threading.Thread.Sleep(10);
+                    HardwareDelayMs(10);
                     synTimeout++;
                 }
                 if (_synAckReceived) break;
@@ -688,7 +698,7 @@ namespace WeatherOS.Services
             while (_rxLength == 0 && elapsed < timeoutMs)
             {
                 WeatherOS.Kernel.CustomNIC?.HackPoll();
-                System.Threading.Thread.Sleep(10);
+                HardwareDelayMs(10);
                 elapsed += 10;
             }
 
