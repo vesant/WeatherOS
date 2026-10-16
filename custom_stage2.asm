@@ -50,12 +50,15 @@ boot_manager_start:
     mov es, bx
     mov fs, bx
     mov gs, bx
-    mov eax, cr0
-    and al, 0xFE
-    mov cr0, eax                   ; Back to Real Mode with 4GB limits cached!
-    jmp dword 0x0000:.rm_unreal
+    jmp dword 0x18:.pm16_unreal    ; Far jump to 16-bit code segment (0x18)
 
 [BITS 16]
+.pm16_unreal:
+    mov eax, cr0
+    and al, 0xFE
+    mov cr0, eax                   ; Return to Real Mode with 4GB limits cached!
+    jmp 0x0000:.rm_unreal
+
 .rm_unreal:
     xor ax, ax
     mov ds, ax
