@@ -2,13 +2,10 @@
 [ORG 0x8000]
 
 section .text
-stage2_start:
-    ; Ensure PC speaker is muted
-    in al, 0x61
-    and al, 0xFC
-    out 0x61, al
-
+boot_manager_start:
+    ; 1. Segment registers and stack initialization
     cli
+    cld
     xor ax, ax
     mov ds, ax
     mov es, ax
@@ -20,31 +17,50 @@ stage2_start:
 
     mov [boot_drive], dl
 
-    ; 1. Print WeatherOS Boot Manager banner
-    mov si, msg_booting
+    ; 2. Initialize Video Mode to standard 80x25 16-color text mode (Mode 03h)
+    ; This cleans the Toshiba graphical boot splash, sets cursor to (0,0),
+    ; selects display page 0, and loads the standard VGA font.
+    mov ax, 0x0003
+    int 0x10
+
+    ; 3. Ensure PC speaker hardware gate is strictly muted
+    in al, 0x61
+    and al, 0xFC
+    out 0x61, al
+
+    ; 4. Print Boot Manager Welcome Banner
+    mov si, msg_banner
     call print_str
 
-    ; 2. Robust A20 Gate Enable
+    ; 5. Enable A20 Address Line safely
     call enable_a20
 
+    ; 6. Clean segment registers for Real Mode disk loading
+    xor ax, ax
+    mov ds, ax
+    mov es, ax
+    mov fs, ax
+    mov gs, ax
+    mov ss, ax
+    mov sp, 0x8000
+
+    ; 7. Load WeatherOS Monolithic Kernel into Physical RAM (0x02000000)
     mov si, msg_loading
     call print_str
 
-    ; 3. Setup pointers for loading
     mov dword [cur_lba], 64
     mov dword [dest_phys], 0x02000000
     mov word [chunk_index], 0
-    mov byte [mb_counter], 0
 
 load_loop:
     cmp dword [rem_sectors], 0
     jbe load_done
 
     mov eax, [rem_sectors]
-    cmp eax, 64                    ; Safe 64-sector chunk (32 KB) for 100% BIOS USB compatibility
-    jbe set_chunk
+    cmp eax, 64                    ; 64 sectors = 32 KB per chunk
+    jbe .set_chunk
     mov eax, 64
-set_chunk:
+.set_chunk:
     mov [chunk_count], ax
     mov [dap_count], ax
 
@@ -52,7 +68,7 @@ set_chunk:
     mov [dap_lba], eax
     mov dword [dap_lba + 4], 0
 
-    ; Step A: Read chunk into 0x00010000 using standard BIOS INT 13h in 100% Real Mode
+    ; Step A: Read chunk into conventional RAM buffer at 0x1000:0x0000 (0x00010000)
     xor ax, ax
     mov ds, ax
     mov si, dap_read
@@ -61,7 +77,7 @@ set_chunk:
     int 0x13
     jc disk_fail
 
-    ; Step B: Switch to 32-bit Protected Mode to copy chunk safely into 32MB physical RAM
+    ; Step B: Direct 32-bit copy into Physical RAM in true Protected Mode
     cli
     lgdt [gdt_prot_ptr]
     mov eax, cr0
@@ -74,91 +90,59 @@ set_chunk:
     mov ax, 0x10
     mov ds, ax
     mov es, ax
-    mov fs, ax
-    mov gs, ax
-    mov ss, ax
-
-    mov esi, 0x00010000            ; Low RAM chunk buffer (64 KB)
-    mov edi, [dest_phys]           ; Physical RAM destination (starts at 32 MB)
+    mov esi, 0x00010000            ; Low RAM source buffer
+    mov edi, [dest_phys]           ; Physical RAM destination (32MB+)
     movzx ecx, word [chunk_count]
     shl ecx, 7                     ; count * 128 dwords (512 bytes per sector)
-
     cld
-    rep movsd
-    mov [dest_phys], edi           ; Advance destination pointer in physical RAM
+    rep movsd                      ; Hardware 32-bit memory copy!
+    mov [dest_phys], edi
 
-    ; Step C: Transition cleanly back to Real Mode for the next BIOS call
-    jmp 0x18:.pm_exit16
+    ; Return to 16-bit Real Mode cleanly
+    jmp dword 0x18:.pm16_leave
 
 [BITS 16]
-.pm_exit16:
-    mov ax, 0x20                   ; 16-bit real-mode compatible data descriptor
+.pm16_leave:
+    mov ax, 0x20
     mov ds, ax
     mov es, ax
-    mov fs, ax
-    mov gs, ax
     mov ss, ax
-
     mov eax, cr0
     and al, 0xFE
     mov cr0, eax
-    jmp 0x00:.rm_back
+    jmp 0x0000:.rm_leave
 
-.rm_back:
+.rm_leave:
     xor ax, ax
     mov ds, ax
     mov es, ax
-    mov fs, ax
-    mov gs, ax
     mov ss, ax
     mov sp, 0x8000
     sti
 
-    ; Advance LBA and remaining sectors
+    ; Step C: Update pointers and show progress
     movzx eax, word [chunk_count]
     add [cur_lba], eax
     sub [rem_sectors], eax
 
-    ; Print progress: dot every 16 chunks (512 KB), MB count every 32 chunks (1 MB)
     inc word [chunk_index]
-    test word [chunk_index], 0x0F
+    test word [chunk_index], 0x0F  ; Dot every 512 KB
     jnz .no_dot
     mov al, '.'
     mov ah, 0x0E
     mov bx, 0x0007
     int 0x10
-
-    test word [chunk_index], 0x1F
-    jnz .no_dot
-    inc byte [mb_counter]
-    mov al, ' '
-    call print_char
-    mov al, '['
-    call print_char
-    mov al, [mb_counter]
-    add al, '0'
-    call print_char
-    mov al, 'M'
-    call print_char
-    mov al, 'B'
-    call print_char
-    mov al, ']'
-    call print_char
-    mov al, ' '
-    call print_char
 .no_dot:
-
     jmp load_loop
 
 load_done:
-    ; 4. Print success
     mov si, msg_ok
     call print_str
 
-    mov si, msg_jumping
+    mov si, msg_starting
     call print_str
 
-    ; 6. Build Multiboot 2 information structure at 0x00010000 (ES = 0x1000)
+    ; 8. Build Multiboot 2 information structure at 0x00010000 (ES = 0x1000)
     mov ax, 0x1000
     mov es, ax
     xor ax, ax
@@ -168,50 +152,43 @@ load_done:
     rep stosw
 
     ; Tag 4: Basic Memory Information (type=4, size=16) at byte 8
-    ; Tag starts at offset 8 (bytes 0..7 reserved for header)
     mov dword [es:8], 4
     mov dword [es:12], 16
     mov dword [es:16], 640
-    mov dword [es:20], 1048576        ; Default 1GB upper limit
+    mov dword [es:20], 1048576        ; 1GB upper limit
 
-    ; Query BIOS INT 15h, AX=E820h to obtain TRUE hardware memory map from Toshiba NB100 BIOS
-    ; Destination in MB2 structure:
-    ; Tag 6 header: offset 24 (type=6, size=?, entry_size=24, entry_version=0)
-    ; Entries start at offset 40 (di = 40)
+    ; Query BIOS INT 15h, AX=E820h for memory map
     mov di, 40
-    xor ebx, ebx                       ; Continuation value (must be 0 to start)
-    xor bp, bp                         ; bp counts valid entries
+    xor ebx, ebx
+    xor bp, bp
 
 .e820_loop:
     mov eax, 0xE820
     mov edx, 0x534D4150                ; 'SMAP'
-    mov ecx, 24                        ; Request 24 bytes
-    mov dword [es:di + 20], 1           ; ACPI 3.0 extended attribute (ignored if not written)
+    mov ecx, 24
+    mov dword [es:di + 20], 1
     int 0x15
-    jc .e820_done                      ; Carry set -> end of map or unsupported
-    cmp eax, 0x534D4150                ; Verify 'SMAP' signature
+    jc .e820_done
+    cmp eax, 0x534D4150
     jne .e820_done
 
-    ; Validate entry length (must be >= 20 bytes)
     cmp ecx, 20
     jb .e820_skip
-    ; Force entry size to 24 bytes and clear reserved/acpi field
     mov dword [es:di + 20], 0
     inc bp
     add di, 24
-    cmp bp, 30                         ; Cap at 30 entries
+    cmp bp, 30
     jae .e820_done
 
 .e820_skip:
-    test ebx, ebx                      ; ebx = 0 indicates end of list
+    test ebx, ebx
     jnz .e820_loop
 
 .e820_done:
-    ; If BIOS E820 failed (bp == 0), provide safe fallback entries (0..640KB and 1MB..896MB)
     test bp, bp
     jnz .e820_finalize
 
-    ; Fallback Entry 0: Low RAM (0 .. 639 KB, type=1)
+    ; Fallback Entry 0: Low RAM (0 .. 639 KB)
     mov dword [es:40], 0x00000000
     mov dword [es:44], 0x00000000
     mov dword [es:48], 0x0009FC00
@@ -219,10 +196,10 @@ load_done:
     mov dword [es:56], 1
     mov dword [es:60], 0
 
-    ; Fallback Entry 1: Safe High RAM (1 MB .. 896 MB, leaving 128MB for GMA 950 stolen VRAM)
+    ; Fallback Entry 1: Safe High RAM (1 MB .. 896 MB)
     mov dword [es:64], 0x00100000
     mov dword [es:68], 0x00000000
-    mov dword [es:72], 0x37F00000      ; 895 MB (safe TOLUD for Atom N270)
+    mov dword [es:72], 0x37F00000
     mov dword [es:76], 0x00000000
     mov dword [es:80], 1
     mov dword [es:84], 0
@@ -231,19 +208,16 @@ load_done:
     mov di, 40 + (2 * 24)
 
 .e820_finalize:
-    ; Calculate Tag 6 total size = 16 (tag header) + (bp * 24)
     mov ax, bp
     mov cx, 24
     mul cx
-    add ax, 16                         ; AX = Tag 6 size
-
+    add ax, 16                         ; Tag 6 total size
     mov dword [es:24], 6               ; Tag type = 6 (Memory Map)
     movzx eax, ax
-    mov [es:28], eax                   ; Tag size
-    mov dword [es:32], 24              ; Entry size = 24
-    mov dword [es:36], 0               ; Entry version = 0
+    mov [es:28], eax
+    mov dword [es:32], 24
+    mov dword [es:36], 0
 
-    ; Align di to 8 bytes for End Tag
     add di, 7
     and di, 0xFFF8
 
@@ -257,7 +231,7 @@ load_done:
     mov [es:0], eax
     mov dword [es:4], 0
 
-    ; 7. Enter 32-bit Protected Mode permanently
+    ; 9. Switch to 32-bit Protected Mode PERMANENTLY and launch Kernel
     cli
     lgdt [gdt_prot_ptr]
     mov eax, cr0
@@ -267,7 +241,7 @@ load_done:
 
 [BITS 32]
 prot_start:
-    ; Reload all data segments with 32-bit flat data descriptor (0x10)
+    ; Reload all 32-bit flat data selectors
     mov ax, 0x10
     mov ds, ax
     mov es, ax
@@ -275,27 +249,25 @@ prot_start:
     mov gs, ax
     mov ss, ax
 
-    ; Install emergency 32-bit IDT (256 vectors) so any early hardware fault
-    ; (#GP, #UD, #PF, IRQ) prints the exact vector number and halts!
-    mov edi, 0x00018000                ; IDT table at 0x18000
+    ; Install emergency 32-bit IDT (256 vectors)
+    mov edi, 0x00018000
     mov esi, isr_stub_table
-    mov ecx, 32                        ; First 32 CPU exceptions
+    mov ecx, 32
 
 .setup_idt_loop:
     mov edx, [esi]
     mov eax, edx
-    mov word [edi], ax                 ; Offset low (15..0)
-    mov word [edi + 2], 0x08           ; Selector (0x08 = code segment)
-    mov byte [edi + 4], 0              ; Reserved
-    mov byte [edi + 5], 0x8E           ; Present, Ring 0, 32-bit Interrupt Gate
+    mov word [edi], ax
+    mov word [edi + 2], 0x08
+    mov byte [edi + 4], 0
+    mov byte [edi + 5], 0x8E
     shr eax, 16
-    mov word [edi + 6], ax             ; Offset high (31..16)
+    mov word [edi + 6], ax
     add edi, 8
     add esi, 4
     dec ecx
     jnz .setup_idt_loop
 
-    ; Vectors 32..255: point to default handler (vector 0x20)
     mov ecx, 224
     mov edx, isr_stub_20
 .setup_irq_loop:
@@ -312,13 +284,10 @@ prot_start:
 
     lidt [idt_emergency_ptr]
 
-    ; Clean launch: set Multiboot 2 protocol registers
-    ; EAX = 0x36d76289 (Magic)
-    ; EBX = physical address of Multiboot 2 info structure (0x00010000)
+    ; Launch Multiboot 2:
     mov eax, 0x36d76289
     mov ebx, 0x00010000
 
-    ; Set initial stack pointer and save Multiboot pointer
     mov esp, 0x02050040
     mov dword [0x02050040], ebx
 
@@ -373,70 +342,208 @@ ISR_NOERR 30
 ISR_NOERR 31
 
 common_isr_handler:
-    ; Emergency Exception Catcher: display red 'FAULT: ' + hex vector on VGA
-    mov dword [0x000B80A0], 0x4F414F46 ; 'F', 'A' (white on red)
-    mov dword [0x000B80A4], 0x4F4C4F55 ; 'U', 'L'
-    mov dword [0x000B80A8], 0x4F3A4F54 ; 'T', ':'
-    mov dword [0x000B80AC], 0x4F204F20 ; ' ', ' '
+    ; Emergency Exception Diagnostic Screen (white text on red background)
+    ; Row 1: FAULT: XX  ERR: XXXXXXXX  EIP: XXXXXXXX  ESP: XXXXXXXX
+    mov edi, 0x000B80A0
 
-    ; Vector number is at [esp], err_code at [esp + 4], faulting EIP is at [esp + 8]
-    mov eax, [esp]
-    mov ebx, eax
-    shr eax, 4
+    ; "FAULT: "
+    mov dword [edi], 0x4F414F46       ; 'F', 'A'
+    mov dword [edi + 4], 0x4F4C4F55   ; 'U', 'L'
+    mov dword [edi + 8], 0x4F3A4F54   ; 'T', ':'
+    mov word [edi + 12], 0x4F20       ; ' '
+    add edi, 14
+
+    ; Hex vector (2 digits)
+    mov edx, [esp]
+    mov al, dl
+    shr al, 4
     and al, 0x0F
-    cmp al, 10
-    jb .dec1
-    add al, 'A' - 10
-    jmp .store1
-.dec1:
-    add al, '0'
-.store1:
-    mov byte [0x000B80AC], al
-    mov byte [0x000B80AD], 0x4F
-
-    mov eax, ebx
-    and al, 0x0F
-    cmp al, 10
-    jb .dec2
-    add al, 'A' - 10
-    jmp .store2
-.dec2:
-    add al, '0'
-.store2:
-    mov byte [0x000B80AE], al
-    mov byte [0x000B80AF], 0x4F
-
-    ; Print " EIP: " at 0x000B80B2
-    mov dword [0x000B80B2], 0x4F454F20 ; ' ', 'E'
-    mov dword [0x000B80B6], 0x4F504F49 ; 'I', 'P'
-    mov dword [0x000B80BA], 0x4F204F3A ; ':', ' '
-
-    ; Faulting EIP is at [esp + 8]
-    mov edx, [esp + 8]
-    mov edi, 0x000B80BE
-    mov ecx, 8                         ; 8 hex nibbles
-
-.print_eip_loop:
-    rol edx, 4
+    call hex_nibble_to_vga
     mov al, dl
     and al, 0x0F
-    cmp al, 10
-    jb .eip_dec
-    add al, 'A' - 10
-    jmp .eip_store
-.eip_dec:
-    add al, '0'
-.eip_store:
-    mov [edi], al
-    mov byte [edi + 1], 0x4F
+    call hex_nibble_to_vga
+
+    ; "  ERR: "
+    mov word [edi], 0x4F20
+    mov word [edi + 2], 0x4F20
+    mov dword [edi + 4], 0x4F524F45   ; 'E', 'R'
+    mov dword [edi + 8], 0x4F3A4F52   ; 'R', ':'
+    mov word [edi + 12], 0x4F20
+    add edi, 14
+    mov edx, [esp + 4]                 ; Error Code
+    call print_hex_dword
+
+    ; "  EIP: "
+    mov word [edi], 0x4F20
+    mov word [edi + 2], 0x4F20
+    mov dword [edi + 4], 0x4F494F45   ; 'E', 'I'
+    mov dword [edi + 8], 0x4F3A4F50   ; 'P', ':'
+    mov word [edi + 12], 0x4F20
+    add edi, 14
+    mov edx, [esp + 8]                 ; Fault EIP
+    call print_hex_dword
+
+    ; "  ESP: "
+    mov word [edi], 0x4F20
+    mov word [edi + 2], 0x4F20
+    mov dword [edi + 4], 0x4F534F45   ; 'E', 'S'
+    mov dword [edi + 8], 0x4F3A4F50   ; 'P', ':'
+    mov word [edi + 12], 0x4F20
+    add edi, 14
+    lea edx, [esp + 20]                ; Fault ESP
+    call print_hex_dword
+
+    ; Row 2 (0x000B8140): CS: XXXX  EFL: XXXXXXXX  CR0: XXXXXXXX
+    mov edi, 0x000B8140
+
+    ; "CS: "
+    mov dword [edi], 0x4F534F43       ; 'C', 'S'
+    mov dword [edi + 4], 0x4F204F3A   ; ':', ' '
+    add edi, 8
+    mov edx, [esp + 12]                ; CS
+    call print_hex_dword
+
+    ; "  EFL: "
+    mov word [edi], 0x4F20
+    mov word [edi + 2], 0x4F20
+    mov dword [edi + 4], 0x4F464F45   ; 'E', 'F'
+    mov dword [edi + 8], 0x4F3A4F4C   ; 'L', ':'
+    mov word [edi + 12], 0x4F20
+    add edi, 14
+    mov edx, [esp + 16]                ; EFLAGS
+    call print_hex_dword
+
+    ; "  CR0: "
+    mov word [edi], 0x4F20
+    mov word [edi + 2], 0x4F20
+    mov dword [edi + 4], 0x4F524F43   ; 'C', 'R'
+    mov dword [edi + 8], 0x4F3A4F30   ; '0', ':'
+    mov word [edi + 12], 0x4F20
+    add edi, 14
+    mov edx, cr0
+    call print_hex_dword
+
+    ; Row 3 (0x000B81E0): STK: [esp+20] [esp+24] [esp+28] [esp+32]
+    mov edi, 0x000B81E0
+    mov dword [edi], 0x4F544F53       ; 'S', 'T'
+    mov dword [edi + 4], 0x4F204F4B   ; 'K', ' '
+    add edi, 8
+
+    mov ebp, 0
+.next_stk_dword:
+    mov edx, [esp + 20 + ebp*4]
+    call print_hex_dword
+    mov word [edi], 0x4F20
     add edi, 2
-    dec ecx
-    jnz .print_eip_loop
+    inc ebp
+    cmp ebp, 4
+    jb .next_stk_dword
+
+    ; Row 4 (0x000B8280): CODE: [EIP-4] [EIP] [EIP+4] [EIP+8]
+    mov edi, 0x000B8280
+    mov dword [edi], 0x4F4F4F43       ; 'C', 'O'
+    mov dword [edi + 4], 0x4F454F44   ; 'D', 'E'
+    mov dword [edi + 8], 0x4F204F3A   ; ':', ' '
+    add edi, 12
+
+    mov esi, [esp + 8]                 ; Fault EIP
+    sub esi, 4
+    mov ebp, 0
+.next_code_dword:
+    mov edx, [esi + ebp*4]
+    call print_hex_dword
+    mov word [edi], 0x4F20
+    add edi, 2
+    inc ebp
+    cmp ebp, 4
+    jb .next_code_dword
+
+    ; Row 5 (0x000B8320): STK+: [esp+36] [esp+40] [esp+44] [esp+48]
+    mov edi, 0x000B8320
+    mov dword [edi], 0x4F544F53       ; 'S', 'T'
+    mov dword [edi + 4], 0x4F2B4F4B   ; 'K', '+'
+    add edi, 8
+    mov ebp, 4
+.next_stk_dword2:
+    mov edx, [esp + 20 + ebp*4]
+    call print_hex_dword
+    mov word [edi], 0x4F20
+    add edi, 2
+    inc ebp
+    cmp ebp, 8
+    jb .next_stk_dword2
+
+    ; Row 6 (0x000B83C0): STK2: [esp+52] [esp+56] [esp+60] [esp+64]
+    mov edi, 0x000B83C0
+    mov dword [edi], 0x4F544F53       ; 'S', 'T'
+    mov dword [edi + 4], 0x4F324F4B   ; 'K', '2'
+    add edi, 8
+    mov ebp, 8
+.next_stk_dword3:
+    mov edx, [esp + 20 + ebp*4]
+    call print_hex_dword
+    mov word [edi], 0x4F20
+    add edi, 2
+    inc ebp
+    cmp ebp, 12
+    jb .next_stk_dword3
+
+    ; Row 7 (0x000B8460): LAST: [0x02058e5b]
+    mov edi, 0x000B8460
+    mov dword [edi], 0x4F414F4C       ; 'L', 'A'
+    mov dword [edi + 4], 0x4F544F53   ; 'S', 'T'
+    mov word [edi + 8], 0x4F3A        ; ':'
+    mov word [edi + 10], 0x4F20       ; ' '
+    add edi, 12
+    mov edx, [0x02058e5b]
+    call print_hex_dword
+
+    ; Row 8 (0x000B8500): RAM: [0x02770000] [0x02770004] [0x02770008] [0x0277000C]
+    mov edi, 0x000B8500
+    mov dword [edi], 0x4F414F52       ; 'R', 'A'
+    mov dword [edi + 4], 0x4F3A4F4D   ; 'M', ':'
+    mov word [edi + 8], 0x4F20        ; ' '
+    add edi, 10
+    mov ebp, 0
+.next_ram_dword:
+    mov edx, [0x02770000 + ebp*4]
+    call print_hex_dword
+    mov word [edi], 0x4F20
+    add edi, 2
+    inc ebp
+    cmp ebp, 4
+    jb .next_ram_dword
 
 .hang_fault:
     cli
     hlt
     jmp .hang_fault
+
+print_hex_dword:
+    push ecx
+    mov ecx, 8
+.phd_loop:
+    rol edx, 4
+    mov al, dl
+    and al, 0x0F
+    call hex_nibble_to_vga
+    dec ecx
+    jnz .phd_loop
+    pop ecx
+    ret
+
+hex_nibble_to_vga:
+    cmp al, 10
+    jb .h_dec
+    add al, 'A' - 10
+    jmp .h_put
+.h_dec:
+    add al, '0'
+.h_put:
+    mov [edi], al
+    mov byte [edi + 1], 0x4F
+    add edi, 2
+    ret
 
 [BITS 16]
 disk_fail:
@@ -458,24 +565,18 @@ print_str:
 .done:
     ret
 
-print_char:
-    mov ah, 0x0E
-    mov bx, 0x0007
-    int 0x10
-    ret
-
 ; Standard, Safe A20 gate enable (BIOS -> Fast A20)
 enable_a20:
     call check_a20
     jnz .done                      ; ZF=0 means already enabled!
 
-    ; 1. Try BIOS INT 15h AX=2401h (Standard on 100% of x86 BIOSes since 1995)
+    ; 1. Try BIOS INT 15h AX=2401h
     mov ax, 0x2401
     int 0x15
     call check_a20
     jnz .done
 
-    ; 2. Try Fast A20 (port 0x92) - carefully preserving all non-A20 bits
+    ; 2. Try Fast A20 (port 0x92)
     in al, 0x92
     test al, 0x02
     jnz .done                      ; Already enabled
@@ -533,23 +634,21 @@ check_a20:
     xor ax, ax                    ; Set ZF = 1 (disabled)
     ret
 
-msg_booting db 13, 10, 'WeatherOS Boot Manager v3.1 (x86 32-bit)', 13, 10, 0
-msg_loading db 'Loading WeatherOS Kernel into RAM... ', 0
+msg_banner db 'WeatherOS Boot Manager v3.1 (x86 32-bit)', 13, 10, 0
+msg_loading db 'Loading WeatherOS Kernel into physical RAM... ', 0
 msg_ok db ' [OK]', 13, 10, 0
-msg_jumping db 'Starting WeatherOS Kernel...', 13, 10, 0
-msg_err db 13, 10, 'WeatherOS Boot Error: Failed to read kernel from storage.', 13, 10, 0
+msg_starting db 'Starting WeatherOS Monolithic Kernel...', 13, 10, 0
+msg_err db 13, 10, 'WeatherOS Boot Error: Storage read failure.', 13, 10, 0
 
 boot_drive db 0
 cur_lba dd 64
 dest_phys dd 0x02000000
 chunk_count dw 0
 chunk_index dw 0
-mb_counter db 0
-save_cnt db 0
 
 ; Patchable variables (updated by make_isohybrid.py)
-rem_sectors dd 16404
-entry_point dd 0x240fc9a
+rem_sectors dd 16413
+entry_point dd 0x24103a6
 
 align 4
 dap_read:
@@ -559,15 +658,16 @@ dap_count dw 0
 dap_lba dq 0
 
 align 8
+; GDT for Protected Mode and High Memory Block Transfers
 gdt_prot:
     dq 0x0000000000000000     ; 0x00: Null descriptor
-    dq 0x00CF9A000000FFFF     ; 0x08: 32-bit Code (4GB, base 0, RX, 32-bit)
-    dq 0x00CF92000000FFFF     ; 0x10: 32-bit Data (4GB, base 0, RW, 32-bit)
-    dq 0x00009A000000FFFF     ; 0x18: 16-bit Code (64KB, base 0, RX, 16-bit)
-    dq 0x000092000000FFFF     ; 0x20: 16-bit Data (64KB, base 0, RW, 16-bit)
+    dq 0x00CF9A000000FFFF     ; 0x08: 32-bit Code (Base 0, Limit 4GB, RX, 32-bit)
+    dq 0x00CF92000000FFFF     ; 0x10: 32-bit Data (Base 0, Limit 4GB, RW, 32-bit)
+    dq 0x00009A000000FFFF     ; 0x18: 16-bit Code (Base 0, Limit 64KB, RX, 16-bit)
+    dq 0x000092000000FFFF     ; 0x20: 16-bit Data (Base 0, Limit 64KB, RW, 16-bit)
 
 gdt_prot_ptr:
-    dw 39
+    dw 39                     ; (5 * 8) - 1 = 39
     dd gdt_prot
 
 align 8

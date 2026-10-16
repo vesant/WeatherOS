@@ -20,6 +20,16 @@ namespace WeatherOS
         private Cosmos.System.FileSystem.CosmosVFS _vfs;
         public static Cosmos.HAL.Network.RTL8102E CustomNIC;
 
+        protected override Cosmos.HAL.TextScreenBase GetTextScreen()
+        {
+            return new Cosmos.HAL.TextScreen();
+        }
+
+        protected override void OnBoot()
+        {
+            Cosmos.System.Global.Init(new Cosmos.HAL.TextScreen(), false, true, false, false);
+        }
+
         protected override void BeforeRun()
         {
             try

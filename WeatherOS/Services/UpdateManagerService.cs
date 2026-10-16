@@ -301,12 +301,27 @@ namespace WeatherOS.Services
                 }
                 dev.WriteBlock(1, 8, ref bootMgrBlock);
 
-                // 4. Zero-fill Sectors 9..63 (Reserved area)
+                // 4. Zero-fill Sectors 9..63 (Reserved area) and wipe any GPT remnants
                 byte[] zeroSector = new byte[512];
                 for (ulong s = 9; s < 64; s++)
                 {
                     dev.WriteBlock(s, 1, ref zeroSector);
                 }
+
+                // Eradicate any Backup GPT tables at the end of the disk (GParted remnants that confuse BIOS)
+                try
+                {
+                    ulong totalSec = targetDrive.SectorCount;
+                    if (totalSec > 100)
+                    {
+                        ulong startGptBackup = totalSec > 34 ? totalSec - 34 : 0;
+                        for (ulong s = startGptBackup; s < totalSec; s++)
+                        {
+                            dev.WriteBlock(s, 1, ref zeroSector);
+                        }
+                    }
+                }
+                catch { }
 
                 // 5. Deploy WeatherOS 32-bit Monolithic Kernel to Sectors 64..
                 progressCallback?.Invoke("Deploying WeatherOS 32-bit Kernel to hard disk...", 15);

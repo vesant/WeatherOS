@@ -7,22 +7,19 @@ def build_native_bootable_image():
     script_dir = os.path.dirname(os.path.abspath(__file__))
     root_dir = os.path.abspath(os.path.join(script_dir, ".."))
 
-    # 1. Locate WeatherOS.bin
+    # 1. Locate WeatherOS.bin (always select the newest compiled binary)
     bin_candidates = [
-        os.path.join(script_dir, "WeatherOS", "bin", "Debug", "net6.0", "WeatherOS.bin"),
         os.path.join(script_dir, "WeatherOS", "bin", "cosmos", "Debug", "net6.0", "WeatherOS.bin"),
-        os.path.join(script_dir, "bin", "Debug", "net6.0", "WeatherOS.bin"),
+        os.path.join(script_dir, "WeatherOS", "bin", "Debug", "net6.0", "WeatherOS.bin"),
         os.path.join(script_dir, "bin", "cosmos", "Debug", "net6.0", "WeatherOS.bin"),
+        os.path.join(script_dir, "bin", "Debug", "net6.0", "WeatherOS.bin"),
     ]
-    kernel_bin_path = None
-    for c in bin_candidates:
-        if os.path.exists(c):
-            kernel_bin_path = c
-            break
-
-    if not kernel_bin_path:
+    existing_candidates = [c for c in bin_candidates if os.path.exists(c)]
+    if not existing_candidates:
         print("Error: Could not locate WeatherOS.bin!")
         return False
+    existing_candidates.sort(key=lambda x: os.path.getmtime(x), reverse=True)
+    kernel_bin_path = existing_candidates[0]
 
     print(f"Reading kernel from: {kernel_bin_path}")
     with open(kernel_bin_path, "rb") as f:
@@ -117,7 +114,7 @@ def build_native_bootable_image():
     # In Cosmos, Heap.Alloc calls CPU.EnableInterrupts() before UpdateIDT has run,
     # enabling interrupts while IDTR is still 0 and PIC is uninitialized,
     # causing a fatal Triple Fault when PIC.Remap writes 0x11 to port 0xA0.
-    do_enable_int_pattern = bytes.fromhex("5589e5fbc705fd8d0502")
+    do_enable_int_pattern = bytes.fromhex("5589e5fbc705")
     pos = kernel_segment.find(do_enable_int_pattern)
     if pos != -1:
         kernel_segment[pos + 3] = 0x90 # Replace 'sti' (0xFB) with 'nop' (0x90)
@@ -165,12 +162,12 @@ def build_native_bootable_image():
         idx = kernel_segment.find(delegate_pattern, search_pos)
         if idx == -1:
             break
-        # Check if within next 8 bytes there is an STI followed by INTs_LastKnownAddress write
+        # Check if within next 12 bytes there is an STI followed by c7 05 (INTs_LastKnownAddress write)
         check_window = kernel_segment[idx : idx + 20]
         sti_offset = -1
         for j in range(2, min(10, len(check_window))):
-            if check_window[j] == 0xFB and j + 7 <= len(check_window):
-                if check_window[j+1:j+7] == bytes.fromhex("c705fd8d0502"):
+            if check_window[j] == 0xFB and j + 3 <= len(check_window):
+                if check_window[j+1:j+3] == b"\xc7\x05":
                     sti_offset = idx + j
                     break
         if sti_offset != -1:
