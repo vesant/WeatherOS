@@ -110,17 +110,8 @@ def build_native_bootable_image():
 
     # Apply x86 Bare-Metal Hardware Compatibility Patches:
 
-    # Patch A: Premature STI in DoEnableInterrupts
-    # In Cosmos, Heap.Alloc calls CPU.EnableInterrupts() before UpdateIDT has run,
-    # enabling interrupts while IDTR is still 0 and PIC is uninitialized,
-    # causing a fatal Triple Fault when PIC.Remap writes 0x11 to port 0xA0.
-    do_enable_int_pattern = bytes.fromhex("5589e5fbc705")
-    pos = kernel_segment.find(do_enable_int_pattern)
-    if pos != -1:
-        kernel_segment[pos + 3] = 0x90 # Replace 'sti' (0xFB) with 'nop' (0x90)
-        print(f"Patched premature STI in DoEnableInterrupts at segment offset {hex(pos)}!")
-    else:
-        print("Warning: DoEnableInterrupts pattern not found in kernel segment!")
+    # Note: DoEnableInterrupts is preserved so Cosmos.Core.CPU.EnableInterrupts() works
+    # for hardware keyboard interrupts (IRQ 1).
 
     # Patch B: Destructive CR0 ET clobber in InitSSE
     # In Cosmos.Core_Asm.CPUImpl.InitSSE:

@@ -22,39 +22,103 @@ namespace WeatherOS.Graphics
             BootMode chosenMode = isInstalled ? BootMode.BootFromDisk : BootMode.LiveOS;
 
             System.Console.CursorVisible = false;
+            try { Cosmos.Core.CPU.EnableInterrupts(); } catch { }
+
+            int countdownSeconds = 10; // 10 seconds auto-boot countdown
+            int lastRtcSecond = -1;
+            try { lastRtcSecond = Cosmos.HAL.RTC.Second; } catch { }
+            int loopCounter = 0;
+
+            bool needsRedraw = true;
+            int lastCountdown = -1;
+            int lastSelected = -1;
 
             while (menuRunning)
             {
-                DrawMenu(selectedIndex, isInstalled);
+                if (needsRedraw || lastCountdown != countdownSeconds || lastSelected != selectedIndex)
+                {
+                    DrawMenu(selectedIndex, isInstalled, countdownSeconds);
+                    lastCountdown = countdownSeconds;
+                    lastSelected = selectedIndex;
+                    needsRedraw = false;
+                }
 
-                var keyEvent = KeyboardManager.ReadKey();
+                // Poll for keypress (checks both Cosmos queue and direct 8042 PS/2 hardware ports 0x60/0x64)
+                for (int p = 0; p < 5; p++)
+                {
+                    if (CheckHardwareKey(out var key, out var ch))
+                    {
+                        countdownSeconds = 9999; // Cancel auto-countdown once user touches keyboard
 
-                if (keyEvent.Key == ConsoleKeyEx.UpArrow)
-                {
-                    selectedIndex = (selectedIndex > 0) ? selectedIndex - 1 : maxOptions - 1;
+                        if (key == ConsoleKeyEx.UpArrow)
+                        {
+                            selectedIndex = (selectedIndex > 0) ? selectedIndex - 1 : maxOptions - 1;
+                            needsRedraw = true;
+                        }
+                        else if (key == ConsoleKeyEx.DownArrow || key == ConsoleKeyEx.Tab)
+                        {
+                            selectedIndex = (selectedIndex < maxOptions - 1) ? selectedIndex + 1 : 0;
+                            needsRedraw = true;
+                        }
+                        else if (key == ConsoleKeyEx.D1 || key == ConsoleKeyEx.Num1 || ch == '1')
+                        {
+                            selectedIndex = 0;
+                            menuRunning = false;
+                            break;
+                        }
+                        else if (key == ConsoleKeyEx.D2 || key == ConsoleKeyEx.Num2 || ch == '2')
+                        {
+                            selectedIndex = 1;
+                            menuRunning = false;
+                            break;
+                        }
+                        else if (isInstalled && (key == ConsoleKeyEx.D3 || key == ConsoleKeyEx.Num3 || ch == '3'))
+                        {
+                            selectedIndex = 2;
+                            menuRunning = false;
+                            break;
+                        }
+                        else if (key == ConsoleKeyEx.Enter || ch == '\r' || ch == '\n' || key == ConsoleKeyEx.Spacebar)
+                        {
+                            menuRunning = false;
+                            break;
+                        }
+                    }
+
+                    HardwareDelayMs(20);
+                    loopCounter++;
                 }
-                else if (keyEvent.Key == ConsoleKeyEx.DownArrow || keyEvent.Key == ConsoleKeyEx.Tab)
+
+                // Update countdown timer using CMOS RTC and loop ticks
+                if (countdownSeconds <= 999)
                 {
-                    selectedIndex = (selectedIndex < maxOptions - 1) ? selectedIndex + 1 : 0;
-                }
-                else if (keyEvent.Key == ConsoleKeyEx.D1 || keyEvent.Key == ConsoleKeyEx.Num1 || keyEvent.KeyChar == '1')
-                {
-                    selectedIndex = 0;
-                    menuRunning = false;
-                }
-                else if (keyEvent.Key == ConsoleKeyEx.D2 || keyEvent.Key == ConsoleKeyEx.Num2 || keyEvent.KeyChar == '2')
-                {
-                    selectedIndex = 1;
-                    menuRunning = false;
-                }
-                else if (isInstalled && (keyEvent.Key == ConsoleKeyEx.D3 || keyEvent.Key == ConsoleKeyEx.Num3 || keyEvent.KeyChar == '3'))
-                {
-                    selectedIndex = 2;
-                    menuRunning = false;
-                }
-                else if (keyEvent.Key == ConsoleKeyEx.Enter)
-                {
-                    menuRunning = false;
+                    bool secondElapsed = false;
+                    try
+                    {
+                        int currentRtcSecond = Cosmos.HAL.RTC.Second;
+                        if (currentRtcSecond != lastRtcSecond)
+                        {
+                            lastRtcSecond = currentRtcSecond;
+                            secondElapsed = true;
+                        }
+                    }
+                    catch { }
+
+                    // Backup timing: 10 loops of 5 x 20ms = ~1000ms
+                    if (!secondElapsed && loopCounter >= 10)
+                    {
+                        secondElapsed = true;
+                    }
+
+                    if (secondElapsed)
+                    {
+                        loopCounter = 0;
+                        countdownSeconds--;
+                        if (countdownSeconds <= 0)
+                        {
+                            menuRunning = false; // Auto-boot default selection
+                        }
+                    }
                 }
             }
 
@@ -93,7 +157,7 @@ namespace WeatherOS.Graphics
             return chosenMode;
         }
 
-        private static void DrawMenu(int selectedIndex, bool isInstalled)
+        private static void DrawMenu(int selectedIndex, bool isInstalled, int countdownSeconds)
         {
             System.Console.BackgroundColor = ConsoleColor.Black;
             System.Console.Clear();
@@ -193,7 +257,20 @@ namespace WeatherOS.Graphics
             if (insX < 0) insX = 0;
             Screen.WriteClipped(insX, 22, instruct, Screen.Width - insX, ConsoleColor.Yellow, ConsoleColor.Black);
 
-            // 6. Bottom Status Bar (Row 24)
+            // 6. Auto-boot countdown line (Row 23)
+            if (countdownSeconds <= 999)
+            {
+                string countText = $"Auto-booting default selection in {countdownSeconds}s... (Press any key to pause)";
+                int countX = (Screen.Width - countText.Length) / 2;
+                if (countX < 0) countX = 0;
+                Screen.WriteClipped(countX, 23, countText, Screen.Width - countX, ConsoleColor.White, ConsoleColor.Black);
+            }
+            else
+            {
+                Screen.WriteClipped(0, 23, new string(' ', Screen.Width - 1), Screen.Width - 1, ConsoleColor.Black, ConsoleColor.Black);
+            }
+
+            // 7. Bottom Status Bar (Row 24)
             string btm = isInstalled
                 ? " WeatherOS Kernel 3.1  |  Default: Hard Disk (0:\\)  |  Status: INSTALLED "
                 : " WeatherOS Kernel 3.1  |  Default: Live OS (RAM)   |  Status: LIVE SESSION ";
@@ -212,6 +289,76 @@ namespace WeatherOS.Graphics
             {
                 string line = "   " + text;
                 Screen.WriteInsideWindow(winLeft, winWidth, y, 1, line, ConsoleColor.White, ConsoleColor.Black, true);
+            }
+        }
+
+        private static bool CheckHardwareKey(out ConsoleKeyEx key, out char keyChar)
+        {
+            key = ConsoleKeyEx.NoName;
+            keyChar = '\0';
+
+            // 1. Cosmos KeyboardManager FIFO queue
+            try
+            {
+                if (KeyboardManager.TryReadKey(out var keyEvent))
+                {
+                    key = keyEvent.Key;
+                    keyChar = keyEvent.KeyChar;
+                    return true;
+                }
+            }
+            catch { }
+
+            // 2. Direct 8042 PS/2 Hardware Port Polling (Ports 0x64 Status, 0x60 Data)
+            // Toshiba NB100 laptop built-in keyboard sends scancodes directly to port 0x60
+            try
+            {
+                var pStatus = new Cosmos.Core.IOPort(0x64);
+                byte status = pStatus.Byte;
+                // Bit 0: Output buffer full (data ready)
+                if ((status & 0x01) != 0)
+                {
+                    var pData = new Cosmos.Core.IOPort(0x60);
+                    byte scancode = pData.Byte;
+                    // Bit 5: If set, data came from PS/2 mouse/touchpad - ignore to prevent jitter
+                    if ((status & 0x20) == 0)
+                    {
+                        // Check for key-down (bit 7 clear)
+                        if ((scancode & 0x80) == 0)
+                        {
+                            if (scancode == 0x02) { key = ConsoleKeyEx.D1; keyChar = '1'; return true; }
+                            if (scancode == 0x03) { key = ConsoleKeyEx.D2; keyChar = '2'; return true; }
+                            if (scancode == 0x04) { key = ConsoleKeyEx.D3; keyChar = '3'; return true; }
+                            if (scancode == 0x1C) { key = ConsoleKeyEx.Enter; keyChar = '\r'; return true; }
+                            if (scancode == 0x48) { key = ConsoleKeyEx.UpArrow; return true; }
+                            if (scancode == 0x50) { key = ConsoleKeyEx.DownArrow; return true; }
+                            if (scancode == 0x0F) { key = ConsoleKeyEx.Tab; return true; }
+                            if (scancode == 0x39) { key = ConsoleKeyEx.Spacebar; keyChar = ' '; return true; }
+                            if (scancode == 0x01) { key = ConsoleKeyEx.Escape; return true; }
+                        }
+                    }
+                }
+            }
+            catch { }
+
+            return false;
+        }
+
+        private static void HardwareDelayMs(int ms)
+        {
+            if (ms <= 0) return;
+            try
+            {
+                var port = new Cosmos.Core.IOPort(0x80);
+                int count = ms * 50;
+                for (int i = 0; i < count; i++)
+                {
+                    port.Byte = 0;
+                }
+            }
+            catch
+            {
+                for (int i = 0; i < ms * 10000; i++) { }
             }
         }
     }
