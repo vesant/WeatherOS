@@ -111,6 +111,16 @@ sig_pos = stage2_bytes.find(b"INST")
 if sig_pos != -1:
     flag_offset = sig_pos + 4
 
+rsec_offset = 0
+rsec_pos = stage2_bytes.find(b"RSEC")
+if rsec_pos != -1:
+    rsec_offset = rsec_pos + 4
+
+ep_offset = 0
+ep_pos = stage2_bytes.find(b"EPNT")
+if ep_pos != -1:
+    ep_offset = ep_pos + 4
+
 if len(stage2_bytes) < 4096:
     stage2_bytes.extend(b'\x00' * (4096 - len(stage2_bytes)))
 stage2_bytes = stage2_bytes[:4096]
@@ -144,6 +154,8 @@ namespace WeatherOS.Services
         public const uint CctorVmtOffset = {hex(cctor_vmt_offset)};
         public const uint Mb2InitOffset = {hex(mb2_init_offset)};
         public const uint Stage2InstalledFlagOffset = {hex(flag_offset)};
+        public const uint Stage2RemSectorsOffset = {hex(rsec_offset)};
+        public const uint Stage2EntryPointOffset = {hex(ep_offset)};
 
 {cs_mbr}
 

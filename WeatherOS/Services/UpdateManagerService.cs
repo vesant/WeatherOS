@@ -309,22 +309,65 @@ namespace WeatherOS.Services
                 }
 
                 // Patch Stage2 payload with the dynamically verified entryPoint before writing to disk
+                // Patch Stage2 payload with the dynamically verified entryPoint and sector count
                 if (NativeBootloaderPayload.Stage2 != null)
                 {
-                    for (int p = 2000; p < NativeBootloaderPayload.Stage2.Length - 4; p++)
+                    int epOffset = -1;
+                    if (NativeBootloaderPayload.Stage2EntryPointOffset > 0 &&
+                        NativeBootloaderPayload.Stage2EntryPointOffset + 4 <= (uint)NativeBootloaderPayload.Stage2.Length)
                     {
-                        uint candidate = (uint)(NativeBootloaderPayload.Stage2[p] |
-                                               (NativeBootloaderPayload.Stage2[p + 1] << 8) |
-                                               (NativeBootloaderPayload.Stage2[p + 2] << 16) |
-                                               (NativeBootloaderPayload.Stage2[p + 3] << 24));
-                        if (candidate >= 0x02400000u && candidate <= 0x02600000u)
+                        epOffset = (int)NativeBootloaderPayload.Stage2EntryPointOffset;
+                    }
+                    else
+                    {
+                        for (int p = 0; p < NativeBootloaderPayload.Stage2.Length - 8; p++)
                         {
-                            NativeBootloaderPayload.Stage2[p] = (byte)(entryPoint & 0xFF);
-                            NativeBootloaderPayload.Stage2[p + 1] = (byte)((entryPoint >> 8) & 0xFF);
-                            NativeBootloaderPayload.Stage2[p + 2] = (byte)((entryPoint >> 16) & 0xFF);
-                            NativeBootloaderPayload.Stage2[p + 3] = (byte)((entryPoint >> 24) & 0xFF);
-                            break;
+                            if (NativeBootloaderPayload.Stage2[p] == (byte)'E' &&
+                                NativeBootloaderPayload.Stage2[p + 1] == (byte)'P' &&
+                                NativeBootloaderPayload.Stage2[p + 2] == (byte)'N' &&
+                                NativeBootloaderPayload.Stage2[p + 3] == (byte)'T')
+                            {
+                                epOffset = p + 4;
+                                break;
+                            }
                         }
+                    }
+
+                    if (epOffset != -1)
+                    {
+                        NativeBootloaderPayload.Stage2[epOffset] = (byte)(entryPoint & 0xFF);
+                        NativeBootloaderPayload.Stage2[epOffset + 1] = (byte)((entryPoint >> 8) & 0xFF);
+                        NativeBootloaderPayload.Stage2[epOffset + 2] = (byte)((entryPoint >> 16) & 0xFF);
+                        NativeBootloaderPayload.Stage2[epOffset + 3] = (byte)((entryPoint >> 24) & 0xFF);
+                    }
+
+                    int rsecOffset = -1;
+                    if (NativeBootloaderPayload.Stage2RemSectorsOffset > 0 &&
+                        NativeBootloaderPayload.Stage2RemSectorsOffset + 4 <= (uint)NativeBootloaderPayload.Stage2.Length)
+                    {
+                        rsecOffset = (int)NativeBootloaderPayload.Stage2RemSectorsOffset;
+                    }
+                    else
+                    {
+                        for (int p = 0; p < NativeBootloaderPayload.Stage2.Length - 8; p++)
+                        {
+                            if (NativeBootloaderPayload.Stage2[p] == (byte)'R' &&
+                                NativeBootloaderPayload.Stage2[p + 1] == (byte)'S' &&
+                                NativeBootloaderPayload.Stage2[p + 2] == (byte)'E' &&
+                                NativeBootloaderPayload.Stage2[p + 3] == (byte)'C')
+                            {
+                                rsecOffset = p + 4;
+                                break;
+                            }
+                        }
+                    }
+
+                    if (rsecOffset != -1 && kernelSectors > 0)
+                    {
+                        NativeBootloaderPayload.Stage2[rsecOffset] = (byte)(kernelSectors & 0xFF);
+                        NativeBootloaderPayload.Stage2[rsecOffset + 1] = (byte)((kernelSectors >> 8) & 0xFF);
+                        NativeBootloaderPayload.Stage2[rsecOffset + 2] = (byte)((kernelSectors >> 16) & 0xFF);
+                        NativeBootloaderPayload.Stage2[rsecOffset + 3] = (byte)((kernelSectors >> 24) & 0xFF);
                     }
                 }
 
@@ -362,6 +405,22 @@ namespace WeatherOS.Services
                     NativeBootloaderPayload.Stage2InstalledFlagOffset < (uint)bootMgrBlock.Length)
                 {
                     bootMgrBlock[NativeBootloaderPayload.Stage2InstalledFlagOffset] = 1;
+                }
+                if (NativeBootloaderPayload.Stage2EntryPointOffset > 0 &&
+                    NativeBootloaderPayload.Stage2EntryPointOffset + 4 <= (uint)bootMgrBlock.Length)
+                {
+                    bootMgrBlock[NativeBootloaderPayload.Stage2EntryPointOffset] = (byte)(entryPoint & 0xFF);
+                    bootMgrBlock[NativeBootloaderPayload.Stage2EntryPointOffset + 1] = (byte)((entryPoint >> 8) & 0xFF);
+                    bootMgrBlock[NativeBootloaderPayload.Stage2EntryPointOffset + 2] = (byte)((entryPoint >> 16) & 0xFF);
+                    bootMgrBlock[NativeBootloaderPayload.Stage2EntryPointOffset + 3] = (byte)((entryPoint >> 24) & 0xFF);
+                }
+                if (NativeBootloaderPayload.Stage2RemSectorsOffset > 0 &&
+                    NativeBootloaderPayload.Stage2RemSectorsOffset + 4 <= (uint)bootMgrBlock.Length && kernelSectors > 0)
+                {
+                    bootMgrBlock[NativeBootloaderPayload.Stage2RemSectorsOffset] = (byte)(kernelSectors & 0xFF);
+                    bootMgrBlock[NativeBootloaderPayload.Stage2RemSectorsOffset + 1] = (byte)((kernelSectors >> 8) & 0xFF);
+                    bootMgrBlock[NativeBootloaderPayload.Stage2RemSectorsOffset + 2] = (byte)((kernelSectors >> 16) & 0xFF);
+                    bootMgrBlock[NativeBootloaderPayload.Stage2RemSectorsOffset + 3] = (byte)((kernelSectors >> 24) & 0xFF);
                 }
                 dev.WriteBlock(1, 8, ref bootMgrBlock);
 
