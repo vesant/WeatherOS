@@ -333,6 +333,12 @@ prot_start:
     cld
     rep stosd
 
+    ; Pass installed boot flag to WeatherOS in low RAM (0x00007DF0)
+    mov al, [is_installed_hdd]
+    mov [0x00007DF0], al
+    mov al, [boot_drive]
+    mov [0x00007DF1], al
+
     ; Restore Multiboot 2 magic register contract
     mov eax, 0x36d76289
     mov ebx, 0x00010000
@@ -806,14 +812,17 @@ msg_starting db 'Starting WeatherOS Monolithic Kernel...', 13, 10, 0
 msg_err db 13, 10, 'WeatherOS Boot Error: Storage read failure.', 13, 10, 0
 
 boot_drive db 0
+align 4
+hdd_flag_sig db "INST"
+is_installed_hdd db 0
 cur_lba dd 64
 dest_phys dd 0x02000000
 chunk_count dw 0
 chunk_index dw 0
 
 ; Patchable variables (updated by make_isohybrid.py)
-rem_sectors dd 16455
-entry_point dd 0x2410c20
+rem_sectors dd 16459
+entry_point dd 0x2410cc0
 
 align 4
 dap_read:

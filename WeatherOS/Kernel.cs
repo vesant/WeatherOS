@@ -104,10 +104,15 @@ namespace WeatherOS
             InitializeCommandManager();
 
             // Initial Boot Screen: Select between Live RAM Mode and Hard Disk Installer
-            var bootChoice = Graphics.BootMenu.Show();
-            if (bootChoice == Graphics.BootMode.InstallToDisk)
+            // ONLY shown in Live USB / uninstalled mode.
+            // When booting from an installed hard drive, WeatherOS boots directly into the desktop without prompts!
+            if (!UpdateManagerService.IsInstalledOnDisk())
             {
-                _tuiDesktop.StartApp("installer");
+                var bootChoice = Graphics.BootMenu.Show();
+                if (bootChoice == Graphics.BootMode.InstallToDisk)
+                {
+                    _tuiDesktop.StartApp("installer");
+                }
             }
 
             if (_isNetworkConfigured)

@@ -97,6 +97,11 @@ if 'rem_sectors' in locals() and rem_sectors:
 with open(stage2_bin, "rb") as f:
     stage2_bytes = bytearray(f.read())
 
+flag_offset = 0
+sig_pos = stage2_bytes.find(b"INST")
+if sig_pos != -1:
+    flag_offset = sig_pos + 4
+
 if len(stage2_bytes) < 4096:
     stage2_bytes.extend(b'\x00' * (4096 - len(stage2_bytes)))
 stage2_bytes = stage2_bytes[:4096]
@@ -126,6 +131,7 @@ namespace WeatherOS.Services
         public const uint StartedMemoryManagerOffset = {hex(smm_offset)};
         public const uint RatOffset = {hex(rat_offset)};
         public const uint HeapSmallSmtOffset = {hex(smt_offset)};
+        public const uint Stage2InstalledFlagOffset = {hex(flag_offset)};
 
 {cs_mbr}
 

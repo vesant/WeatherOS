@@ -66,22 +66,17 @@ namespace WeatherOS.Services
         {
             if (_forceInstalledFlag) return true;
 
-            // 1. Check via Cosmos VFS: An installed WeatherOS system ALWAYS has 0:\system\version.ini.
-            // Notice: We strictly do NOT check 0:\boot\WeatherOS.bin because that file exists on the Live USB / ISO medium itself!
-            try
+            // 1. Check Boot Manager flag at physical RAM 0x00007DF0 (passed directly by Stage 2 loader on boot)
+            unsafe
             {
-                if (File.Exists("0:\\system\\version.ini"))
+                byte* pBootFlag = (byte*)0x00007DF0u;
+                if (*pBootFlag == 0x01)
                 {
-                    string txt = File.ReadAllText("0:\\system\\version.ini");
-                    if (!string.IsNullOrEmpty(txt) && (txt.Contains("Status=Installed") || txt.Contains("Status=Updated")))
-                    {
-                        return true;
-                    }
+                    return true;
                 }
             }
-            catch { }
 
-            // 2. Check via direct FAT32 inspection on physical fixed drives (skipping Live USB boot medium)
+            // 2. Check physical storage devices for WeatherOS Installation Marker Sector at LBA 9
             try
             {
                 var physDrives = DiskWipeService.GetPhysicalDrives();
@@ -90,21 +85,40 @@ namespace WeatherOS.Services
                     for (int i = 0; i < physDrives.Count; i++)
                     {
                         var drv = physDrives[i];
-                        if (drv == null || drv.Name.Contains("Live USB") || drv.Name.Contains("Boot Medium") || drv.Name.Contains("Boot Drive")) continue;
+                        if (drv == null) continue;
+                        if (drv.Name.Contains("Live USB") || drv.Name.Contains("Boot Medium") || drv.Name.Contains("Flash"))
+                            continue;
 
                         var dev = drv.Device;
-                        if (dev != null)
+                        while (dev is Cosmos.HAL.BlockDevice.Partition part) dev = part.Host;
+                        if (dev == null) continue;
+
+                        byte[] sec9 = new byte[512];
+                        try
                         {
-                            string versionText;
-                            string status;
-                            if (DiskWipeService.ReadFileDirectFromFat32(dev, "version.ini", out versionText, out status))
+                            dev.ReadBlock(9, 1, ref sec9);
+                            if (sec9[0] == (byte)'W' && sec9[1] == (byte)'E' && sec9[2] == (byte)'A' &&
+                                sec9[3] == (byte)'T' && sec9[4] == (byte)'H' && sec9[5] == (byte)'E' &&
+                                sec9[6] == (byte)'R' && sec9[7] == (byte)'O' && sec9[8] == (byte)'S')
                             {
-                                if (!string.IsNullOrEmpty(versionText) && (versionText.Contains("Status=Installed") || versionText.Contains("Status=Updated")))
-                                {
-                                    return true;
-                                }
+                                return true;
                             }
                         }
+                        catch { }
+                    }
+                }
+            }
+            catch { }
+
+            // 3. Fallback check via Cosmos VFS: 0:\system\version.ini (for FAT32 installations)
+            try
+            {
+                if (File.Exists("0:\\system\\version.ini"))
+                {
+                    string txt = File.ReadAllText("0:\\system\\version.ini");
+                    if (!string.IsNullOrEmpty(txt) && (txt.Contains("Status=Installed") || txt.Contains("Status=Updated")))
+                    {
+                        return true;
                     }
                 }
             }
@@ -329,11 +343,22 @@ namespace WeatherOS.Services
                     int copyLen = Math.Min(bootMgrBlock.Length, NativeBootloaderPayload.Stage2.Length);
                     Array.Copy(NativeBootloaderPayload.Stage2, 0, bootMgrBlock, 0, copyLen);
                 }
+                // Mark Stage 2 on target hard disk with is_installed_hdd = 1 (notifies kernel to bypass Live boot menu)
+                if (NativeBootloaderPayload.Stage2InstalledFlagOffset > 0 &&
+                    NativeBootloaderPayload.Stage2InstalledFlagOffset < (uint)bootMgrBlock.Length)
+                {
+                    bootMgrBlock[NativeBootloaderPayload.Stage2InstalledFlagOffset] = 1;
+                }
                 dev.WriteBlock(1, 8, ref bootMgrBlock);
 
-                // 4. Zero-fill Sectors 9..63 (Reserved area) and wipe any GPT remnants
+                // 4. Write WeatherOS Installation Marker Sector at LBA 9, and zero-fill Sectors 10..63
+                byte[] markerSector = new byte[512];
+                byte[] sig = System.Text.Encoding.ASCII.GetBytes("WEATHEROS_INSTALLED_v3.1\nStatus=Installed\nBoot=Native\nArchitecture=x86-AOT\n");
+                Array.Copy(sig, 0, markerSector, 0, sig.Length);
+                dev.WriteBlock(9, 1, ref markerSector);
+
                 byte[] zeroSector = new byte[512];
-                for (ulong s = 9; s < 64; s++)
+                for (ulong s = 10; s < 64; s++)
                 {
                     dev.WriteBlock(s, 1, ref zeroSector);
                 }
