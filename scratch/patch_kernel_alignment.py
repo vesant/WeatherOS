@@ -10,13 +10,27 @@ def patch_asm_file(asm_path):
     # Determine newline style
     nl = "\r\n" if "\r\n" in content else "\n"
 
-    # 1. Align Kernel_Start to 16 bytes
+    # 1. Align Kernel_Start to 16 bytes and ensure Multiboot2 mInitialized is cleanly reset to 0
     if "align 16" + nl + "global Kernel_Start" not in content:
         target1 = "global Kernel_Start" + nl + "Kernel_Start:"
         repl1 = "align 16" + nl + "global Kernel_Start" + nl + "Kernel_Start:"
         if target1 in content:
             content = content.replace(target1, repl1, 1)
             print(f"Patched 'align 16' before Kernel_Start in {asm_path}")
+
+    # Reset Multiboot2 mInitialized flag before Call SystemVoidCosmosCoreMultiboot2Init
+    mb2_call_target = (
+        "\t\t\tmov dword [MultiBootInfo_Structure], EBX" + nl +
+        "\t\t\tCall SystemVoidCosmosCoreMultiboot2Init"
+    )
+    mb2_call_repl = (
+        "\t\t\tmov byte [static_field__Cosmos_Core_Multiboot2_mInitialized], 0" + nl +
+        "\t\t\tmov dword [MultiBootInfo_Structure], EBX" + nl +
+        "\t\t\tCall SystemVoidCosmosCoreMultiboot2Init"
+    )
+    if mb2_call_target in content and "\t\t\tmov byte [static_field__Cosmos_Core_Multiboot2_mInitialized], 0" not in content:
+        content = content.replace(mb2_call_target, mb2_call_repl, 1)
+        print("Patched Multiboot2Init call with clean mInitialized reset!")
 
     # 2. Enhanced SystemExceptionOccurred to print fault details to VGA row 1
     ex_target = "SystemExceptionOccurred:" + nl + "\tret"
@@ -52,25 +66,40 @@ def patch_asm_file(asm_path):
         content = content.replace(ex_target, ex_repl, 1)
         print("Injected VGA exception printer in SystemExceptionOccurred!")
 
-    # 3. Inject visual VGA breadcrumbs along row 0
+    # 3. Comprehensive visual VGA breadcrumbs along row 0
+    # GD (0x0C) and PI (0x10) are placed in Kernel_Start by make_isohybrid.py
     breadcrumbs = [
-        ("SystemVoidCosmosCoreGCImplementationInit:" + nl, "SystemVoidCosmosCoreGCImplementationInit:" + nl + "\tmov dword [0x000B8014], 0x0F430F47" + nl), # 'G','C'
-        ("_END_OF____INIT__VMT__CODE____:" + nl, "_END_OF____INIT__VMT__CODE____:" + nl + "\tmov dword [0x000B8018], 0x0F4D0F56" + nl),                 # 'V','M'
-        ("___INIT__STRINGS_TYPE_ID_S___:" + nl, "___INIT__STRINGS_TYPE_ID_S___:" + nl + "\tmov dword [0x000B801C], 0x0F540F53" + nl),                   # 'S','T'
-        ("__ENGINE_ENTRYPOINT__.CreateEntrypoint.AfterAlloc:" + nl, "__ENGINE_ENTRYPOINT__.CreateEntrypoint.AfterAlloc:" + nl + "\tmov dword [0x000B8020], 0x0F4C0F41" + nl), # 'A','L'
-        ("__ENGINE_ENTRYPOINT__.CallStart:" + nl, "__ENGINE_ENTRYPOINT__.CallStart:" + nl + "\tmov dword [0x000B8024], 0x0F430F4B" + nl),               # 'K','C'
-        ("SystemVoidCosmosSystemKernelStart:" + nl, "SystemVoidCosmosSystemKernelStart:" + nl + "\tmov dword [0x000B8028], 0x0F530F4B" + nl),           # 'K','S'
-        ("SystemVoidCosmosHALBootstrapInit:" + nl, "SystemVoidCosmosHALBootstrapInit:" + nl + "\tmov dword [0x000B802C], 0x0F420F48" + nl),             # 'H','B'
-        ("SystemVoidWeatherOSKernelOnBoot:" + nl, "SystemVoidWeatherOSKernelOnBoot:" + nl + "\tmov dword [0x000B8030], 0x0F420F4F" + nl),               # 'O','B'
-        ("SystemVoidWeatherOSKernelOnBoot.IL_000F:" + nl, "SystemVoidWeatherOSKernelOnBoot.IL_000F:" + nl + "\tmov dword [0x000B8034], 0x0F490F47" + nl), # 'G','I'
-        ("SystemVoidWeatherOSKernelBeforeRun:" + nl, "SystemVoidWeatherOSKernelBeforeRun:" + nl + "\tmov dword [0x000B8038], 0x0F520F42" + nl),         # 'B','R'
+        ("SystemVoidCosmosCoreGCImplementationInit:" + nl, "SystemVoidCosmosCoreGCImplementationInit:" + nl + "\tmov dword [0x000B8014], 0x0F300F47" + nl), # 'G','0'
+        ("SystemVoidCosmosCoreGCImplementationInit.IL_0010:" + nl, "SystemVoidCosmosCoreGCImplementationInit.IL_0010:" + nl + "\tmov dword [0x000B8018], 0x0F310F47" + nl), # 'G','1'
+        ("SystemVoidCosmosCoreGCImplementationInit.IL_0016:" + nl, "SystemVoidCosmosCoreGCImplementationInit.IL_0016:" + nl + "\tmov dword [0x000B801C], 0x0F320F47" + nl), # 'G','2'
+        ("SystemVoidCosmosCoreGCImplementationInit.IL_001B:" + nl, "SystemVoidCosmosCoreGCImplementationInit.IL_001B:" + nl + "\tmov dword [0x000B8020], 0x0F330F47" + nl), # 'G','3'
+        ("SystemVoidCosmosCoreGCImplementationInit.IL_010E:" + nl, "SystemVoidCosmosCoreGCImplementationInit.IL_010E:" + nl + "\tmov dword [0x000B8024], 0x0F340F47" + nl), # 'G','4'
+        ("SystemVoidCosmosCoreMemoryRATInitSystemBytepointerSystemUInt32:" + nl, "SystemVoidCosmosCoreMemoryRATInitSystemBytepointerSystemUInt32:" + nl + "\tmov dword [0x000B8028], 0x0F300F52" + nl), # 'R','0'
+        ("SystemVoidCosmosCoreMemoryRATInitSystemBytepointerSystemUInt32.IL_0116:" + nl, "SystemVoidCosmosCoreMemoryRATInitSystemBytepointerSystemUInt32.IL_0116:" + nl + "\tmov dword [0x000B802C], 0x0F310F52" + nl), # 'R','1'
+        ("SystemVoidCosmosCoreMemoryHeapInit:" + nl, "SystemVoidCosmosCoreMemoryHeapInit:" + nl + "\tmov dword [0x000B8030], 0x0F300F48" + nl), # 'H','0'
+        ("SystemVoidCosmosCoreMemoryHeapInit.IL_000C:" + nl, "SystemVoidCosmosCoreMemoryHeapInit.IL_000C:" + nl + "\tmov dword [0x000B8034], 0x0F310F48" + nl), # 'H','1'
+        ("SystemVoidCosmosCoreMemoryHeapInit.IL_0012:" + nl, "SystemVoidCosmosCoreMemoryHeapInit.IL_0012:" + nl + "\tmov dword [0x000B8038], 0x0F320F48" + nl), # 'H','2'
+        ("SystemVoidCosmosCoreMemoryHeapInit.IL_0017:" + nl, "SystemVoidCosmosCoreMemoryHeapInit.IL_0017:" + nl + "\tmov dword [0x000B803C], 0x0F330F48" + nl), # 'H','3'
+        ("SystemVoidCosmosCoreMemoryRATInitSystemBytepointerSystemUInt32.IL_011B:" + nl, "SystemVoidCosmosCoreMemoryRATInitSystemBytepointerSystemUInt32.IL_011B:" + nl + "\tmov dword [0x000B8040], 0x0F320F52" + nl), # 'R','2'
+        ("SystemVoidCosmosCoreGCImplementationInit.IL_0114:" + nl, "SystemVoidCosmosCoreGCImplementationInit.IL_0114:" + nl + "\tmov dword [0x000B8044], 0x0F350F47" + nl), # 'G','5'
+        ("__ENGINE_ENTRYPOINT__:" + nl, "__ENGINE_ENTRYPOINT__:" + nl + "\tmov dword [0x000B8048], 0x0F300F45" + nl), # 'E','0'
+        ("___INIT__VMT__CODE____:" + nl, "___INIT__VMT__CODE____:" + nl + "\tmov dword [0x000B804C], 0x0F300F56" + nl), # 'V','0'
+        ("_END_OF____INIT__VMT__CODE____:" + nl, "_END_OF____INIT__VMT__CODE____:" + nl + "\tmov dword [0x000B8050], 0x0F4D0F56" + nl), # 'V','M'
+        ("___INIT__STRINGS_TYPE_ID_S___:" + nl, "___INIT__STRINGS_TYPE_ID_S___:" + nl + "\tmov dword [0x000B8054], 0x0F540F53" + nl), # 'S','T'
+        ("__ENGINE_ENTRYPOINT__.CreateEntrypoint.AfterAlloc:" + nl, "__ENGINE_ENTRYPOINT__.CreateEntrypoint.AfterAlloc:" + nl + "\tmov dword [0x000B8058], 0x0F4C0F41" + nl), # 'A','L'
+        ("__ENGINE_ENTRYPOINT__.CallStart:" + nl, "__ENGINE_ENTRYPOINT__.CallStart:" + nl + "\tmov dword [0x000B805C], 0x0F430F4B" + nl), # 'K','C'
+        ("SystemVoidCosmosSystemKernelStart:" + nl, "SystemVoidCosmosSystemKernelStart:" + nl + "\tmov dword [0x000B8060], 0x0F530F4B" + nl), # 'K','S'
+        ("SystemVoidCosmosHALBootstrapInit:" + nl, "SystemVoidCosmosHALBootstrapInit:" + nl + "\tmov dword [0x000B8064], 0x0F420F48" + nl), # 'H','B'
+        ("SystemVoidWeatherOSKernelOnBoot:" + nl, "SystemVoidWeatherOSKernelOnBoot:" + nl + "\tmov dword [0x000B8068], 0x0F420F4F" + nl), # 'O','B'
+        ("SystemVoidWeatherOSKernelOnBoot.IL_000F:" + nl, "SystemVoidWeatherOSKernelOnBoot.IL_000F:" + nl + "\tmov dword [0x000B806C], 0x0F490F47" + nl), # 'G','I'
+        ("SystemVoidWeatherOSKernelBeforeRun:" + nl, "SystemVoidWeatherOSKernelBeforeRun:" + nl + "\tmov dword [0x000B8070], 0x0F520F42" + nl), # 'B','R'
     ]
 
     for target, repl in breadcrumbs:
         if target in content and repl not in content:
             content = content.replace(target, repl, 1)
 
-    # 4. Patch RAT.AllocPages to zero-initialize every allocated page
+    # 4. Patch RAT.AllocPages to zero-initialize every allocated page with null pointer safety
     rat_target = (
         "\t\tSystemVoidpointerCosmosCoreMemoryRATAllocPagesCosmosCoreMemoryRATPageTypeSystemUInt32.IL_00C6:" + nl +
         "\t\t\t; Stloc" + nl +
@@ -84,16 +113,34 @@ def patch_asm_file(asm_path):
         rat_target + nl +
         "\t\t\tpushad" + nl +
         "\t\t\tmov edi, dword [EBP - 56]" + nl +
+        "\t\t\ttest edi, edi" + nl +
+        "\t\t\tjz .skip_zero_page" + nl +
         "\t\t\tmov ecx, dword [EBP + 8]" + nl +
         "\t\t\tshl ecx, 10" + nl +
         "\t\t\txor eax, eax" + nl +
         "\t\t\tcld" + nl +
         "\t\t\trep stosd" + nl +
+        ".skip_zero_page:" + nl +
         "\t\t\tpopad"
     )
-    if rat_target in content and "\t\t\tshl ecx, 10" not in content:
-        content = content.replace(rat_target, rat_repl, 1)
-        print("Patched RAT.AllocPages with zero-initialization of allocated pages!")
+    if rat_target in content and ".skip_zero_page:" not in content:
+        # If older version without null check was present, replace it
+        old_rat_repl = (
+            rat_target + nl +
+            "\t\t\tpushad" + nl +
+            "\t\t\tmov edi, dword [EBP - 56]" + nl +
+            "\t\t\tmov ecx, dword [EBP + 8]" + nl +
+            "\t\t\tshl ecx, 10" + nl +
+            "\t\t\txor eax, eax" + nl +
+            "\t\t\tcld" + nl +
+            "\t\t\trep stosd" + nl +
+            "\t\t\tpopad"
+        )
+        if old_rat_repl in content:
+            content = content.replace(old_rat_repl, rat_repl, 1)
+        else:
+            content = content.replace(rat_target, rat_repl, 1)
+        print("Patched RAT.AllocPages with safe zero-initialization of allocated pages!")
 
     # 5. Patch CPU.GetLargestMemoryBlock to correctly point to start of entries (map + 16)
     cpu_start_marker = "\t\tCosmosCoreRawMemoryMapBlockpointerCosmosCoreCPUGetLargestMemoryBlock.IL_001E:"
@@ -112,15 +159,25 @@ def patch_asm_file(asm_path):
             content = content.replace(old_block, new_block, 1)
             print("Patched CPU.GetLargestMemoryBlock entries offset (map + 16)!")
 
-    # 5.5. Patch GCImplementation.Init IL_0001 to ensure memory manager always initializes on cold boot
-    # even if StartedMemoryManager was dirty (1) in cloned RAM!
-    smm_check = (
+    # 5.5. Patch GCImplementation.Init IL_0001 to ensure memory manager and static constructor state
+    # are completely sanitized and memory discovery runs unconditionally on cold/warm boot!
+    smm_repl = (
+        "\t\tSystemVoidCosmosCoreGCImplementationInit.IL_0001.AfterCCTorExceptionCheck:" + nl +
+        "\t\t\tmov byte [static_field__Cosmos_Core_GCImplementation_StartedMemoryManager], 0" + nl +
+        "\t\t\tmov dword [static_field__Cosmos_Core_Memory_RAT_mRAT], 0" + nl +
+        "\t\t\tmov byte [CCTOR_CALLED__Cosmos_Core_GCImplementation], 0" + nl +
+        "\t\t\tmov byte [CCTOR_CALLED__Cosmos_Core_VTablesImpl], 0" + nl +
+        "\t\t\tmov byte [static_field__Cosmos_Core_Multiboot2_mInitialized], 0" + nl +
+        "\t\t\tmov EAX, 0x0" + nl +
+        "\t\t\tpush dword EAX"
+    )
+    smm_check_orig = (
         "\t\tSystemVoidCosmosCoreGCImplementationInit.IL_0001.AfterCCTorExceptionCheck:" + nl +
         "\t\t\tmov EAX, 0x0" + nl +
         "\t\t\tmov AL, byte [static_field__Cosmos_Core_GCImplementation_StartedMemoryManager]" + nl +
         "\t\t\tpush dword EAX"
     )
-    smm_repl = (
+    smm_check_prev = (
         "\t\tSystemVoidCosmosCoreGCImplementationInit.IL_0001.AfterCCTorExceptionCheck:" + nl +
         "\t\t\tmov EAX, 0x0" + nl +
         "\t\t\tcmp dword [static_field__Cosmos_Core_Memory_RAT_mRAT], 0" + nl +
@@ -129,9 +186,12 @@ def patch_asm_file(asm_path):
         ".force_init_mem:" + nl +
         "\t\t\tpush dword EAX"
     )
-    if smm_check in content:
-        content = content.replace(smm_check, smm_repl, 1)
-        print("Patched GCImplementation.Init IL_0001 to guarantee cold boot memory initialization!")
+    if smm_check_orig in content:
+        content = content.replace(smm_check_orig, smm_repl, 1)
+        print("Patched GCImplementation.Init IL_0001 with unconditional memory state sanitization!")
+    elif smm_check_prev in content:
+        content = content.replace(smm_check_prev, smm_repl, 1)
+        print("Upgraded GCImplementation.Init IL_0001 with unconditional memory state sanitization!")
 
     # 6. Patch GCImplementation.Init to cap memLength to 128 MB (0x08000000)
     gc_target = (

@@ -61,7 +61,10 @@ if yasm_path and os.path.exists(yasm_path):
         # Extract critical memory manager static field offsets from .symtab
         smm_offset = 0x51165
         rat_offset = 0x518b1
-        smt_offset = 0x58e3e
+        smt_offset = 0x58ebc
+        cctor_gc_offset = 0x5189f
+        cctor_vmt_offset = 0x51854
+        mb2_init_offset = 0x55669
         try:
             e_shoff = struct.unpack("<I", elf_data[32:36])[0]
             sh_sym = elf_data[e_shoff + 9 * 40 : e_shoff + 10 * 40]
@@ -81,6 +84,12 @@ if yasm_path and os.path.exists(yasm_path):
                         rat_offset = st_value - 0x02000000
                     elif sym_name == 'static_field__Cosmos_Core_Memory_HeapSmall_SMT':
                         smt_offset = st_value - 0x02000000
+                    elif sym_name == 'CCTOR_CALLED__Cosmos_Core_GCImplementation':
+                        cctor_gc_offset = st_value - 0x02000000
+                    elif sym_name == 'CCTOR_CALLED__Cosmos_Core_VTablesImpl':
+                        cctor_vmt_offset = st_value - 0x02000000
+                    elif sym_name == 'static_field__Cosmos_Core_Multiboot2_mInitialized':
+                        mb2_init_offset = st_value - 0x02000000
         except Exception as ex:
             print(f"Symbol parse warning: {ex}")
 
@@ -131,6 +140,9 @@ namespace WeatherOS.Services
         public const uint StartedMemoryManagerOffset = {hex(smm_offset)};
         public const uint RatOffset = {hex(rat_offset)};
         public const uint HeapSmallSmtOffset = {hex(smt_offset)};
+        public const uint CctorGcOffset = {hex(cctor_gc_offset)};
+        public const uint CctorVmtOffset = {hex(cctor_vmt_offset)};
+        public const uint Mb2InitOffset = {hex(mb2_init_offset)};
         public const uint Stage2InstalledFlagOffset = {hex(flag_offset)};
 
 {cs_mbr}

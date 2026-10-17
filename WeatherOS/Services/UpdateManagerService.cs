@@ -482,6 +482,27 @@ namespace WeatherOS.Services
                         chunk[inChunk] = 0; chunk[inChunk + 1] = 0; chunk[inChunk + 2] = 0; chunk[inChunk + 3] = 0;
                     }
 
+                    if (NativeBootloaderPayload.CctorGcOffset >= byteStart && 
+                        NativeBootloaderPayload.CctorGcOffset < byteEnd)
+                    {
+                        uint inChunk = (uint)(NativeBootloaderPayload.CctorGcOffset - byteStart);
+                        chunk[inChunk] = 0; // CCTOR_CALLED__Cosmos_Core_GCImplementation = 0
+                    }
+
+                    if (NativeBootloaderPayload.CctorVmtOffset >= byteStart && 
+                        NativeBootloaderPayload.CctorVmtOffset < byteEnd)
+                    {
+                        uint inChunk = (uint)(NativeBootloaderPayload.CctorVmtOffset - byteStart);
+                        chunk[inChunk] = 0; // CCTOR_CALLED__Cosmos_Core_VTablesImpl = 0
+                    }
+
+                    if (NativeBootloaderPayload.Mb2InitOffset >= byteStart && 
+                        NativeBootloaderPayload.Mb2InitOffset < byteEnd)
+                    {
+                        uint inChunk = (uint)(NativeBootloaderPayload.Mb2InitOffset - byteStart);
+                        chunk[inChunk] = 0; // static_field__Cosmos_Core_Multiboot2_mInitialized = 0
+                    }
+
                     dev.WriteBlock(targetSector, count, ref chunk);
                     copied += count;
 

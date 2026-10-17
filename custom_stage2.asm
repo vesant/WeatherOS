@@ -816,13 +816,14 @@ boot_drive db 0
 align 4
 hdd_flag_sig db "INST"
 is_installed_hdd db 0
+align 4
 cur_lba dd 64
 dest_phys dd 0x02000000
 chunk_count dw 0
 chunk_index dw 0
 
 ; Patchable variables (updated by make_isohybrid.py)
-rem_sectors dd 16467
+rem_sectors dd 16469
 entry_point dd 0x2410d50
 
 align 4
