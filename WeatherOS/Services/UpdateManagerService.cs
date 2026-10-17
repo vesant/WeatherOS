@@ -513,53 +513,35 @@ namespace WeatherOS.Services
                         }
                     }
 
-                    // Strict Memory Management Sanitization:
-                    // Guarantee that StartedMemoryManager is strictly false (0), and mRAT / SMT pointers are null (0).
-                    // This guarantees GCImplementation.Init will execute cleanly on cold boot from the hard drive,
-                    // properly allocating RAT, SMT, and managed heap instead of crashing with Fault 0D.
-                    ulong byteStart = copied * 512UL;
-                    ulong byteEnd = byteStart + (ulong)count * 512UL;
-
-                    if (NativeBootloaderPayload.StartedMemoryManagerOffset >= byteStart && 
-                        NativeBootloaderPayload.StartedMemoryManagerOffset < byteEnd)
+                    // Memory Management Sanitization for Active RAM fallback:
+                    // If reading from running RAM fallback (0x02000000), guarantee that StartedMemoryManager is strictly false (0),
+                    // and mRAT / SMT pointers are null (0).
+                    // If reading from pristine golden image (0x01000000), it is ALREADY 100% untouched binary straight from disk!
+                    if (kernelSourceBase == 0x02000000u)
                     {
-                        uint inChunk = (uint)(NativeBootloaderPayload.StartedMemoryManagerOffset - byteStart);
-                        chunk[inChunk] = 0; // StartedMemoryManager = 0 (false)
-                    }
+                        ulong byteStart = copied * 512UL;
+                        ulong byteEnd = byteStart + (ulong)count * 512UL;
 
-                    if (NativeBootloaderPayload.RatOffset >= byteStart && 
-                        (NativeBootloaderPayload.RatOffset + 4UL) <= byteEnd)
-                    {
-                        uint inChunk = (uint)(NativeBootloaderPayload.RatOffset - byteStart);
-                        chunk[inChunk] = 0; chunk[inChunk + 1] = 0; chunk[inChunk + 2] = 0; chunk[inChunk + 3] = 0;
-                    }
+                        if (NativeBootloaderPayload.StartedMemoryManagerOffset >= byteStart && 
+                            NativeBootloaderPayload.StartedMemoryManagerOffset < byteEnd)
+                        {
+                            uint inChunk = (uint)(NativeBootloaderPayload.StartedMemoryManagerOffset - byteStart);
+                            chunk[inChunk] = 0; // StartedMemoryManager = 0 (false)
+                        }
 
-                    if (NativeBootloaderPayload.HeapSmallSmtOffset >= byteStart && 
-                        (NativeBootloaderPayload.HeapSmallSmtOffset + 4UL) <= byteEnd)
-                    {
-                        uint inChunk = (uint)(NativeBootloaderPayload.HeapSmallSmtOffset - byteStart);
-                        chunk[inChunk] = 0; chunk[inChunk + 1] = 0; chunk[inChunk + 2] = 0; chunk[inChunk + 3] = 0;
-                    }
+                        if (NativeBootloaderPayload.RatOffset >= byteStart && 
+                            (NativeBootloaderPayload.RatOffset + 4UL) <= byteEnd)
+                        {
+                            uint inChunk = (uint)(NativeBootloaderPayload.RatOffset - byteStart);
+                            chunk[inChunk] = 0; chunk[inChunk + 1] = 0; chunk[inChunk + 2] = 0; chunk[inChunk + 3] = 0;
+                        }
 
-                    if (NativeBootloaderPayload.CctorGcOffset >= byteStart && 
-                        NativeBootloaderPayload.CctorGcOffset < byteEnd)
-                    {
-                        uint inChunk = (uint)(NativeBootloaderPayload.CctorGcOffset - byteStart);
-                        chunk[inChunk] = 0; // CCTOR_CALLED__Cosmos_Core_GCImplementation = 0
-                    }
-
-                    if (NativeBootloaderPayload.CctorVmtOffset >= byteStart && 
-                        NativeBootloaderPayload.CctorVmtOffset < byteEnd)
-                    {
-                        uint inChunk = (uint)(NativeBootloaderPayload.CctorVmtOffset - byteStart);
-                        chunk[inChunk] = 0; // CCTOR_CALLED__Cosmos_Core_VTablesImpl = 0
-                    }
-
-                    if (NativeBootloaderPayload.Mb2InitOffset >= byteStart && 
-                        NativeBootloaderPayload.Mb2InitOffset < byteEnd)
-                    {
-                        uint inChunk = (uint)(NativeBootloaderPayload.Mb2InitOffset - byteStart);
-                        chunk[inChunk] = 0; // static_field__Cosmos_Core_Multiboot2_mInitialized = 0
+                        if (NativeBootloaderPayload.HeapSmallSmtOffset >= byteStart && 
+                            (NativeBootloaderPayload.HeapSmallSmtOffset + 4UL) <= byteEnd)
+                        {
+                            uint inChunk = (uint)(NativeBootloaderPayload.HeapSmallSmtOffset - byteStart);
+                            chunk[inChunk] = 0; chunk[inChunk + 1] = 0; chunk[inChunk + 2] = 0; chunk[inChunk + 3] = 0;
+                        }
                     }
 
                     dev.WriteBlock(targetSector, count, ref chunk);

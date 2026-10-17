@@ -18,19 +18,7 @@ def patch_asm_file(asm_path):
             content = content.replace(target1, repl1, 1)
             print(f"Patched 'align 16' before Kernel_Start in {asm_path}")
 
-    # Reset Multiboot2 mInitialized flag before Call SystemVoidCosmosCoreMultiboot2Init
-    mb2_call_target = (
-        "\t\t\tmov dword [MultiBootInfo_Structure], EBX" + nl +
-        "\t\t\tCall SystemVoidCosmosCoreMultiboot2Init"
-    )
-    mb2_call_repl = (
-        "\t\t\tmov byte [static_field__Cosmos_Core_Multiboot2_mInitialized], 0" + nl +
-        "\t\t\tmov dword [MultiBootInfo_Structure], EBX" + nl +
-        "\t\t\tCall SystemVoidCosmosCoreMultiboot2Init"
-    )
-    if mb2_call_target in content and "\t\t\tmov byte [static_field__Cosmos_Core_Multiboot2_mInitialized], 0" not in content:
-        content = content.replace(mb2_call_target, mb2_call_repl, 1)
-        print("Patched Multiboot2Init call with clean mInitialized reset!")
+
 
     # 2. Enhanced SystemExceptionOccurred to print fault details to VGA row 1
     ex_target = "SystemExceptionOccurred:" + nl + "\tret"
@@ -99,7 +87,7 @@ def patch_asm_file(asm_path):
         if target in content and repl not in content:
             content = content.replace(target, repl, 1)
 
-    # 4. Patch RAT.AllocPages to zero-initialize every allocated page with null pointer safety
+    # 4. Patch RAT.AllocPages to zero-initialize every allocated page
     rat_target = (
         "\t\tSystemVoidpointerCosmosCoreMemoryRATAllocPagesCosmosCoreMemoryRATPageTypeSystemUInt32.IL_00C6:" + nl +
         "\t\t\t; Stloc" + nl +
@@ -113,34 +101,16 @@ def patch_asm_file(asm_path):
         rat_target + nl +
         "\t\t\tpushad" + nl +
         "\t\t\tmov edi, dword [EBP - 56]" + nl +
-        "\t\t\ttest edi, edi" + nl +
-        "\t\t\tjz .skip_zero_page" + nl +
         "\t\t\tmov ecx, dword [EBP + 8]" + nl +
         "\t\t\tshl ecx, 10" + nl +
         "\t\t\txor eax, eax" + nl +
         "\t\t\tcld" + nl +
         "\t\t\trep stosd" + nl +
-        ".skip_zero_page:" + nl +
         "\t\t\tpopad"
     )
-    if rat_target in content and ".skip_zero_page:" not in content:
-        # If older version without null check was present, replace it
-        old_rat_repl = (
-            rat_target + nl +
-            "\t\t\tpushad" + nl +
-            "\t\t\tmov edi, dword [EBP - 56]" + nl +
-            "\t\t\tmov ecx, dword [EBP + 8]" + nl +
-            "\t\t\tshl ecx, 10" + nl +
-            "\t\t\txor eax, eax" + nl +
-            "\t\t\tcld" + nl +
-            "\t\t\trep stosd" + nl +
-            "\t\t\tpopad"
-        )
-        if old_rat_repl in content:
-            content = content.replace(old_rat_repl, rat_repl, 1)
-        else:
-            content = content.replace(rat_target, rat_repl, 1)
-        print("Patched RAT.AllocPages with safe zero-initialization of allocated pages!")
+    if rat_target in content and "\t\t\tshl ecx, 10" not in content:
+        content = content.replace(rat_target, rat_repl, 1)
+        print("Patched RAT.AllocPages with zero-initialization of allocated pages!")
 
     # 5. Patch CPU.GetLargestMemoryBlock to correctly point to start of entries (map + 16)
     cpu_start_marker = "\t\tCosmosCoreRawMemoryMapBlockpointerCosmosCoreCPUGetLargestMemoryBlock.IL_001E:"
@@ -159,9 +129,24 @@ def patch_asm_file(asm_path):
             content = content.replace(old_block, new_block, 1)
             print("Patched CPU.GetLargestMemoryBlock entries offset (map + 16)!")
 
-    # 5.5. Patch GCImplementation.Init IL_0001 to ensure memory manager and static constructor state
-    # are completely sanitized and memory discovery runs unconditionally on cold/warm boot!
+    # 5.5. Patch GCImplementation.Init IL_0001 to ensure memory manager always initializes on cold boot
+    # even if StartedMemoryManager was dirty (1) in cloned RAM!
+    smm_check = (
+        "\t\tSystemVoidCosmosCoreGCImplementationInit.IL_0001.AfterCCTorExceptionCheck:" + nl +
+        "\t\t\tmov EAX, 0x0" + nl +
+        "\t\t\tmov AL, byte [static_field__Cosmos_Core_GCImplementation_StartedMemoryManager]" + nl +
+        "\t\t\tpush dword EAX"
+    )
     smm_repl = (
+        "\t\tSystemVoidCosmosCoreGCImplementationInit.IL_0001.AfterCCTorExceptionCheck:" + nl +
+        "\t\t\tmov EAX, 0x0" + nl +
+        "\t\t\tcmp dword [static_field__Cosmos_Core_Memory_RAT_mRAT], 0" + nl +
+        "\t\t\tje .force_init_mem" + nl +
+        "\t\t\tmov AL, byte [static_field__Cosmos_Core_GCImplementation_StartedMemoryManager]" + nl +
+        ".force_init_mem:" + nl +
+        "\t\t\tpush dword EAX"
+    )
+    bad_smm_check = (
         "\t\tSystemVoidCosmosCoreGCImplementationInit.IL_0001.AfterCCTorExceptionCheck:" + nl +
         "\t\t\tmov byte [static_field__Cosmos_Core_GCImplementation_StartedMemoryManager], 0" + nl +
         "\t\t\tmov dword [static_field__Cosmos_Core_Memory_RAT_mRAT], 0" + nl +
@@ -171,27 +156,12 @@ def patch_asm_file(asm_path):
         "\t\t\tmov EAX, 0x0" + nl +
         "\t\t\tpush dword EAX"
     )
-    smm_check_orig = (
-        "\t\tSystemVoidCosmosCoreGCImplementationInit.IL_0001.AfterCCTorExceptionCheck:" + nl +
-        "\t\t\tmov EAX, 0x0" + nl +
-        "\t\t\tmov AL, byte [static_field__Cosmos_Core_GCImplementation_StartedMemoryManager]" + nl +
-        "\t\t\tpush dword EAX"
-    )
-    smm_check_prev = (
-        "\t\tSystemVoidCosmosCoreGCImplementationInit.IL_0001.AfterCCTorExceptionCheck:" + nl +
-        "\t\t\tmov EAX, 0x0" + nl +
-        "\t\t\tcmp dword [static_field__Cosmos_Core_Memory_RAT_mRAT], 0" + nl +
-        "\t\t\tje .force_init_mem" + nl +
-        "\t\t\tmov AL, byte [static_field__Cosmos_Core_GCImplementation_StartedMemoryManager]" + nl +
-        ".force_init_mem:" + nl +
-        "\t\t\tpush dword EAX"
-    )
-    if smm_check_orig in content:
-        content = content.replace(smm_check_orig, smm_repl, 1)
-        print("Patched GCImplementation.Init IL_0001 with unconditional memory state sanitization!")
-    elif smm_check_prev in content:
-        content = content.replace(smm_check_prev, smm_repl, 1)
-        print("Upgraded GCImplementation.Init IL_0001 with unconditional memory state sanitization!")
+    if bad_smm_check in content:
+        content = content.replace(bad_smm_check, smm_repl, 1)
+        print("Replaced destructive CCTOR resets in GCImplementation.Init with safe memory check!")
+    elif smm_check in content:
+        content = content.replace(smm_check, smm_repl, 1)
+        print("Patched GCImplementation.Init IL_0001 to guarantee cold boot memory initialization!")
 
     # 6. Patch GCImplementation.Init to cap memLength to 128 MB (0x08000000)
     gc_target = (
