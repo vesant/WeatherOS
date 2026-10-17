@@ -104,7 +104,7 @@ namespace WeatherOS.Services
                 var pCmd = new IOPort((ushort)(cmdBase + 7));
 
                 // Wait for drive not busy
-                if (!WaitNotBusy(pCmd, 50000)) return false;
+                if (!WaitNotBusy(pCmd, 200000)) return false;
 
                 if (lba48 && lba >= 0x0FFFFFFFU)
                 {
@@ -138,7 +138,7 @@ namespace WeatherOS.Services
                     pCmd.Byte = 0x20; // READ SECTORS
                 }
 
-                if (!WaitDrq(pCmd, 50000)) return false;
+                if (!WaitDrq(pCmd, 200000)) return false;
 
                 for (int w = 0; w < 256; w++)
                 {
@@ -166,7 +166,7 @@ namespace WeatherOS.Services
                 var pDrive = new IOPort((ushort)(cmdBase + 6));
                 var pCmd = new IOPort((ushort)(cmdBase + 7));
 
-                if (!WaitNotBusy(pCmd, 50000)) return false;
+                if (!WaitNotBusy(pCmd, 200000)) return false;
 
                 if (lba48 && lba >= 0x0FFFFFFFU)
                 {
@@ -198,7 +198,7 @@ namespace WeatherOS.Services
                     pCmd.Byte = 0x30; // WRITE SECTORS
                 }
 
-                if (!WaitDrq(pCmd, 50000)) return false;
+                if (!WaitDrq(pCmd, 200000)) return false;
 
                 for (int w = 0; w < 256; w++)
                 {
@@ -207,7 +207,7 @@ namespace WeatherOS.Services
                 }
 
                 // Wait for BSY to clear after writing sector
-                return WaitNotBusy(pCmd, 50000);
+                return WaitNotBusy(pCmd, 200000);
             }
             catch
             {
@@ -224,7 +224,7 @@ namespace WeatherOS.Services
                 pDrive.Byte = (byte)(0xE0 | (drvSel == 0xB0 ? 0x10 : 0x00));
                 WaitIo(pCmd);
                 pCmd.Byte = (lba48 && drvSel == 0xA0) ? (byte)0xEA : (byte)0xE7; // FLUSH CACHE EXT / FLUSH CACHE
-                WaitNotBusy(pCmd, 50000);
+                WaitNotBusy(pCmd, 200000);
             }
             catch { }
         }

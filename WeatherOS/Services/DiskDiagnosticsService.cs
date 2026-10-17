@@ -527,14 +527,23 @@ namespace WeatherOS.Services
                 for (int i = 0; i < 4; i++) { byte dummy = pCmd.Byte; } // 400ns delay
 
                 byte status = pCmd.Byte;
-                if (status == 0xFF || status == 0x00) return info; // Floating bus or no device present
+                if (status == 0xFF) return info; // Floating bus
+
+                // Canonical ATA presence test: Write 0x55 / 0xAA to SecCount / LbaLow
+                pSecCount.Byte = 0x55;
+                pLbaLow.Byte = 0xAA;
+                for (int i = 0; i < 4; i++) { byte dummy = pCmd.Byte; }
+                if (pSecCount.Byte != 0x55 || pLbaLow.Byte != 0xAA)
+                {
+                    return info; // Absent channel or disconnected port
+                }
 
                 // Wait for drive not busy before issuing command
-                int preWait = 20000;
+                int preWait = 100000;
                 while (preWait-- > 0)
                 {
                     status = pCmd.Byte;
-                    if (status == 0xFF || status == 0x00) return info;
+                    if (status == 0xFF) return info;
                     if ((status & 0x80) == 0) break;
                 }
                 if ((status & 0x80) != 0) return info; // Drive stuck busy
@@ -561,11 +570,12 @@ namespace WeatherOS.Services
                 }
 
                 // Wait for BSY to clear AND DRQ (0x08) to become asserted
-                int timeout = 30000;
+                // Note: Real mechanical HDDs return status 0x00 while preparing identify sector data!
+                int timeout = 500000;
                 while (timeout-- > 0)
                 {
                     status = pCmd.Byte;
-                    if (status == 0xFF || status == 0x00) return info; // Bus floating or no drive present
+                    if (status == 0xFF) return info; // Bus floating
                     if ((status & 0x80) == 0) // BSY is clear
                     {
                         if ((status & 0x08) != 0) break; // DRQ is set! Data ready!
