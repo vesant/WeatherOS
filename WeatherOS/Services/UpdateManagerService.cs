@@ -271,17 +271,31 @@ namespace WeatherOS.Services
                     return false;
                 }
 
-                // 1. Determine kernel sector count from NativeBootloaderPayload MBR partition 1
-                uint kernelSectors = 16404;
-                if (NativeBootloaderPayload.Mbr != null && NativeBootloaderPayload.Mbr.Length >= 462)
+                // 1. Determine kernel sector count dynamically from running kernel size
+                uint kernelSectors = 0;
+                try
                 {
-                    uint parsedSec = (uint)(NativeBootloaderPayload.Mbr[458] | 
-                                            (NativeBootloaderPayload.Mbr[459] << 8) | 
-                                            (NativeBootloaderPayload.Mbr[460] << 16) | 
-                                            (NativeBootloaderPayload.Mbr[461] << 24));
-                    if (parsedSec >= 1000 && parsedSec <= 100000)
+                    uint endOfKernel = Cosmos.Core.CPU.GetEndOfKernel();
+                    if (endOfKernel > 0x02000000u)
                     {
-                        kernelSectors = parsedSec;
+                        kernelSectors = (endOfKernel - 0x02000000u + 511u) / 512u;
+                    }
+                }
+                catch { }
+
+                if (kernelSectors < 1000 || kernelSectors > 100000)
+                {
+                    kernelSectors = 16404;
+                    if (NativeBootloaderPayload.Mbr != null && NativeBootloaderPayload.Mbr.Length >= 462)
+                    {
+                        uint parsedSec = (uint)(NativeBootloaderPayload.Mbr[458] | 
+                                                (NativeBootloaderPayload.Mbr[459] << 8) | 
+                                                (NativeBootloaderPayload.Mbr[460] << 16) | 
+                                                (NativeBootloaderPayload.Mbr[461] << 24));
+                        if (parsedSec >= 1000 && parsedSec <= 100000)
+                        {
+                            kernelSectors = parsedSec;
+                        }
                     }
                 }
 

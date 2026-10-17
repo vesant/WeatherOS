@@ -164,18 +164,14 @@ def patch_asm_file(asm_path):
         print("Patched GCImplementation.Init IL_0001 to guarantee cold boot memory initialization!")
 
     # 6. Patch GCImplementation.Init to cap memLength to 128 MB (0x08000000)
-    gc_target = (
+    gc_target_conv = (
         "\t\tSystemVoidCosmosCoreGCImplementationInit.IL_010D:" + nl +
         "\t\t\t; Conv_U4" + nl +
         "\t\t\tpop dword EAX" + nl +
         "\t\t\tadd ESP, 0x4" + nl +
-        "\t\t\tpush dword EAX" + nl +
-        nl +
-        "\t\tSystemVoidCosmosCoreGCImplementationInit.IL_010E:" + nl +
-        "\t\t\t; Call" + nl +
-        "\t\t\tCall SystemVoidCosmosCoreMemoryRATInitSystemBytepointerSystemUInt32"
+        "\t\t\tpush dword EAX"
     )
-    gc_repl = (
+    gc_repl_conv = (
         "\t\tSystemVoidCosmosCoreGCImplementationInit.IL_010D:" + nl +
         "\t\t\t; Conv_U4" + nl +
         "\t\t\tpop dword EAX" + nl +
@@ -186,14 +182,10 @@ def patch_asm_file(asm_path):
         "\t\t\tmov dword [static_field__Cosmos_Core_GCImplementation_memLength], EAX" + nl +
         "\t\t\tmov dword [static_field__Cosmos_Core_GCImplementation_memLength + 4], 0" + nl +
         ".safe_mem_len:" + nl +
-        "\t\t\tpush dword EAX" + nl +
-        nl +
-        "\t\tSystemVoidCosmosCoreGCImplementationInit.IL_010E:" + nl +
-        "\t\t\t; Call" + nl +
-        "\t\t\tCall SystemVoidCosmosCoreMemoryRATInitSystemBytepointerSystemUInt32"
+        "\t\t\tpush dword EAX"
     )
-    if gc_target in content:
-        content = content.replace(gc_target, gc_repl, 1)
+    if gc_target_conv in content and ".safe_mem_len:" not in content:
+        content = content.replace(gc_target_conv, gc_repl_conv, 1)
         print("Patched GCImplementation.Init with 128 MB safe heap cap!")
 
     # 7. Patch HeapSmall.Alloc segment reload and null-pointer check at IL_0046
