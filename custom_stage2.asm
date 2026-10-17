@@ -316,6 +316,10 @@ prot_start:
     cld
     rep stosd
 
+    ; Restore Multiboot 2 magic register contract
+    mov eax, 0x36d76289
+    mov ebx, 0x00010000
+
     ; Jump directly to WeatherOS Monolithic Kernel entry point
     jmp edx
 
