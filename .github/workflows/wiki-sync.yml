@@ -1,0 +1,71 @@
+name: Sync Wiki from WIKI.md
+
+on:
+  push:
+    branches:
+      - 32bit
+    paths:
+      - WIKI.md
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync-wiki:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate source file exists
+        run: |
+          set -euo pipefail
+          if [ ! -f WIKI.md ]; then
+            echo "Error: WIKI.md not found at repository root."
+            exit 1
+          fi
+
+      - name: Verify wiki is enabled
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const { data } = await github.rest.repos.get({ owner, repo });
+
+            if (!data.has_wiki) {
+              core.setFailed('Repository wiki is disabled. Enable Wiki in Settings > Features, then rerun this workflow.');
+            }
+
+      - name: Clone wiki repository
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if ! git clone "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.wiki.git" wiki; then
+            echo "Error: Failed to access ${GITHUB_REPOSITORY}.wiki.git. Ensure Wiki is enabled and Actions has permission to write."
+            exit 1
+          fi
+
+      - name: Sync Home.md from WIKI.md
+        run: |
+          set -euo pipefail
+          cp WIKI.md wiki/Home.md
+
+      - name: Commit and push wiki changes
+        working-directory: wiki
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          wiki_branch="$(git symbolic-ref --short HEAD 2>/dev/null || echo master)"
+
+          if [ -z "$(git status --porcelain -- Home.md)" ]; then
+            echo "No changes detected in Home.md. Wiki is already up to date."
+            exit 0
+          fi
+
+          git add Home.md
+          git commit -m "Sync Home.md from WIKI.md"
+          git push origin "HEAD:${wiki_branch}"
