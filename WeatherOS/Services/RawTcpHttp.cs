@@ -1042,7 +1042,7 @@ namespace WeatherOS.Services
             {
                 _acknowledgment = remoteSeq + 1;
                 var nic = NetworkDevice.Devices[0];
-                SendTcpPacket(nic, 0x10, new byte[0]); // ACK ao FIN
+                SendTcpPacket(nic, 0x10, new byte[0]); // ACK FIN
                 _finReceived = true;
             }
         }

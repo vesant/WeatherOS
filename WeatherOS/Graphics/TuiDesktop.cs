@@ -737,7 +737,7 @@ namespace WeatherOS.Graphics
                 System.Console.SetCursorPosition(left, top + 2); System.Console.Write("   - _ - _ - _  ");
                 System.Console.SetCursorPosition(left, top + 3); System.Console.Write("    _ - _ - _   ");
             }
-            // 5. Wind / Vento
+            // 5. Wind
             else if (cond.Contains("wind") || cond.Contains("breeze") || cond.Contains("gale"))
             {
                 System.Console.ForegroundColor = ConsoleColor.Cyan;
@@ -745,7 +745,7 @@ namespace WeatherOS.Graphics
                 System.Console.SetCursorPosition(left, top + 1); System.Console.Write("  ~~~~  -~ --~  ");
                 System.Console.SetCursorPosition(left, top + 2); System.Console.Write("      ~~~~~~    ");
             }
-            // 6. Night - Cloudy (Lua com Nuvens)
+            // 6. Night - Cloudy
             else if (isNight && (cond.Contains("cloud") || cond.Contains("overcast") || cond.Contains("part")))
             {
                 System.Console.ForegroundColor = ConsoleColor.Cyan;
@@ -755,12 +755,12 @@ namespace WeatherOS.Graphics
                 System.Console.SetCursorPosition(left, top + 2); System.Console.Write("  .-(    ).  )  ");
                 System.Console.SetCursorPosition(left, top + 3); System.Console.Write(" (___.__)__)_)  ");
             }
-            // 7. Night - Clear / Moon (Lua de Noite de acordo com a fase lunar exata)
+            // 7. Night - Clear / Moon
             else if (isNight || cond.Contains("moon") || cond.Contains("night") || cond.Contains("noite"))
             {
                 DrawMoonPhaseIcon(moonPhase, left, top);
             }
-            // 8. Day - Partly Cloudy (Sol com Nuvens)
+            // 8. Day - Partly Cloudy
             else if (cond.Contains("part") || (cond.Contains("sun") && cond.Contains("cloud")))
             {
                 System.Console.ForegroundColor = ConsoleColor.Yellow;
@@ -770,7 +770,7 @@ namespace WeatherOS.Graphics
                 System.Console.SetCursorPosition(left, top + 2); System.Console.Write("   .-(   ).  )  ");
                 System.Console.SetCursorPosition(left, top + 3); System.Console.Write("  (___.__)__)_) ");
             }
-            // 9. Day - Clouds / Overcast (Nublado)
+            // 9. Day - Clouds / Overcast
             else if (cond.Contains("cloud") || cond.Contains("overcast"))
             {
                 System.Console.ForegroundColor = ConsoleColor.DarkGray;

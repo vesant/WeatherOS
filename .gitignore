@@ -1,19 +1,52 @@
+# Visual Studio and build caches
 .vs/
-bin/
-obj/
+[Bb]in/
+[Oo]bj/
 *.user
 *.suo
 *.db
 *.log
-*.iso
-*.img
-*.raw
-*.bin
+*.tmp
+*.bak
+
+# Virtual machines and raw disk dumps
 *.vdi
-*.pyc
-__pycache__/
+*.vmdk
+*.qcow2
+*.raw
 WeatherOS_build.raw
-*.exe
+WeatherOS_temp.raw
+WeatherOS_native.raw
+test_disk.raw
+
+# Intermediate test binaries and scripts
+test_*.asm
+test_*.bin
+stage.bin
+stage2.bin
+stage2.asm
+entry_check.bin
+temp_dis.bin
+
+# Screenshots and media
+*.png
+*.jpg
+*.jpeg
+*.bmp
+
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Scratch directory (keep only MSBuild pipeline scripts)
 scratch/*
 !scratch/patch_kernel_alignment.py
 !scratch/update_payload.py
+
+# Deliverables in root vs final/
+*.iso
+*.img
+*.exe
+!final/
+!final/*
