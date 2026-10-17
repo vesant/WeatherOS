@@ -58,6 +58,32 @@ if yasm_path and os.path.exists(yasm_path):
                             sf.write(s2_content)
                 break
 
+        # Extract critical memory manager static field offsets from .symtab
+        smm_offset = 0x51165
+        rat_offset = 0x518b1
+        smt_offset = 0x58e3e
+        try:
+            e_shoff = struct.unpack("<I", elf_data[32:36])[0]
+            sh_sym = elf_data[e_shoff + 9 * 40 : e_shoff + 10 * 40]
+            sym_off, sym_size = struct.unpack('<II', sh_sym[16:24])
+            sh_str = elf_data[e_shoff + 10 * 40 : e_shoff + 11 * 40]
+            str_off, str_size = struct.unpack('<II', sh_str[16:24])
+            str_table = elf_data[str_off : str_off + str_size]
+            num_syms = sym_size // 16
+            for i in range(num_syms):
+                st_name, st_value, st_size, st_info, st_other, st_shndx = struct.unpack('<IIIBBH', elf_data[sym_off + i * 16 : sym_off + (i + 1) * 16])
+                if st_name < len(str_table):
+                    end = str_table.find(b'\0', st_name)
+                    sym_name = str_table[st_name:end].decode('ascii', errors='ignore')
+                    if sym_name == 'static_field__Cosmos_Core_GCImplementation_StartedMemoryManager':
+                        smm_offset = st_value - 0x02000000
+                    elif sym_name == 'static_field__Cosmos_Core_Memory_RAT_mRAT':
+                        rat_offset = st_value - 0x02000000
+                    elif sym_name == 'static_field__Cosmos_Core_Memory_HeapSmall_SMT':
+                        smt_offset = st_value - 0x02000000
+        except Exception as ex:
+            print(f"Symbol parse warning: {ex}")
+
     subprocess.run([yasm_path, "-f", "bin", "-o", mbr_bin, mbr_asm], check=True)
     subprocess.run([yasm_path, "-f", "bin", "-o", stage2_bin, stage2_asm], check=True)
 
@@ -97,6 +123,10 @@ namespace WeatherOS.Services
     /// </summary>
     public static class NativeBootloaderPayload
     {{
+        public const uint StartedMemoryManagerOffset = {hex(smm_offset)};
+        public const uint RatOffset = {hex(rat_offset)};
+        public const uint HeapSmallSmtOffset = {hex(smt_offset)};
+
 {cs_mbr}
 
 {cs_s2}

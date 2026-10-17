@@ -94,12 +94,27 @@ load_loop:
     mov ax, 0x10
     mov ds, ax
     mov es, ax
+
+    ; 1. Copy chunk to running kernel destination at 0x02000000+
     mov esi, 0x00010000            ; Low RAM source buffer
     mov edi, [dest_phys]           ; Physical RAM destination (32MB+)
     movzx ecx, word [chunk_count]
     shl ecx, 7                     ; count * 128 dwords (512 bytes per sector)
     cld
     rep movsd                      ; Hardware 32-bit memory copy!
+    push edi                       ; Save new dest_phys
+
+    ; 2. Also clone chunk to pristine kernel golden copy at 0x01000000+ (16 MB)
+    ; This backup is NEVER executed or touched by Cosmos GC/drivers,
+    ; preserving an authentic, unmutated kernel in physical RAM for hard disk installer!
+    mov esi, 0x00010000            ; Low RAM source buffer
+    mov edi, [dest_phys]           ; Chunk start in 0x02000000+
+    sub edi, 0x01000000            ; Convert to 0x01000000+ (16 MB)
+    movzx ecx, word [chunk_count]
+    shl ecx, 7                     ; count * 128 dwords
+    rep movsd                      ; Hardware 32-bit memory copy!
+
+    pop edi
     mov [dest_phys], edi
 
     ; Return to 16-bit Real Mode cleanly
@@ -797,8 +812,8 @@ chunk_count dw 0
 chunk_index dw 0
 
 ; Patchable variables (updated by make_isohybrid.py)
-rem_sectors dd 16449
-entry_point dd 0x2410b00
+rem_sectors dd 16455
+entry_point dd 0x2410c20
 
 align 4
 dap_read:

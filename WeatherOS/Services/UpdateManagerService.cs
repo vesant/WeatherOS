@@ -353,8 +353,20 @@ namespace WeatherOS.Services
                 }
                 catch { }
 
-                // 5. Deploy WeatherOS 32-bit Monolithic Kernel directly from authentic Physical RAM to Sectors 64..
-                progressCallback?.Invoke("Deploying WeatherOS 32-bit Kernel to hard disk...", 15);
+                // 5. Deploy WeatherOS 32-bit Monolithic Kernel to Sectors 64..
+                // Prefer pristine unmutated golden kernel preserved at 0x01000000 by Stage2 loader
+                uint kernelSourceBase = 0x02000000u;
+                unsafe
+                {
+                    byte* pGolden = (byte*)0x01000000u;
+                    if (pGolden[0] == 0xD6 && pGolden[1] == 0x50 && pGolden[2] == 0x52 && pGolden[3] == 0xE8)
+                    {
+                        kernelSourceBase = 0x01000000u;
+                    }
+                }
+
+                string sourceDesc = (kernelSourceBase == 0x01000000u) ? "Pristine Golden Image (0x01000000)" : "Active RAM (0x02000000)";
+                progressCallback?.Invoke($"Deploying WeatherOS 32-bit Kernel ({sourceDesc})...", 15);
 
                 ulong chunkSize = 16; // 8 KB per chunk (safe ATA buffer size)
                 byte[] chunk = new byte[chunkSize * 512];
@@ -367,8 +379,10 @@ namespace WeatherOS.Services
                     ulong count = Math.Min(chunkSize, totalKernelSectors - copied);
                     ulong targetSector = 64UL + copied;
 
-                    // Direct Physical RAM read: In Live OS session, physical RAM at 0x02000000 holds the authentic running kernel.
-                    uint ramAddress = 0x02000000u + (uint)(copied * 512UL);
+                    // Direct Physical RAM read:
+                    // If kernelSourceBase == 0x01000000: authentic pristine kernel frozen at boot time.
+                    // If kernelSourceBase == 0x02000000: running RAM fallback.
+                    uint ramAddress = kernelSourceBase + (uint)(copied * 512UL);
                     unsafe
                     {
                         byte* pSrc = (byte*)ramAddress;
@@ -384,7 +398,7 @@ namespace WeatherOS.Services
                         // Strict Multiboot2 header verification for first sector (0xE85250D6)
                         if (chunk[0] != 0xD6 || chunk[1] != 0x50 || chunk[2] != 0x52 || chunk[3] != 0xE8)
                         {
-                            statusMessage = $"Hardware read error: Physical RAM at 0x02000000 missing Multiboot header ({chunk[0]:X2} {chunk[1]:X2} {chunk[2]:X2} {chunk[3]:X2}).";
+                            statusMessage = $"Hardware read error: RAM at 0x{kernelSourceBase:X8} missing Multiboot header ({chunk[0]:X2} {chunk[1]:X2} {chunk[2]:X2} {chunk[3]:X2}).";
                             return false;
                         }
                     }
@@ -399,6 +413,34 @@ namespace WeatherOS.Services
                             statusMessage = $"Payload corruption: Entry point at 0x{entryPoint:X8} in RAM invalid ({chunk[offInChunk]:X2} {chunk[offInChunk + 1]:X2}). Expected BC 40.";
                             return false;
                         }
+                    }
+
+                    // Strict Memory Management Sanitization:
+                    // Guarantee that StartedMemoryManager is strictly false (0), and mRAT / SMT pointers are null (0).
+                    // This guarantees GCImplementation.Init will execute cleanly on cold boot from the hard drive,
+                    // properly allocating RAT, SMT, and managed heap instead of crashing with Fault 0D.
+                    ulong byteStart = copied * 512UL;
+                    ulong byteEnd = byteStart + (ulong)count * 512UL;
+
+                    if (NativeBootloaderPayload.StartedMemoryManagerOffset >= byteStart && 
+                        NativeBootloaderPayload.StartedMemoryManagerOffset < byteEnd)
+                    {
+                        uint inChunk = (uint)(NativeBootloaderPayload.StartedMemoryManagerOffset - byteStart);
+                        chunk[inChunk] = 0; // StartedMemoryManager = 0 (false)
+                    }
+
+                    if (NativeBootloaderPayload.RatOffset >= byteStart && 
+                        (NativeBootloaderPayload.RatOffset + 4UL) <= byteEnd)
+                    {
+                        uint inChunk = (uint)(NativeBootloaderPayload.RatOffset - byteStart);
+                        chunk[inChunk] = 0; chunk[inChunk + 1] = 0; chunk[inChunk + 2] = 0; chunk[inChunk + 3] = 0;
+                    }
+
+                    if (NativeBootloaderPayload.HeapSmallSmtOffset >= byteStart && 
+                        (NativeBootloaderPayload.HeapSmallSmtOffset + 4UL) <= byteEnd)
+                    {
+                        uint inChunk = (uint)(NativeBootloaderPayload.HeapSmallSmtOffset - byteStart);
+                        chunk[inChunk] = 0; chunk[inChunk + 1] = 0; chunk[inChunk + 2] = 0; chunk[inChunk + 3] = 0;
                     }
 
                     dev.WriteBlock(targetSector, count, ref chunk);
@@ -457,6 +499,17 @@ namespace WeatherOS.Services
                 if (chkEntry[entryByteOffset] != 0xBC || chkEntry[entryByteOffset + 1] != 0x40)
                 {
                     statusMessage = $"Hardware error: Target disk Entry Point (LBA {entrySector}) verification failed (got {chkEntry[entryByteOffset]:X2} {chkEntry[entryByteOffset + 1]:X2}, expected BC 40).";
+                    return false;
+                }
+
+                // Verify Memory Manager clean state on target hard disk
+                ulong smmSector = 64UL + (ulong)(NativeBootloaderPayload.StartedMemoryManagerOffset / 512u);
+                uint smmByteInSec = NativeBootloaderPayload.StartedMemoryManagerOffset % 512u;
+                byte[] chkSmm = new byte[512];
+                dev.ReadBlock(smmSector, 1, ref chkSmm);
+                if (chkSmm[smmByteInSec] != 0)
+                {
+                    statusMessage = $"Integrity error: Target disk memory manager flag not clean (got {chkSmm[smmByteInSec]:X2}, expected 00).";
                     return false;
                 }
 

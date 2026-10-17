@@ -112,6 +112,27 @@ def patch_asm_file(asm_path):
             content = content.replace(old_block, new_block, 1)
             print("Patched CPU.GetLargestMemoryBlock entries offset (map + 16)!")
 
+    # 5.5. Patch GCImplementation.Init IL_0001 to ensure memory manager always initializes on cold boot
+    # even if StartedMemoryManager was dirty (1) in cloned RAM!
+    smm_check = (
+        "\t\tSystemVoidCosmosCoreGCImplementationInit.IL_0001.AfterCCTorExceptionCheck:" + nl +
+        "\t\t\tmov EAX, 0x0" + nl +
+        "\t\t\tmov AL, byte [static_field__Cosmos_Core_GCImplementation_StartedMemoryManager]" + nl +
+        "\t\t\tpush dword EAX"
+    )
+    smm_repl = (
+        "\t\tSystemVoidCosmosCoreGCImplementationInit.IL_0001.AfterCCTorExceptionCheck:" + nl +
+        "\t\t\tmov EAX, 0x0" + nl +
+        "\t\t\tcmp dword [static_field__Cosmos_Core_Memory_RAT_mRAT], 0" + nl +
+        "\t\t\tje .force_init_mem" + nl +
+        "\t\t\tmov AL, byte [static_field__Cosmos_Core_GCImplementation_StartedMemoryManager]" + nl +
+        ".force_init_mem:" + nl +
+        "\t\t\tpush dword EAX"
+    )
+    if smm_check in content:
+        content = content.replace(smm_check, smm_repl, 1)
+        print("Patched GCImplementation.Init IL_0001 to guarantee cold boot memory initialization!")
+
     # 6. Patch GCImplementation.Init to cap memLength to 128 MB (0x08000000)
     gc_target = (
         "\t\tSystemVoidCosmosCoreGCImplementationInit.IL_010D:" + nl +
