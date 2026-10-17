@@ -148,10 +148,11 @@ namespace WeatherOS.Services
                 if (!WeatherOS.Graphics.TuiDesktop.IsGuiActive)
                     System.Console.WriteLine("[net] raw_tcp: initializing bare-metal TCP connection...");
                 
-                // Destination IPs: WeatherAPI Edge CDN + Hetzner fallback for wttr.in
+                // Destination IPs: WeatherAPI Edge CDNs + Hetzner fallback for wttr.in
                 var primaryIp = new Cosmos.System.Network.IPv4.Address(143, 244, 56, 52);    // WeatherAPI Anycast Edge
-                var wttrIp = new Cosmos.System.Network.IPv4.Address(5, 9, 243, 187);          // Fallback wttr.in
-                var gatewayIp = new Cosmos.System.Network.IPv4.Address(10, 0, 2, 2);
+                var secondaryIp = new Cosmos.System.Network.IPv4.Address(143, 244, 56, 58);  // WeatherAPI Anycast Edge 2
+                var wttrIp = new Cosmos.System.Network.IPv4.Address(5, 9, 243, 187);         // Fallback wttr.in
+                var gatewayIp = RawTcpHttp.GetGatewayAddress();
 
                 if (!string.IsNullOrEmpty(city))
                 {
@@ -179,7 +180,15 @@ namespace WeatherOS.Services
                 // 1. Primary WeatherAPI Anycast CDN (143.244.56.52)
                 string response = RawTcpHttp.FetchGet(primaryIp, gatewayIp, weatherApiRequest);
 
-                // 2. Direct fallback to wttr.in if WeatherAPI was unreachable
+                // 2. Secondary WeatherAPI Edge CDN (143.244.56.58)
+                if (string.IsNullOrWhiteSpace(response))
+                {
+                    if (_debugMode && !WeatherOS.Graphics.TuiDesktop.IsGuiActive)
+                        System.Console.WriteLine($"[net] raw_tcp: falling back to secondary WeatherAPI edge ({secondaryIp.ToString()})...");
+                    response = RawTcpHttp.FetchGet(secondaryIp, gatewayIp, weatherApiRequest);
+                }
+
+                // 3. Direct fallback to wttr.in if WeatherAPI was unreachable
                 if (string.IsNullOrWhiteSpace(response))
                 {
                     if (_debugMode && !WeatherOS.Graphics.TuiDesktop.IsGuiActive)

@@ -63,6 +63,12 @@ namespace WeatherOS.Services
             return $"{_gatewayIp[0]}.{_gatewayIp[1]}.{_gatewayIp[2]}.{_gatewayIp[3]}";
         }
 
+        public static Cosmos.System.Network.IPv4.Address GetGatewayAddress()
+        {
+            if (_gatewayIp[0] == 0 && _gatewayIp[1] == 0) return new Cosmos.System.Network.IPv4.Address(192, 168, 1, 1);
+            return new Cosmos.System.Network.IPv4.Address(_gatewayIp[0], _gatewayIp[1], _gatewayIp[2], _gatewayIp[3]);
+        }
+
         public static string GetMaskedIp()
         {
             if (_ipSource[0] == 0 && _ipSource[1] == 0) return "Offline";
@@ -104,7 +110,7 @@ namespace WeatherOS.Services
             try
             {
                 var port = new Cosmos.Core.IOPort(0x80);
-                int count = ms * 50;
+                int count = ms * 1000;
                 for (int i = 0; i < count; i++)
                 {
                     port.Byte = 0;
@@ -136,20 +142,20 @@ namespace WeatherOS.Services
                 return;
             }
 
-            // 1. DHCP Discover with real-time Retransmissions (up to 250ms max)
+            // 1. DHCP Discover with real-time Retransmissions (up to 1200ms max)
             if (!isGui) System.Console.Write("[net] raw_tcp: broadcasting DHCP Discover");
             _dhcpOfferReceived = false;
             _dhcpAckReceived = false;
             byte[] dhcp = BuildDhcpPacket(1, null, null); // Discover
             nic.QueueBytes(dhcp);
 
-            for (int i = 0; i < 25 && !_dhcpOfferReceived; i++)
+            for (int i = 0; i < 60 && !_dhcpOfferReceived; i++)
             {
                 WeatherOS.Kernel.CustomNIC?.HackPoll();
-                HardwareDelayMs(10);
-                if (i == 12)
+                HardwareDelayMs(20);
+                if (i == 15 || i == 30)
                 {
-                    nic.QueueBytes(dhcp); // Retransmit Discover once at 120ms
+                    nic.QueueBytes(dhcp); // Retransmit Discover at 300ms and 600ms
                 }
                 if (!isGui && (i % 5 == 0)) System.Console.Write(".");
             }
@@ -157,13 +163,14 @@ namespace WeatherOS.Services
             
             if (_dhcpOfferReceived)
             {
-                // 1b. DHCP Request (up to 250ms max)
+                // 1b. DHCP Request (up to 600ms max)
                 byte[] dhcpReq = BuildDhcpPacket(3, _ipSource, _dhcpServerIp);
                 nic.QueueBytes(dhcpReq);
-                for (int i = 0; i < 25 && !_dhcpAckReceived; i++)
+                for (int i = 0; i < 30 && !_dhcpAckReceived; i++)
                 {
                     WeatherOS.Kernel.CustomNIC?.HackPoll();
-                    HardwareDelayMs(10);
+                    HardwareDelayMs(20);
+                    if (i == 15) nic.QueueBytes(dhcpReq);
                 }
 
                 if (!isGui)
@@ -180,10 +187,10 @@ namespace WeatherOS.Services
                 if (!isGui) System.Console.WriteLine("[net] raw_tcp: DHCP silent. Probing router gateways...");
 
                 byte[][] candidateGateways = new byte[][] {
+                    new byte[] { 192, 168, 1, 1 },   // MEO / NOS / Vodafone (Standard PT)
+                    new byte[] { 192, 168, 1, 254 }, // Altice FiberGateway (Standard PT)
+                    new byte[] { 192, 168, 0, 1 },   // TP-Link / NOS router
                     new byte[] { 192, 168, 31, 1 },  // Xiaomi / XiaoQiang
-                    new byte[] { 192, 168, 1, 1 },   // MEO / NOS / Vodafone
-                    new byte[] { 192, 168, 1, 254 }, // Altice FiberGateway
-                    new byte[] { 192, 168, 0, 1 },   // TP-Link / D-Link
                     new byte[] { 10, 0, 2, 2 }       // QEMU / VirtualBox
                 };
 
@@ -194,10 +201,10 @@ namespace WeatherOS.Services
                     _arpReplyReceived = false;
                     SendArpRequest(cand);
 
-                    for (int a = 0; a < 4 && !_arpReplyReceived; a++)
+                    for (int a = 0; a < 15 && !_arpReplyReceived; a++)
                     {
                         WeatherOS.Kernel.CustomNIC?.HackPoll();
-                        HardwareDelayMs(5);
+                        HardwareDelayMs(10);
                     }
 
                     if (_arpReplyReceived)
@@ -236,8 +243,8 @@ namespace WeatherOS.Services
 
         private static void SetDefaultFallbackIp()
         {
-            _ipSource = new byte[] { 192, 168, 31, 100 };
-            _gatewayIp = new byte[] { 192, 168, 31, 1 };
+            _ipSource = new byte[] { 192, 168, 1, 155 };
+            _gatewayIp = new byte[] { 192, 168, 1, 1 };
         }
 
         private static byte[] BuildDhcpPacket(byte msgType, byte[] requestedIp, byte[] serverIp)
@@ -480,14 +487,29 @@ namespace WeatherOS.Services
                 if (_ipSource[0] == 0 && _ipSource[1] == 0) return null;
             }
 
+            if (_gatewayIp[0] == 0 && gatewayIp != null)
+            {
+                byte[] gwBytes = gatewayIp.ToByteArray();
+                if (gwBytes[0] != 0)
+                {
+                    Array.Copy(gwBytes, 0, _gatewayIp, 0, 4);
+                }
+            }
+
             _ipDest = destIp.ToByteArray();
             TargetPort = 80;
 
-            // Refresh router ARP cache before starting TCP
-            if (_gatewayIp[0] != 0) SendArpRequest(_gatewayIp);
+            // Ensure router MAC address is resolved via ARP before starting TCP
+            if (_gatewayIp[0] != 0)
+            {
+                if (_macDest == null || (_macDest[0] == 0xFF && _macDest[1] == 0xFF) || (_macDest[0] == 0 && _macDest[1] == 0))
+                {
+                    ResolveArp(_gatewayIp, _macDest, 600);
+                }
+            }
 
             // Flush any residual incoming packets from previous session
-            for (int drain = 0; drain < 30; drain++)
+            for (int drain = 0; drain < 20; drain++)
             {
                 WeatherOS.Kernel.CustomNIC?.HackPoll();
                 HardwareDelayMs(1);
@@ -507,16 +529,16 @@ namespace WeatherOS.Services
 
             try
             {
-                // Send SYN with fast retransmission (up to 2 attempts, 200ms each)
-                for (int attempt = 0; attempt < 2; attempt++)
+                // Send SYN with robust retransmission (up to 3 attempts, 600ms each)
+                for (int attempt = 0; attempt < 3; attempt++)
                 {
                     SendTcpPacket(nic, 0x02, new byte[0]); // SYN
                     
                     int synTimeout = 0;
-                    while (!_synAckReceived && synTimeout < 40) // 40 * 5ms = 200ms
+                    while (!_synAckReceived && synTimeout < 60) // 60 * 10ms = 600ms
                     {
                         WeatherOS.Kernel.CustomNIC?.HackPoll();
-                        HardwareDelayMs(5);
+                        HardwareDelayMs(10);
                         synTimeout++;
                     }
                     if (_synAckReceived) break;
@@ -536,15 +558,15 @@ namespace WeatherOS.Services
                 SendTcpPacket(nic, 0x18, payload); // ACK + PSH
                 _sequence += (uint)payload.Length;
 
-                // Wait for complete response data (with real-time pacing, 1.8s max)
+                // Wait for complete response data (with real-time pacing, up to 4000ms max)
                 int dataMs = 0;
                 int lastRxLen = _rxLength;
                 int quietMs = 0;
-                while (!_finReceived && dataMs < 1800)
+                while (!_finReceived && dataMs < 4000)
                 {
                     WeatherOS.Kernel.CustomNIC?.HackPoll();
-                    HardwareDelayMs(5);
-                    dataMs += 5;
+                    HardwareDelayMs(10);
+                    dataMs += 10;
 
                     if (_rxLength > lastRxLen)
                     {
@@ -553,9 +575,9 @@ namespace WeatherOS.Services
                     }
                     else if (_rxLength > 0)
                     {
-                        quietMs += 5;
-                        // Wait until full JSON is received (braces balanced) or 200ms of silence
-                        if (_rxLength > 300 && quietMs >= 200) break;
+                        quietMs += 10;
+                        // Wait until full JSON is received or 300ms of silence
+                        if (_rxLength > 200 && quietMs >= 300) break;
                     }
                 }
 
@@ -654,7 +676,13 @@ namespace WeatherOS.Services
             _ipDest = destIp.ToByteArray();
             TargetPort = destPort;
 
-            if (_gatewayIp[0] != 0) SendArpRequest(_gatewayIp);
+            if (_gatewayIp[0] != 0)
+            {
+                if (_macDest == null || (_macDest[0] == 0xFF && _macDest[1] == 0xFF) || (_macDest[0] == 0 && _macDest[1] == 0))
+                {
+                    ResolveArp(_gatewayIp, _macDest, 600);
+                }
+            }
 
             // Drain any lingering packets
             for (int drain = 0; drain < 25; drain++)
