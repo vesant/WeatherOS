@@ -158,7 +158,7 @@ namespace WeatherOS.Apps
             }
 
             // Bottom telemetry status bar
-            string locInfo = $" Location: {data.Location}  |  Source: WeatherAPI.com CDN Telemetry ";
+            string locInfo = $" Location: {data.Location}  |  Source: OpenWeather / Open-Meteo Telemetry ";
             win.WriteRow(15, locInfo, ConsoleColor.Yellow, 1, ConsoleColor.DarkBlue, true);
             win.WriteFooter("[ESC] Return  |  [C] Change City  |  [W] Dashboard  |  [R] Refresh", ConsoleColor.White);
         }

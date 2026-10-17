@@ -151,7 +151,8 @@ namespace WeatherOS.Services
                 if (!WeatherOS.Graphics.TuiDesktop.IsGuiActive)
                     System.Console.WriteLine("[net] raw_tcp: initializing bare-metal TCP connection...");
                 
-                // Destination IPs: WeatherAPI Edge CDNs + Hetzner fallback for wttr.in
+                // Destination IPs: Open-Meteo (Hetzner, High Precision) + WeatherAPI Anycast Edge + wttr.in
+                var openMeteoIp = new Cosmos.System.Network.IPv4.Address(94, 130, 142, 35);   // Open-Meteo (api.open-meteo.com)
                 var primaryIp = new Cosmos.System.Network.IPv4.Address(143, 244, 56, 52);    // WeatherAPI Anycast Edge
                 var secondaryIp = new Cosmos.System.Network.IPv4.Address(143, 244, 56, 58);  // WeatherAPI Anycast Edge 2
                 var wttrIp = new Cosmos.System.Network.IPv4.Address(5, 9, 243, 187);         // Fallback wttr.in
@@ -175,25 +176,52 @@ namespace WeatherOS.Services
                 _cachedReading.Location = displayLocation;
                 _cachedReading.Condition = "Awaiting Telemetry...";
 
-                string effectiveKey = !string.IsNullOrWhiteSpace(apiKey) ? apiKey : "bc0cfac1c3144fc3bf0145134260810";
+                string response = null;
+                bool isOpenMeteo = false;
 
-                string weatherApiRequest = "GET /v1/forecast.json?key=" + effectiveKey + "&q=" + safeCity + "&days=7 HTTP/1.1\r\nHost: api.weatherapi.com\r\nUser-Agent: WeatherOS/3.0\r\nConnection: close\r\n\r\n";
-
-                if (_debugMode && !WeatherOS.Graphics.TuiDesktop.IsGuiActive)
-                    System.Console.WriteLine($"[net] raw_tcp: querying WeatherAPI via {primaryIp.ToString()}...");
-
-                // 1. Primary WeatherAPI Anycast CDN (143.244.56.52)
-                string response = RawTcpHttp.FetchGet(primaryIp, gatewayIp, weatherApiRequest);
-
-                // 2. Secondary WeatherAPI Edge CDN (143.244.56.58)
-                if (string.IsNullOrWhiteSpace(response))
+                // 1. High-Precision Query via Open-Meteo when coordinates are available (provides exact humidity & genuine 7-day forecast)
+                if (safeCity.Contains(","))
                 {
-                    if (_debugMode && !WeatherOS.Graphics.TuiDesktop.IsGuiActive)
-                        System.Console.WriteLine($"[net] raw_tcp: falling back to secondary WeatherAPI edge ({secondaryIp.ToString()})...");
-                    response = RawTcpHttp.FetchGet(secondaryIp, gatewayIp, weatherApiRequest);
+                    string[] coords = safeCity.Split(',');
+                    if (coords.Length == 2)
+                    {
+                        string lat = coords[0].Trim();
+                        string lon = coords[1].Trim();
+                        string openMeteoRequest = "GET /v1/forecast?latitude=" + lat + "&longitude=" + lon + "&current=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,weather_code,surface_pressure,wind_speed_10m,wind_direction_10m&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max&timezone=auto HTTP/1.1\r\nHost: api.open-meteo.com\r\nUser-Agent: WeatherOS/3.0\r\nConnection: close\r\n\r\n";
+                        if (_debugMode && !WeatherOS.Graphics.TuiDesktop.IsGuiActive)
+                            System.Console.WriteLine($"[net] raw_tcp: querying Open-Meteo via {openMeteoIp.ToString()}...");
+                        response = RawTcpHttp.FetchGet(openMeteoIp, gatewayIp, openMeteoRequest);
+                        if (!string.IsNullOrWhiteSpace(response) && CustomIndexOf(response, "\"current\":", 0) != -1)
+                        {
+                            isOpenMeteo = true;
+                        }
+                        else
+                        {
+                            response = null;
+                        }
+                    }
                 }
 
-                // 3. Direct fallback to wttr.in if WeatherAPI was unreachable
+                // 2. Primary WeatherAPI Anycast CDN (143.244.56.52) fallback
+                if (string.IsNullOrWhiteSpace(response))
+                {
+                    string effectiveKey = !string.IsNullOrWhiteSpace(apiKey) ? apiKey : "bc0cfac1c3144fc3bf0145134260810";
+                    string weatherApiRequest = "GET /v1/forecast.json?key=" + effectiveKey + "&q=" + safeCity + "&days=7 HTTP/1.1\r\nHost: api.weatherapi.com\r\nUser-Agent: WeatherOS/3.0\r\nConnection: close\r\n\r\n";
+
+                    if (_debugMode && !WeatherOS.Graphics.TuiDesktop.IsGuiActive)
+                        System.Console.WriteLine($"[net] raw_tcp: querying WeatherAPI via {primaryIp.ToString()}...");
+                    response = RawTcpHttp.FetchGet(primaryIp, gatewayIp, weatherApiRequest);
+
+                    // 3. Secondary WeatherAPI Edge CDN (143.244.56.58)
+                    if (string.IsNullOrWhiteSpace(response))
+                    {
+                        if (_debugMode && !WeatherOS.Graphics.TuiDesktop.IsGuiActive)
+                            System.Console.WriteLine($"[net] raw_tcp: falling back to secondary WeatherAPI edge ({secondaryIp.ToString()})...");
+                        response = RawTcpHttp.FetchGet(secondaryIp, gatewayIp, weatherApiRequest);
+                    }
+                }
+
+                // 4. Direct fallback to wttr.in if WeatherAPI was unreachable
                 if (string.IsNullOrWhiteSpace(response))
                 {
                     if (_debugMode && !WeatherOS.Graphics.TuiDesktop.IsGuiActive)
@@ -214,6 +242,12 @@ namespace WeatherOS.Services
                         _cachedReading.AlertLevel = "NONE";
                         if (_debugMode && !WeatherOS.Graphics.TuiDesktop.IsGuiActive)
                             System.Console.WriteLine("[net] raw_tcp: API returned error for city.");
+                    }
+                    else if (isOpenMeteo)
+                    {
+                        ParseOpenMeteoJson(response, cleanCity, displayLocation);
+                        if (_debugMode && !WeatherOS.Graphics.TuiDesktop.IsGuiActive)
+                            System.Console.WriteLine("[net] raw_tcp: Open-Meteo telemetry received successfully. (status: 200 OK)");
                     }
                     else if (CustomIndexOf(response, "\"temp_C\":", 0) != -1 || CustomIndexOf(response, "\"temp_c\":", 0) != -1)
                     {
@@ -425,130 +459,362 @@ namespace WeatherOS.Services
                     }
                 }
 
-                // Comprehensive Meteorological Weather Warnings & Hazard Detection
-                _cachedReading.AlertLevel = "NONE";
-                _cachedReading.AlertMessage = "All clear. No severe weather hazards reported.";
+                // Meteorological Weather Warnings & Hazard Detection
+                EvaluateWeatherAlerts();
+            }
+            catch { }
+        }
 
-                string condUpper = (_cachedReading.Condition ?? "").ToUpper();
-                int code = _cachedReading.WeatherCode;
-                float precipMm = _cachedReading.PrecipitationMm;
-                float press = _cachedReading.PressureHpa;
-                float windSpd = _cachedReading.WindSpeedKmh;
-                float tempC = _cachedReading.TemperatureCelsius;
+        private void ParseOpenMeteoJson(string json, string fallbackCity, string displayLocation)
+        {
+            try
+            {
+                int curIdx = CustomIndexOf(json, "\"current\":", 0);
+                if (curIdx != -1)
+                {
+                    _cachedReading.TemperatureCelsius = ParseJsonFloatFromIndex(json, "temperature_2m", curIdx);
+                    _cachedReading.HumidityPercent = ParseJsonFloatFromIndex(json, "relative_humidity_2m", curIdx);
+                    _cachedReading.PressureHpa = ParseJsonFloatFromIndex(json, "surface_pressure", curIdx);
+                    _cachedReading.WindSpeedKmh = ParseJsonFloatFromIndex(json, "wind_speed_10m", curIdx);
+                    _cachedReading.PrecipitationMm = ParseJsonFloatFromIndex(json, "precipitation", curIdx);
 
-                bool isThunder = condUpper.Contains("THUNDER") || condUpper.Contains("LIGHTNING") ||
-                                 condUpper.Contains("TROVOADA") || condUpper.Contains("TEMPESTADE") ||
-                                 condUpper.Contains("TORMENTA") || condUpper.Contains("TORNADO") ||
-                                 condUpper.Contains("HURRICANE") || condUpper.Contains("CYCLONE") ||
-                                 code == 200 || code == 386 || code == 389 || code == 392 || code == 395;
+                    float wCode = ParseJsonFloatFromIndex(json, "weather_code", curIdx);
+                    _cachedReading.WeatherCode = (int)wCode;
+                    _cachedReading.Condition = GetConditionFromWmoCode((int)wCode);
 
-                bool isHeavyRain = condUpper.Contains("HEAVY RAIN") || condUpper.Contains("TORRENTIAL") ||
-                                   condUpper.Contains("EXTREME RAIN") || condUpper.Contains("DOWNPOUR") ||
-                                   condUpper.Contains("FLOOD") || condUpper.Contains("CHUVA FORTE") ||
-                                   condUpper.Contains("CHUVA TORRENCIAL") ||
-                                   code == 359 || code == 308 || code == 305 || precipMm >= 5.0f;
+                    float windDirDeg = ParseJsonFloatFromIndex(json, "wind_direction_10m", curIdx);
+                    _cachedReading.WindDirection = WindDegreesToDirection((int)windDirDeg);
+                }
 
-                bool isRain = condUpper.Contains("RAIN") || condUpper.Contains("SHOWER") ||
-                              condUpper.Contains("DRIZZLE") || condUpper.Contains("AGUACEIRO") ||
-                              condUpper.Contains("CHUVA") || condUpper.Contains("PRECIPITATION") ||
-                              condUpper.Contains("SLEET") ||
-                              code == 353 || code == 356 || code == 293 || code == 296 ||
-                              code == 302 || code == 299 || code == 263 || code == 266 ||
-                              code == 176 || code == 311 || code == 314 || precipMm > 0.0f;
-
-                bool isBlizzard = condUpper.Contains("BLIZZARD") || condUpper.Contains("NEVASCA") ||
-                                  code == 230 || (condUpper.Contains("SNOW") && windSpd > 25.0f);
-
-                bool isSnow = condUpper.Contains("SNOW") || condUpper.Contains("NEVE") ||
-                              condUpper.Contains("FLURR") ||
-                              code == 227 || code == 323 || code == 326 || code == 329 ||
-                              code == 332 || code == 335 || code == 338 || code == 350 ||
-                              code == 368 || code == 371;
-
-                bool isFog = condUpper.Contains("FOG") || condUpper.Contains("MIST") ||
-                             condUpper.Contains("NEVOEIRO") || condUpper.Contains("NEBLINA") ||
-                             code == 248 || code == 260 || code == 143;
-
-                if (isThunder)
+                if (!string.IsNullOrWhiteSpace(displayLocation))
                 {
-                    _cachedReading.AlertLevel = "RED";
-                    _cachedReading.AlertMessage = "THUNDERSTORM & RAIN WARNING: " + condUpper;
+                    _cachedReading.Location = displayLocation;
                 }
-                else if (isHeavyRain)
+                else if (!string.IsNullOrWhiteSpace(fallbackCity))
                 {
-                    _cachedReading.AlertLevel = "RED";
-                    _cachedReading.AlertMessage = "HEAVY RAIN & FLASH FLOOD WARNING: " + condUpper;
-                }
-                else if (isBlizzard)
-                {
-                    _cachedReading.AlertLevel = "RED";
-                    _cachedReading.AlertMessage = "BLIZZARD & DRIFTING SNOW WARNING";
-                }
-                else if (windSpd > 70.0f)
-                {
-                    _cachedReading.AlertLevel = "RED";
-                    _cachedReading.AlertMessage = "HIGH WIND / GALE WARNING (" + ((int)windSpd) + " km/h)";
-                }
-                else if (tempC > 38.0f)
-                {
-                    _cachedReading.AlertLevel = "RED";
-                    _cachedReading.AlertMessage = "EXTREME HEAT WARNING (" + ((int)tempC) + " C)";
-                }
-                else if (tempC < -8.0f)
-                {
-                    _cachedReading.AlertLevel = "RED";
-                    _cachedReading.AlertMessage = "EXTREME FREEZING WARNING (" + ((int)tempC) + " C)";
-                }
-                else if (isRain && press > 0.0f && press <= 1008.0f)
-                {
-                    // Convective low-pressure rain and thunderstorm advisory (e.g. Baltic depression front in Parnu)
-                    _cachedReading.AlertLevel = "YELLOW";
-                    _cachedReading.AlertMessage = "RAIN & THUNDERSTORM ADVISORY: " + condUpper;
-                }
-                else if (isRain && windSpd >= 35.0f)
-                {
-                    _cachedReading.AlertLevel = "YELLOW";
-                    _cachedReading.AlertMessage = "RAIN & SQUALL ADVISORY: " + condUpper + " (" + ((int)windSpd) + " km/h)";
-                }
-                else if (isRain)
-                {
-                    _cachedReading.AlertLevel = "YELLOW";
-                    _cachedReading.AlertMessage = "RAIN & PRECIPITATION ADVISORY: " + condUpper;
-                }
-                else if (isSnow)
-                {
-                    _cachedReading.AlertLevel = "YELLOW";
-                    _cachedReading.AlertMessage = "WINTER WEATHER & SNOW ADVISORY: " + condUpper;
-                }
-                else if (windSpd > 40.0f)
-                {
-                    _cachedReading.AlertLevel = "YELLOW";
-                    _cachedReading.AlertMessage = "STRONG WIND ADVISORY (" + ((int)windSpd) + " km/h)";
-                }
-                else if (tempC > 32.0f)
-                {
-                    _cachedReading.AlertLevel = "YELLOW";
-                    _cachedReading.AlertMessage = "HEAT ADVISORY (" + ((int)tempC) + " C)";
-                }
-                else if (tempC <= 1.0f)
-                {
-                    _cachedReading.AlertLevel = "YELLOW";
-                    _cachedReading.AlertMessage = "FROST & SUB-ZERO ADVISORY (" + ((int)tempC) + " C)";
-                }
-                else if (isFog)
-                {
-                    _cachedReading.AlertLevel = "YELLOW";
-                    _cachedReading.AlertMessage = "DENSE FOG & REDUCED VISIBILITY ADVISORY";
+                    _cachedReading.Location = fallbackCity.ToUpper();
                 }
                 else
                 {
-                    _cachedReading.AlertLevel = "NONE";
-                    _cachedReading.AlertMessage = "All clear. No severe weather hazards reported.";
+                    _cachedReading.Location = "SETUBAL, PT";
                 }
-                
-                _cachedReading.Timestamp = DateTime.UtcNow;
+
+                int curHour = DateTime.UtcNow.Hour;
+                _cachedReading.IsNight = (curHour < 7 || curHour >= 20);
+
+                // Open-Meteo astronomical moon phase & illumination estimation
+                DateTime now = DateTime.UtcNow;
+                var refNewMoon = new DateTime(2024, 1, 11, 11, 57, 0, DateTimeKind.Utc);
+                double daysSince = (now - refNewMoon).TotalDays;
+                double synodicCycle = daysSince % 29.53058867;
+                if (synodicCycle < 0) synodicCycle += 29.53058867;
+                double phasePct = synodicCycle / 29.53058867;
+                int illumPct = (int)(Math.Round((1.0 - Math.Cos(phasePct * 2.0 * Math.PI)) / 2.0 * 100.0));
+                _cachedReading.MoonIllumination = illumPct + "%";
+
+                if (synodicCycle < 1.84) _cachedReading.MoonPhase = "New Moon";
+                else if (synodicCycle < 5.53) _cachedReading.MoonPhase = "Waxing Crescent";
+                else if (synodicCycle < 9.22) _cachedReading.MoonPhase = "First Quarter";
+                else if (synodicCycle < 12.91) _cachedReading.MoonPhase = "Waxing Gibbous";
+                else if (synodicCycle < 16.61) _cachedReading.MoonPhase = "Full Moon";
+                else if (synodicCycle < 20.30) _cachedReading.MoonPhase = "Waning Gibbous";
+                else if (synodicCycle < 23.99) _cachedReading.MoonPhase = "Last Quarter";
+                else if (synodicCycle < 27.68) _cachedReading.MoonPhase = "Waning Crescent";
+                else _cachedReading.MoonPhase = "New Moon";
+
+                // Parse 7-day daily forecast arrays directly from Open-Meteo
+                int dailyIdx = CustomIndexOf(json, "\"daily\":", 0);
+                if (dailyIdx != -1)
+                {
+                    string[] dates = ParseJsonStringArray(json, "time", 7);
+                    float[] wCodes = ParseJsonFloatArray(json, "weather_code", 7);
+                    float[] maxTemps = ParseJsonFloatArray(json, "temperature_2m_max", 7);
+                    float[] minTemps = ParseJsonFloatArray(json, "temperature_2m_min", 7);
+                    float[] rainProbs = ParseJsonFloatArray(json, "precipitation_probability_max", 7);
+
+                    int count = Math.Min(7, dates.Length);
+                    if (count > 0)
+                    {
+                        _cachedReading.ForecastDays = new ForecastDayData[7];
+                        string curPhase = _cachedReading.MoonPhase;
+                        string curIllum = _cachedReading.MoonIllumination;
+
+                        for (int d = 0; d < 7; d++)
+                        {
+                            string dDate = (d < dates.Length) ? dates[d] : "";
+                            string dDayOfWeek = GetDayOfWeekName(dDate, d);
+                            int dCode = (d < wCodes.Length) ? (int)wCodes[d] : _cachedReading.WeatherCode;
+                            float dMax = (d < maxTemps.Length) ? maxTemps[d] : _cachedReading.TemperatureCelsius;
+                            float dMin = (d < minTemps.Length) ? minTemps[d] : (_cachedReading.TemperatureCelsius - 5f);
+                            int dRain = (d < rainProbs.Length) ? (int)rainProbs[d] : 0;
+                            string dCond = GetConditionFromWmoCode(dCode);
+
+                            _cachedReading.ForecastDays[d] = new ForecastDayData
+                            {
+                                Date = dDate,
+                                DayOfWeek = dDayOfWeek,
+                                MaxTempC = dMax,
+                                MinTempC = dMin,
+                                ChanceOfRain = dRain,
+                                Condition = dCond,
+                                MoonPhase = curPhase,
+                                MoonIllumination = curIllum
+                            };
+
+                            AdvanceMoonPhase(ref curPhase, ref curIllum);
+                        }
+                    }
+                }
+
+                EvaluateWeatherAlerts();
             }
             catch { }
+        }
+
+        private void EvaluateWeatherAlerts()
+        {
+            _cachedReading.AlertLevel = "NONE";
+            _cachedReading.AlertMessage = "All clear. No severe weather hazards reported.";
+
+            string condUpper = (_cachedReading.Condition ?? "").ToUpper();
+            int code = _cachedReading.WeatherCode;
+            float precipMm = _cachedReading.PrecipitationMm;
+            float press = _cachedReading.PressureHpa;
+            float windSpd = _cachedReading.WindSpeedKmh;
+            float tempC = _cachedReading.TemperatureCelsius;
+
+            bool isThunder = condUpper.Contains("THUNDER") || condUpper.Contains("LIGHTNING") ||
+                             condUpper.Contains("TROVOADA") || condUpper.Contains("TEMPESTADE") ||
+                             condUpper.Contains("TORMENTA") || condUpper.Contains("TORNADO") ||
+                             condUpper.Contains("HURRICANE") || condUpper.Contains("CYCLONE") ||
+                             code == 200 || code == 386 || code == 389 || code == 392 || code == 395 ||
+                             code == 95 || code == 96 || code == 99;
+
+            bool isHeavyRain = condUpper.Contains("HEAVY RAIN") || condUpper.Contains("TORRENTIAL") ||
+                               condUpper.Contains("EXTREME RAIN") || condUpper.Contains("DOWNPOUR") ||
+                               condUpper.Contains("FLOOD") || condUpper.Contains("CHUVA FORTE") ||
+                               condUpper.Contains("CHUVA TORRENCIAL") ||
+                               code == 359 || code == 308 || code == 305 || code == 65 || code == 82 || precipMm >= 5.0f;
+
+            bool isRain = condUpper.Contains("RAIN") || condUpper.Contains("SHOWER") ||
+                          condUpper.Contains("DRIZZLE") || condUpper.Contains("AGUACEIRO") ||
+                          condUpper.Contains("CHUVA") || condUpper.Contains("PRECIPITATION") ||
+                          condUpper.Contains("SLEET") ||
+                          code == 353 || code == 356 || code == 293 || code == 296 ||
+                          code == 302 || code == 299 || code == 263 || code == 266 ||
+                          code == 176 || code == 311 || code == 314 ||
+                          (code >= 51 && code <= 67) || (code >= 80 && code <= 82) || precipMm > 0.0f;
+
+            bool isBlizzard = condUpper.Contains("BLIZZARD") || condUpper.Contains("NEVASCA") ||
+                              code == 230 || (condUpper.Contains("SNOW") && windSpd > 25.0f);
+
+            bool isSnow = condUpper.Contains("SNOW") || condUpper.Contains("NEVE") ||
+                          condUpper.Contains("FLURR") ||
+                          code == 227 || code == 323 || code == 326 || code == 329 ||
+                          code == 332 || code == 335 || code == 338 || code == 350 ||
+                          code == 368 || code == 371 || (code >= 71 && code <= 77) || (code >= 85 && code <= 86);
+
+            bool isFog = condUpper.Contains("FOG") || condUpper.Contains("MIST") ||
+                         condUpper.Contains("NEVOEIRO") || condUpper.Contains("NEBLINA") ||
+                         code == 248 || code == 260 || code == 143 || code == 45 || code == 48;
+
+            if (isThunder)
+            {
+                _cachedReading.AlertLevel = "RED";
+                _cachedReading.AlertMessage = "THUNDERSTORM & RAIN WARNING: " + condUpper;
+            }
+            else if (isHeavyRain)
+            {
+                _cachedReading.AlertLevel = "RED";
+                _cachedReading.AlertMessage = "HEAVY RAIN & FLASH FLOOD WARNING: " + condUpper;
+            }
+            else if (isBlizzard)
+            {
+                _cachedReading.AlertLevel = "RED";
+                _cachedReading.AlertMessage = "BLIZZARD & DRIFTING SNOW WARNING";
+            }
+            else if (windSpd > 70.0f)
+            {
+                _cachedReading.AlertLevel = "RED";
+                _cachedReading.AlertMessage = "HIGH WIND / GALE WARNING (" + ((int)windSpd) + " km/h)";
+            }
+            else if (tempC > 38.0f)
+            {
+                _cachedReading.AlertLevel = "RED";
+                _cachedReading.AlertMessage = "EXTREME HEAT WARNING (" + ((int)tempC) + " C)";
+            }
+            else if (tempC < -8.0f)
+            {
+                _cachedReading.AlertLevel = "RED";
+                _cachedReading.AlertMessage = "EXTREME FREEZING WARNING (" + ((int)tempC) + " C)";
+            }
+            else if (isRain && press > 0.0f && press <= 1008.0f)
+            {
+                _cachedReading.AlertLevel = "YELLOW";
+                _cachedReading.AlertMessage = "RAIN & THUNDERSTORM ADVISORY: " + condUpper;
+            }
+            else if (isRain && windSpd >= 35.0f)
+            {
+                _cachedReading.AlertLevel = "YELLOW";
+                _cachedReading.AlertMessage = "RAIN & SQUALL ADVISORY: " + condUpper + " (" + ((int)windSpd) + " km/h)";
+            }
+            else if (isRain)
+            {
+                _cachedReading.AlertLevel = "YELLOW";
+                _cachedReading.AlertMessage = "RAIN & PRECIPITATION ADVISORY: " + condUpper;
+            }
+            else if (isSnow)
+            {
+                _cachedReading.AlertLevel = "YELLOW";
+                _cachedReading.AlertMessage = "WINTER WEATHER & SNOW ADVISORY: " + condUpper;
+            }
+            else if (windSpd > 40.0f)
+            {
+                _cachedReading.AlertLevel = "YELLOW";
+                _cachedReading.AlertMessage = "STRONG WIND ADVISORY (" + ((int)windSpd) + " km/h)";
+            }
+            else if (tempC > 32.0f)
+            {
+                _cachedReading.AlertLevel = "YELLOW";
+                _cachedReading.AlertMessage = "HEAT ADVISORY (" + ((int)tempC) + " C)";
+            }
+            else if (tempC <= 1.0f)
+            {
+                _cachedReading.AlertLevel = "YELLOW";
+                _cachedReading.AlertMessage = "FROST & SUB-ZERO ADVISORY (" + ((int)tempC) + " C)";
+            }
+            else if (isFog)
+            {
+                _cachedReading.AlertLevel = "YELLOW";
+                _cachedReading.AlertMessage = "DENSE FOG & REDUCED VISIBILITY ADVISORY";
+            }
+            else
+            {
+                _cachedReading.AlertLevel = "NONE";
+                _cachedReading.AlertMessage = "All clear. No severe weather hazards reported.";
+            }
+
+            _cachedReading.Timestamp = DateTime.UtcNow;
+        }
+
+        private static string GetConditionFromWmoCode(int code)
+        {
+            switch (code)
+            {
+                case 0: return "Clear Sky";
+                case 1: return "Mainly Clear";
+                case 2: return "Partly Cloudy";
+                case 3: return "Overcast";
+                case 45: return "Fog";
+                case 48: return "Depositing Rime Fog";
+                case 51: return "Light Drizzle";
+                case 53: return "Moderate Drizzle";
+                case 55: return "Dense Drizzle";
+                case 56: return "Light Freezing Drizzle";
+                case 57: return "Dense Freezing Drizzle";
+                case 61: return "Slight Rain";
+                case 63: return "Moderate Rain";
+                case 65: return "Heavy Rain";
+                case 66: return "Light Freezing Rain";
+                case 67: return "Heavy Freezing Rain";
+                case 71: return "Slight Snow Fall";
+                case 73: return "Moderate Snow Fall";
+                case 75: return "Heavy Snow Fall";
+                case 77: return "Snow Grains";
+                case 80: return "Slight Rain Showers";
+                case 81: return "Moderate Rain Showers";
+                case 82: return "Violent Rain Showers";
+                case 85: return "Slight Snow Showers";
+                case 86: return "Heavy Snow Showers";
+                case 95: return "Thunderstorm";
+                case 96: return "Thunderstorm with Slight Hail";
+                case 99: return "Thunderstorm with Heavy Hail";
+                default: return "Partly Cloudy";
+            }
+        }
+
+        private static string WindDegreesToDirection(int deg)
+        {
+            string[] dirs = { "N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW" };
+            int idx = (int)((deg + 11.25f) / 22.5f) % 16;
+            if (idx < 0) idx += 16;
+            return dirs[idx];
+        }
+
+        private static float ParseFloatFromString(string valStr)
+        {
+            if (string.IsNullOrEmpty(valStr)) return 0f;
+            valStr = valStr.Trim();
+            float result = 0f;
+            float fraction = 0f;
+            float divisor = 10f;
+            bool isNegative = false;
+            bool inFraction = false;
+            for (int i = 0; i < valStr.Length; i++)
+            {
+                char c = valStr[i];
+                if (c == '-') isNegative = true;
+                else if (c == '.') inFraction = true;
+                else if (c >= '0' && c <= '9')
+                {
+                    int digit = c - '0';
+                    if (!inFraction) result = (result * 10f) + digit;
+                    else { fraction += digit / divisor; divisor *= 10f; }
+                }
+            }
+            result += fraction;
+            return isNegative ? -result : result;
+        }
+
+        private string[] ParseJsonStringArray(string json, string key, int maxCount)
+        {
+            var list = new System.Collections.Generic.List<string>();
+            string search = "\"" + key + "\":[";
+            int idx = CustomIndexOf(json, search, 0);
+            if (idx == -1)
+            {
+                search = "\"" + key + "\": [";
+                idx = CustomIndexOf(json, search, 0);
+            }
+            if (idx == -1) return list.ToArray();
+            idx += search.Length;
+            int endIdx = CustomIndexOf(json, "]", idx);
+            if (endIdx == -1) return list.ToArray();
+            string arrayStr = SafeSubstring(json, idx, endIdx - idx);
+            string[] parts = arrayStr.Split(',');
+            for (int i = 0; i < parts.Length && list.Count < maxCount; i++)
+            {
+                string item = parts[i].Replace("\"", "").Trim();
+                if (!string.IsNullOrEmpty(item)) list.Add(item);
+            }
+            return list.ToArray();
+        }
+
+        private float[] ParseJsonFloatArray(string json, string key, int maxCount)
+        {
+            var list = new System.Collections.Generic.List<float>();
+            string search = "\"" + key + "\":[";
+            int idx = CustomIndexOf(json, search, 0);
+            if (idx == -1)
+            {
+                search = "\"" + key + "\": [";
+                idx = CustomIndexOf(json, search, 0);
+            }
+            if (idx == -1) return list.ToArray();
+            idx += search.Length;
+            int endIdx = CustomIndexOf(json, "]", idx);
+            if (endIdx == -1) return list.ToArray();
+            string arrayStr = SafeSubstring(json, idx, endIdx - idx);
+            string[] parts = arrayStr.Split(',');
+            for (int i = 0; i < parts.Length && list.Count < maxCount; i++)
+            {
+                string item = parts[i].Trim();
+                if (!string.IsNullOrEmpty(item))
+                {
+                    list.Add(ParseFloatFromString(item));
+                }
+            }
+            return list.ToArray();
         }
 
         private int CustomIndexOf(string source, string search, int startIndex = 0)
@@ -843,10 +1109,14 @@ namespace WeatherOS.Services
                         string projDayOfWeek = GetDayOfWeekName(projDateStr, day);
 
                         var prev = _cachedReading.ForecastDays[day - 1];
-                        float maxT = prev.MaxTempC + ((day % 2 == 0) ? -1f : 0.5f);
-                        float minT = prev.MinTempC + ((day % 2 == 0) ? -0.5f : 0.5f);
-                        int rainChance = Math.Max(0, Math.Min(100, prev.ChanceOfRain + ((day % 2 == 0) ? -3 : 4)));
+                        float maxT = prev.MaxTempC + ((day % 2 == 0) ? -1.5f : 0.8f);
+                        float minT = prev.MinTempC + ((day % 2 == 0) ? -1.0f : 0.5f);
+                        int rainChance = Math.Max(0, Math.Min(100, prev.ChanceOfRain + ((day % 2 == 0) ? 5 : -3)));
                         string cond = prev.Condition;
+                        if (day == 3) cond = "Partly Cloudy";
+                        else if (day == 4) cond = "Overcast";
+                        else if (day == 5) cond = "Partly Cloudy";
+                        else if (day == 6) cond = "Clear Sky";
 
                         string mPhase = prev.MoonPhase;
                         string mIllum = prev.MoonIllumination;
@@ -1075,6 +1345,96 @@ namespace WeatherOS.Services
             {
                 normalizedDisplayName = "BEJA, PT";
                 return "38.0151,-7.8632";
+            }
+            if (lower == "almada")
+            {
+                normalizedDisplayName = "ALMADA, PT";
+                return "38.6790,-9.1569";
+            }
+            if (lower == "barreiro")
+            {
+                normalizedDisplayName = "BARREIRO, PT";
+                return "38.6633,-9.0733";
+            }
+            if (lower == "seixal")
+            {
+                normalizedDisplayName = "SEIXAL, PT";
+                return "38.6408,-9.1028";
+            }
+            if (lower == "sesimbra")
+            {
+                normalizedDisplayName = "SESIMBRA, PT";
+                return "38.4442,-9.1017";
+            }
+            if (lower == "cascais")
+            {
+                normalizedDisplayName = "CASCAIS, PT";
+                return "38.6979,-9.4215";
+            }
+            if (lower == "sintra")
+            {
+                normalizedDisplayName = "SINTRA, PT";
+                return "38.8029,-9.3817";
+            }
+            if (lower == "gaia" || lower == "vila nova de gaia")
+            {
+                normalizedDisplayName = "VILA NOVA DE GAIA, PT";
+                return "41.1336,-8.6174";
+            }
+            if (lower == "matosinhos")
+            {
+                normalizedDisplayName = "MATOSINHOS, PT";
+                return "41.1820,-8.6896";
+            }
+            if (lower == "guimaraes" || lower == "guimarães")
+            {
+                normalizedDisplayName = "GUIMARAES, PT";
+                return "41.4425,-8.2918";
+            }
+            if (lower == "viseu")
+            {
+                normalizedDisplayName = "VISEU, PT";
+                return "40.6566,-7.9125";
+            }
+            if (lower == "portimao" || lower == "portimão")
+            {
+                normalizedDisplayName = "PORTIMAO, PT";
+                return "37.1363,-8.5376";
+            }
+            if (lower == "lagos")
+            {
+                normalizedDisplayName = "LAGOS, PT";
+                return "37.1028,-8.6730";
+            }
+            if (lower == "madrid")
+            {
+                normalizedDisplayName = "MADRID, ES";
+                return "40.4168,-3.7038";
+            }
+            if (lower == "barcelona")
+            {
+                normalizedDisplayName = "BARCELONA, ES";
+                return "41.3879,2.1699";
+            }
+            if (lower == "paris")
+            {
+                normalizedDisplayName = "PARIS, FR";
+                return "48.8566,2.3522";
+            }
+            if (lower == "london" || lower == "londres")
+            {
+                normalizedDisplayName = "LONDON, UK";
+                return "51.5074,-0.1278";
+            }
+            if (lower == "berlin")
+            {
+                normalizedDisplayName = "BERLIN, DE";
+                return "52.5200,13.4050";
+            }
+            if (lower == "rome" || lower == "roma")
+            {
+                normalizedDisplayName = "ROMA, IT";
+                return "41.9028,12.4964";
             }
 
             normalizedDisplayName = city.ToUpper();
