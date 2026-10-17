@@ -825,11 +825,11 @@ chunk_index dw 0
 ; Patchable variables (updated by make_isohybrid.py)
 align 4
 rem_sec_sig db "RSEC"
-rem_sectors dd 16606
+rem_sectors dd 16681
 
 align 4
 entry_point_sig db "EPNT"
-entry_point dd 0x2416d60
+entry_point dd 0x24184b0
 
 align 4
 dap_read:

@@ -96,6 +96,7 @@ namespace WeatherOS
             // Pre-seed all system files, documents, manifests and cumulative package in memory
             StorageService.InitDefaultMemoryFiles();
             UpdateManagerService.InitDefaultUpdatePackage();
+            TimeService.Initialize();
 
             _weatherService = new WeatherService();
             _tuiDesktop = new TuiDesktop(_weatherService);
@@ -150,6 +151,13 @@ namespace WeatherOS
                             }
                         }
                     }
+                }
+                catch { }
+
+                try
+                {
+                    System.Console.WriteLine("[net] Synchronizing network time via NTP (UDP 123)...");
+                    TimeService.SyncFromNtp();
                 }
                 catch { }
 

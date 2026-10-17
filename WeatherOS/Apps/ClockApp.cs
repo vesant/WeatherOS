@@ -1,6 +1,7 @@
 using System;
 using Cosmos.System;
 using WeatherOS.Graphics;
+using WeatherOS.Services;
 
 namespace WeatherOS.Apps
 {
@@ -10,28 +11,26 @@ namespace WeatherOS.Apps
         public string Name => "Digital Clock";
         public bool IsRealTime => true;
 
-        private int _timeZoneOffset = 1; // Default: UTC+1 (Western Europe / Lisbon / London BST)
-        private bool _is24HourFormat = true;
         private int _tickCounter = 0;
+        private string _statusNotification = "";
 
         public void Draw(TuiDesktop desktop)
         {
-            var win = desktop.CreateWindow("WEATHEROS REAL-TIME DIGITAL CLOCK  |  CMOS RTC", WindowSize.Medium);
+            var win = desktop.CreateWindow("WEATHEROS REAL-TIME DIGITAL CLOCK  |  NETWORK & RTC ENGINE", WindowSize.Medium);
 
-            // Read hardware CMOS Real-Time Clock
-            int hour, minute, second, day, month, year;
-            ReadHardwareCmosRtc(out hour, out minute, out second, out day, out month, out year);
+            // Tick internal timer
+            TimeService.Tick(100);
 
-            // Apply timezone offset
-            int displayHour = (hour + _timeZoneOffset) % 24;
-            if (displayHour < 0) displayHour += 24;
+            // Read current local time from TimeService
+            int year, month, day, hour, minute, second;
+            TimeService.GetCurrentLocalTime(out year, out month, out day, out hour, out minute, out second);
 
             string amPm = "";
-            int displayHourFormatted = displayHour;
-            if (!_is24HourFormat)
+            int displayHourFormatted = hour;
+            if (!TimeService.Is24HourFormat)
             {
-                amPm = displayHour >= 12 ? " PM" : " AM";
-                displayHourFormatted = displayHour % 12;
+                amPm = hour >= 12 ? " PM" : " AM";
+                displayHourFormatted = hour % 12;
                 if (displayHourFormatted == 0) displayHourFormatted = 12;
             }
 
@@ -39,13 +38,13 @@ namespace WeatherOS.Apps
             string mStr = minute.ToString().PadLeft(2, '0');
             string sStr = second.ToString().PadLeft(2, '0');
 
-            // Blinking colon animation
             _tickCounter++;
-            string colon = (_tickCounter % 2 == 0) ? " : " : "   ";
 
             // Header info
-            string tzLabel = _timeZoneOffset >= 0 ? $"+{_timeZoneOffset}" : $"{_timeZoneOffset}";
-            win.WriteRow(0, $"HARDWARE CLOCK ENGINE : CMOS RTC (Port 0x70/0x71)  |  UTC{tzLabel}  |  {(_is24HourFormat ? "24-Hour" : "12-Hour")}", ConsoleColor.Cyan, 2, fillRemaining: true);
+            int tz = TimeService.TimezoneOffset;
+            string tzLabel = tz >= 0 ? $"+{tz}" : $"{tz}";
+            string formatLabel = TimeService.Is24HourFormat ? "24-Hour" : "12-Hour";
+            win.WriteRow(0, $"CLOCK ENGINE : {TimeService.SyncSource}  |  UTC{tzLabel}  |  {formatLabel}", ConsoleColor.Cyan, 2, fillRemaining: true);
             win.WriteSeparator(1);
 
             // Large Digital Clock Display (3 rows of big ASCII digits)
@@ -64,9 +63,7 @@ namespace WeatherOS.Apps
             win.WriteSeparator(7);
 
             // Calendar & Date details
-            string dayName = GetDayOfWeekName(year, month, day);
-            string monthName = GetMonthName(month);
-            string dateStr = $"{dayName}, {day} {monthName} 20{year:D2}";
+            string dateStr = TimeService.GetFormattedDate();
             win.WriteRow(8, $"  Calendar Date : {dateStr}", ConsoleColor.White, 2, fillRemaining: true);
 
             // Seconds progression visual bar (60 seconds)
@@ -76,70 +73,119 @@ namespace WeatherOS.Apps
             win.WriteRow(9, $"  Seconds Tick  : {secBar}", ConsoleColor.Green, 2, fillRemaining: true);
 
             win.WriteSeparator(10);
-            win.WriteRow(11, $"  Timezone: UTC{tzLabel} [+/- Keys]   |   Format: {(_is24HourFormat ? "24h" : "12h")} [Tab]   |   RTC Hardware Sync: [OK]", ConsoleColor.DarkCyan, 2, fillRemaining: true);
 
-            win.WriteFooter("[Tab] Toggle 12h/24h   |   [+ / -] Adjust Timezone   |   [ESC] Exit", ConsoleColor.Yellow);
+            string syncStatusText = TimeService.IsNetworkSynced ? "[Network Synced: OK]" : "[Hardware RTC / Manual Base]";
+            if (!string.IsNullOrEmpty(_statusNotification))
+            {
+                syncStatusText = _statusNotification;
+            }
+            win.WriteRow(11, $"  Timezone: UTC{tzLabel} [+/-]  |  Format: {formatLabel} [Tab]  |  Sync: {syncStatusText}", ConsoleColor.DarkCyan, 2, fillRemaining: true);
+
+            win.WriteFooter("[Tab] 12h/24h  |  [+/-] Timezone  |  [H/J/M/K] Adjust Time  |  [N] NTP Sync  |  [ESC] Exit", ConsoleColor.Yellow);
         }
 
         public void HandleInput(TuiDesktop desktop, KeyEvent keyEvent)
         {
             if (keyEvent.Key == ConsoleKeyEx.Escape)
             {
+                _statusNotification = "";
                 desktop.SetCurrentApp("launcher");
                 return;
             }
 
             if (keyEvent.Key == ConsoleKeyEx.Tab || keyEvent.Key == ConsoleKeyEx.Spacebar)
             {
-                _is24HourFormat = !_is24HourFormat;
+                TimeService.Is24HourFormat = !TimeService.Is24HourFormat;
+                desktop.SaveSettings();
+                _statusNotification = $"Format: {(TimeService.Is24HourFormat ? "24-Hour" : "12-Hour")}";
                 return;
             }
 
             if (keyEvent.KeyChar == '+' || keyEvent.KeyChar == '=' || keyEvent.Key == ConsoleKeyEx.RightArrow || keyEvent.Key == ConsoleKeyEx.UpArrow)
             {
-                if (_timeZoneOffset < 14) _timeZoneOffset++;
+                if (TimeService.TimezoneOffset < 14)
+                {
+                    TimeService.TimezoneOffset++;
+                    desktop.SaveSettings();
+                    int tz = TimeService.TimezoneOffset;
+                    _statusNotification = $"Timezone: UTC{(tz >= 0 ? "+" + tz : tz.ToString())}";
+                }
                 return;
             }
 
             if (keyEvent.KeyChar == '-' || keyEvent.KeyChar == '_' || keyEvent.Key == ConsoleKeyEx.LeftArrow || keyEvent.Key == ConsoleKeyEx.DownArrow)
             {
-                if (_timeZoneOffset > -12) _timeZoneOffset--;
+                if (TimeService.TimezoneOffset > -12)
+                {
+                    TimeService.TimezoneOffset--;
+                    desktop.SaveSettings();
+                    int tz = TimeService.TimezoneOffset;
+                    _statusNotification = $"Timezone: UTC{(tz >= 0 ? "+" + tz : tz.ToString())}";
+                }
                 return;
             }
-        }
 
-        private static void ReadHardwareCmosRtc(out int hour, out int minute, out int second, out int day, out int month, out int year)
-        {
-            hour = 12; minute = 0; second = 0; day = 13; month = 10; year = 26;
-
-            try
+            // Manual time calibration hotkeys (useful when RTC battery is depleted and network is unavailable)
+            if (keyEvent.KeyChar == 'h' || keyEvent.KeyChar == 'H')
             {
-                // Primary: Cosmos.HAL.RTC
-                second = Cosmos.HAL.RTC.Second;
-                minute = Cosmos.HAL.RTC.Minute;
-                hour = Cosmos.HAL.RTC.Hour;
-                day = Cosmos.HAL.RTC.DayOfTheMonth;
-                month = Cosmos.HAL.RTC.Month;
-                year = Cosmos.HAL.RTC.Year;
-
-                if (year > 100) year = year % 100;
-                if (day == 0) day = 13;
-                if (month == 0) month = 10;
+                TimeService.AdjustHours(1);
+                _statusNotification = "Time adjusted: +1 Hour";
+                return;
             }
-            catch
+
+            if (keyEvent.KeyChar == 'j' || keyEvent.KeyChar == 'J')
             {
-                // Fallback to DateTime.UtcNow
-                try
+                TimeService.AdjustHours(-1);
+                _statusNotification = "Time adjusted: -1 Hour";
+                return;
+            }
+
+            if (keyEvent.KeyChar == 'm' || keyEvent.KeyChar == 'M')
+            {
+                TimeService.AdjustMinutes(1);
+                _statusNotification = "Time adjusted: +1 Minute";
+                return;
+            }
+
+            if (keyEvent.KeyChar == 'k' || keyEvent.KeyChar == 'K')
+            {
+                TimeService.AdjustMinutes(-1);
+                _statusNotification = "Time adjusted: -1 Minute";
+                return;
+            }
+
+            // Network Time Sync on demand
+            if (keyEvent.KeyChar == 'n' || keyEvent.KeyChar == 'N')
+            {
+                _statusNotification = "Contacting NTP server (UDP 123)...";
+                desktop.DrawStatusMessage("Contacting NTP Atomic Server...");
+                bool ok = TimeService.SyncFromNtp();
+                if (ok)
                 {
-                    var dt = DateTime.UtcNow;
-                    hour = dt.Hour;
-                    minute = dt.Minute;
-                    second = dt.Second;
-                    day = dt.Day;
-                    month = dt.Month;
-                    year = dt.Year % 100;
+                    _statusNotification = "NTP Sync Success! Clock synchronized.";
+                    desktop.DrawStatusMessage("NTP Sync Success: Clock is now atomic accurate.");
                 }
-                catch { }
+                else
+                {
+                    _statusNotification = "NTP UDP blocked. Trying HTTP Date header...";
+                    desktop.DrawStatusMessage("Querying HTTP gateway for Date header...");
+                    desktop.WeatherService.FetchOpenWeather(desktop.DefaultCity, desktop.ApiKey);
+                    if (TimeService.IsNetworkSynced)
+                    {
+                        _statusNotification = "HTTP Sync Success! Clock synchronized.";
+                    }
+                    else
+                    {
+                        _statusNotification = "Network Sync Timeout. Using Manual Calibration.";
+                    }
+                }
+                return;
+            }
+
+            if (keyEvent.KeyChar == 's' || keyEvent.KeyChar == 'S')
+            {
+                desktop.SetCurrentApp("settings");
+                return;
             }
         }
 
@@ -188,32 +234,6 @@ namespace WeatherOS.Apps
                 default:
                     return new string[] { "   ", "   ", "   " };
             }
-        }
-
-        private static string GetDayOfWeekName(int year, int month, int day)
-        {
-            try
-            {
-                int fullYear = 2000 + year;
-                if (month >= 1 && month <= 12 && day >= 1 && day <= 31)
-                {
-                    var dt = new DateTime(fullYear, month, day);
-                    return dt.DayOfWeek.ToString();
-                }
-            }
-            catch { }
-            return "Tuesday";
-        }
-
-        private static string GetMonthName(int month)
-        {
-            string[] months = new string[]
-            {
-                "January", "February", "March", "April", "May", "June",
-                "July", "August", "September", "October", "November", "December"
-            };
-            if (month >= 1 && month <= 12) return months[month - 1];
-            return "October";
         }
     }
 }

@@ -132,6 +132,23 @@ namespace WeatherOS.Graphics
                                 _apiKey = k;
                             }
                         }
+                        if (line.StartsWith("TimeFormat="))
+                        {
+                            string tf = line.Substring(11).Trim();
+                            TimeService.Is24HourFormat = (tf == "24" || tf.ToLower() == "24h");
+                        }
+                        if (line.StartsWith("Is24Hour="))
+                        {
+                            TimeService.Is24HourFormat = line.Substring(9).Trim() == "true";
+                        }
+                        if (line.StartsWith("Timezone="))
+                        {
+                            int tz;
+                            if (int.TryParse(line.Substring(9).Trim(), out tz))
+                            {
+                                TimeService.TimezoneOffset = tz;
+                            }
+                        }
                     }
                 }
             }
@@ -140,7 +157,13 @@ namespace WeatherOS.Graphics
 
         public void SaveSettings()
         {
-            string cfg = $"DarkMode={(_isDarkMode ? "true" : "false")}\nAutoLoc={(_autoLocation ? "true" : "false")}\nDefaultCity={_defaultCity}\nDebugLog={(_showDebugLogs ? "true" : "false")}\nCustomKey={_customApiKey}\n";
+            string cfg = $"DarkMode={(_isDarkMode ? "true" : "false")}\n" +
+                         $"AutoLoc={(_autoLocation ? "true" : "false")}\n" +
+                         $"DefaultCity={_defaultCity}\n" +
+                         $"DebugLog={(_showDebugLogs ? "true" : "false")}\n" +
+                         $"CustomKey={_customApiKey}\n" +
+                         $"TimeFormat={(TimeService.Is24HourFormat ? "24" : "12")}\n" +
+                         $"Timezone={TimeService.TimezoneOffset}\n";
             string status;
             StorageService.SaveFile("settings.ini", cfg, out status);
         }
@@ -251,6 +274,7 @@ namespace WeatherOS.Graphics
                                 break;
                             }
                             HardwareDelayMs(100);
+                            TimeService.Tick(100);
                         }
                     }
                     else
@@ -267,6 +291,7 @@ namespace WeatherOS.Graphics
                                 break;
                             }
                             HardwareDelayMs(15);
+                            TimeService.Tick(15);
                         }
 
                         if (_isActive && hasKey)

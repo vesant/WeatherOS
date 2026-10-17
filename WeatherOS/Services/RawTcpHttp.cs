@@ -50,6 +50,8 @@ namespace WeatherOS.Services
         
         private static ushort _pingIdentifier = 0x1234;
         private static bool _pingReplyReceived = false;
+        private static bool _ntpReplyReceived = false;
+        private static uint _lastNtpEpochSeconds = 0;
 
         public static string GetAssignedIp()
         {
@@ -475,6 +477,80 @@ namespace WeatherOS.Services
             }
         }
 
+        public static bool QueryNtp(byte[] ntpServerIp, out uint unixEpochSeconds)
+        {
+            unixEpochSeconds = 0;
+            if (NetworkDevice.Devices.Count == 0) return false;
+            var nic = WeatherOS.Kernel.CustomNIC ?? NetworkDevice.Devices[0];
+            if (nic == null || _ipSource[0] == 0) return false;
+
+            byte[] targetIp = ntpServerIp;
+            if (targetIp == null)
+            {
+                // Primary NTP: 162.159.200.123 (Cloudflare / pool.ntp.org)
+                targetIp = new byte[] { 162, 159, 200, 123 };
+            }
+
+            // Ensure gateway MAC resolved
+            if (_macDest == null || (_macDest[0] == 0xFF && _macDest[1] == 0xFF) || (_macDest[0] == 0 && _macDest[1] == 0))
+            {
+                if (_gatewayIp[0] != 0) ResolveArp(_gatewayIp, _macDest, 400);
+            }
+
+            byte[] ntpFrame = new byte[90];
+            // Ethernet
+            Array.Copy(_macDest, 0, ntpFrame, 0, 6);
+            Array.Copy(_macSource, 0, ntpFrame, 6, 6);
+            ntpFrame[12] = 0x08; ntpFrame[13] = 0x00; // IPv4
+
+            // IPv4
+            ntpFrame[14] = 0x45; ntpFrame[15] = 0x00;
+            ntpFrame[16] = 0x00; ntpFrame[17] = 0x4C; // Total length 76
+            ntpFrame[18] = (byte)(_ipId >> 8); ntpFrame[19] = (byte)(_ipId & 0xFF); _ipId++;
+            ntpFrame[20] = 0x00; ntpFrame[21] = 0x00;
+            ntpFrame[22] = 0x40; // TTL 64
+            ntpFrame[23] = 17;   // UDP
+            Array.Copy(_ipSource, 0, ntpFrame, 26, 4);
+            Array.Copy(targetIp, 0, ntpFrame, 30, 4);
+            int ipSum = CalculateChecksum(ntpFrame, 14, 20);
+            ntpFrame[24] = (byte)(ipSum >> 8); ntpFrame[25] = (byte)(ipSum & 0xFF);
+
+            // UDP
+            ntpFrame[34] = 0x30; ntpFrame[35] = 0x0C; // Src port 12300
+            ntpFrame[36] = 0x00; ntpFrame[37] = 123;  // Dest port 123
+            ntpFrame[38] = 0x00; ntpFrame[39] = 0x38; // UDP length 56
+            ntpFrame[40] = 0x00; ntpFrame[41] = 0x00; // Checksum 0
+
+            // NTP v3 Client (0x1B = LI 0, VN 3, Mode 3)
+            ntpFrame[42] = 0x1B;
+
+            _ntpReplyReceived = false;
+            var oldHandler = nic.DataReceived;
+            nic.DataReceived = CustomDataReceived;
+
+            try
+            {
+                nic.QueueBytes(ntpFrame);
+                for (int i = 0; i < 60; i++)
+                {
+                    WeatherOS.Kernel.CustomNIC?.HackPoll();
+                    if (_ntpReplyReceived)
+                    {
+                        unixEpochSeconds = _lastNtpEpochSeconds;
+                        return true;
+                    }
+                    HardwareDelayMs(10);
+                }
+            }
+            catch { }
+            finally
+            {
+                nic.DataReceived = oldHandler;
+            }
+
+            return false;
+        }
+
         public static string FetchGet(Address destIp, Address gatewayIp, string requestString)
         {
             if (NetworkDevice.Devices.Count == 0) return null;
@@ -585,6 +661,23 @@ namespace WeatherOS.Services
                 byte[] validData = new byte[_rxLength];
                 Array.Copy(_rxBuffer, 0, validData, 0, _rxLength);
                 string responseStr = DecodeUtf8ToAscii(validData, _rxLength);
+
+                // Passive Network Time Calibration: Parse HTTP Date header if present
+                try
+                {
+                    int dateIdx = CustomIndexOf(responseStr, "\r\nDate: ");
+                    if (dateIdx == -1) dateIdx = CustomIndexOf(responseStr, "\ndate: ");
+                    if (dateIdx != -1)
+                    {
+                        int lineEnd = CustomIndexOf(responseStr, "\r\n", dateIdx + 2);
+                        if (lineEnd != -1)
+                        {
+                            string dateLine = responseStr.Substring(dateIdx + 2, lineEnd - (dateIdx + 2));
+                            TimeService.SyncFromHttpDate(dateLine);
+                        }
+                    }
+                }
+                catch { }
 
                 // Extract HTTP body
                 int bodyIdx = CustomIndexOf(responseStr, "\r\n\r\n");
@@ -931,9 +1024,30 @@ namespace WeatherOS.Services
                 if (packet.Length < udpOff + 8) return;
 
                 int udpDestPort = (packet[udpOff + 2] << 8) | packet[udpOff + 3];
+                int udpSrcPort = (packet[udpOff] << 8) | packet[udpOff + 1];
+
                 if (udpDestPort == FileTransferService.PORT)
                 {
                     FileTransferService.ProcessIncomingPacket(packet, udpOff);
+                    return;
+                }
+
+                if (udpSrcPort == 123 || udpDestPort == 123 || udpDestPort == 12300)
+                {
+                    int ntpOff = udpOff + 8;
+                    if (packet.Length >= ntpOff + 48)
+                    {
+                        uint b0 = packet[ntpOff + 40];
+                        uint b1 = packet[ntpOff + 41];
+                        uint b2 = packet[ntpOff + 42];
+                        uint b3 = packet[ntpOff + 43];
+                        uint ntpSec = (b0 << 24) | (b1 << 16) | (b2 << 8) | b3;
+                        if (ntpSec > 2208988800u)
+                        {
+                            _lastNtpEpochSeconds = ntpSec - 2208988800u;
+                            _ntpReplyReceived = true;
+                        }
+                    }
                     return;
                 }
 
