@@ -103,28 +103,6 @@ WeatherOS includes an interactive command interpreter accessible alongside the T
 
 ---
 
-## Comprehensive Wiki Documentation
-
-For detailed information, refer to `WIKI.md` in this repository:
-
-- **Part 1: User Manual**: In-depth usage instructions, network troubleshooting, step-by-step installation guides, and companion utility workflow.
-- **Part 2: Engineering Technical Report**: A thorough systems engineering breakdown covering the hybrid bootloader pipeline, real-to-protected mode transition, dynamic kernel sector discovery, bare-metal RTL8102E PCI programming, raw TCP/IP packet engine, and memory layout.
-
-### Automatic GitHub Wiki Sync
-
-The workflow `.github/workflows/wiki-sync.yml` keeps the repository wiki `Home` page in sync with `WIKI.md`.
-
-- **Automatic trigger**: runs on pushes to branch `32bit` when `WIKI.md` changes.
-- **Manual trigger**: available in **Actions** as **Sync Wiki from WIKI.md** (`workflow_dispatch`).
-- **Publish target**: pushes `WIKI.md` content to `Home.md` in `vesant/WeatherOS.wiki.git`.
-
-Required configuration:
-
-1. Enable the repository Wiki in **Settings → Features → Wikis**.
-2. In **Settings → Actions → General → Workflow permissions**, set **Read and write permissions** so `GITHUB_TOKEN` can push wiki changes.
-
----
-
 ## License
 
 This project is licensed under the MIT License. See `LICENSE` for details.
