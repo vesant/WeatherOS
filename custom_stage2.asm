@@ -338,6 +338,7 @@ prot_start:
     mov [0x00007DF0], al
     mov al, [boot_drive]
     mov [0x00007DF1], al
+    mov word [0x00007DF2], 0x574F       ; Magic 'WO' (0x574F) confirming native bootloader loaded
 
     ; Restore Multiboot 2 magic register contract
     mov eax, 0x36d76289
@@ -821,7 +822,7 @@ chunk_count dw 0
 chunk_index dw 0
 
 ; Patchable variables (updated by make_isohybrid.py)
-rem_sectors dd 16466
+rem_sectors dd 16467
 entry_point dd 0x2410d50
 
 align 4

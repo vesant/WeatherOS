@@ -62,19 +62,33 @@ namespace WeatherOS.Services
             _bootSource = source;
         }
 
-        public static bool IsInstalledOnDisk()
+        public static bool IsBootedFromInstalledDisk()
         {
-            if (_forceInstalledFlag) return true;
+            if (_bootSource == BootSource.HardDisk) return true;
 
-            // 1. Check Boot Manager flag at physical RAM 0x00007DF0 (passed directly by Stage 2 loader on boot)
+            // Check physical RAM 0x00007DF0 passed directly by custom_stage2 loader
             unsafe
             {
                 byte* pBootFlag = (byte*)0x00007DF0u;
+                ushort* pMagic = (ushort*)0x00007DF2u;
+                if (*pMagic == 0x574Fu && *pBootFlag == 0x01)
+                {
+                    return true;
+                }
+                // Fallback check if magic not present but flag is 0x01
                 if (*pBootFlag == 0x01)
                 {
                     return true;
                 }
             }
+
+            return false;
+        }
+
+        public static bool IsInstalledOnDisk()
+        {
+            if (_forceInstalledFlag) return true;
+            if (IsBootedFromInstalledDisk()) return true;
 
             // 2. Check physical storage devices for WeatherOS Installation Marker Sector at LBA 9
             try
