@@ -823,8 +823,8 @@ chunk_count dw 0
 chunk_index dw 0
 
 ; Patchable variables (updated by make_isohybrid.py)
-rem_sectors dd 16469
-entry_point dd 0x2410d50
+rem_sectors dd 16498
+entry_point dd 0x24118e0
 
 align 4
 dap_read:

@@ -32,6 +32,44 @@ namespace WeatherOS.Apps
                 var day = days[i];
                 int colX = win.InnerLeft + 1 + (i * 10);
 
+                bool hasData = !string.IsNullOrEmpty(day.Date) && (day.Condition == null || !day.Condition.Contains("Awaiting"));
+                if (!hasData)
+                {
+                    System.Console.SetCursorPosition(colX, win.InnerTop + 1);
+                    System.Console.ForegroundColor = ConsoleColor.DarkGray;
+                    System.Console.Write("   ---   ");
+                    System.Console.SetCursorPosition(colX, win.InnerTop + 2);
+                    System.Console.Write("   ---   ");
+                    System.Console.SetCursorPosition(colX, win.InnerTop + 3);
+                    System.Console.ForegroundColor = ConsoleColor.DarkCyan;
+                    System.Console.Write("---------");
+                    System.Console.SetCursorPosition(colX, win.InnerTop + 4);
+                    System.Console.ForegroundColor = ConsoleColor.DarkGray;
+                    System.Console.Write("         ");
+                    System.Console.SetCursorPosition(colX, win.InnerTop + 5);
+                    System.Console.Write("   ---   ");
+                    System.Console.SetCursorPosition(colX, win.InnerTop + 6);
+                    System.Console.Write("         ");
+                    System.Console.SetCursorPosition(colX, win.InnerTop + 7);
+                    System.Console.Write("   N/A   ");
+                    System.Console.SetCursorPosition(colX, win.InnerTop + 8);
+                    System.Console.ForegroundColor = ConsoleColor.DarkCyan;
+                    System.Console.Write("---------");
+                    System.Console.SetCursorPosition(colX, win.InnerTop + 9);
+                    System.Console.ForegroundColor = ConsoleColor.DarkGray;
+                    System.Console.Write("Max: -- C");
+                    System.Console.SetCursorPosition(colX, win.InnerTop + 10);
+                    System.Console.Write("Min: -- C");
+                    System.Console.SetCursorPosition(colX, win.InnerTop + 11);
+                    System.Console.Write("Rain: --%");
+                    System.Console.SetCursorPosition(colX, win.InnerTop + 12);
+                    System.Console.Write("  [---]  ");
+                    System.Console.SetCursorPosition(colX, win.InnerTop + 13);
+                    System.Console.ForegroundColor = ConsoleColor.DarkCyan;
+                    System.Console.Write("---------");
+                    continue;
+                }
+
                 // 1. Day of week & date header
                 System.Console.SetCursorPosition(colX, win.InnerTop + 1);
                 if (i == 0)
@@ -151,7 +189,17 @@ namespace WeatherOS.Apps
             }
             if (!string.IsNullOrEmpty(dateStr) && dateStr.Length >= 10)
             {
-                return "  " + dateStr.Substring(5, 5) + "  ";
+                try
+                {
+                    int year = int.Parse(dateStr.Substring(0, 4));
+                    int month = int.Parse(dateStr.Substring(5, 2));
+                    int day = int.Parse(dateStr.Substring(8, 2));
+                    var dt = new DateTime(year, month, day);
+                    string dName = dt.DayOfWeek.ToString().ToUpper();
+                    if (dName.Length > 3) dName = dName.Substring(0, 3);
+                    return $"   {dName}   ";
+                }
+                catch { }
             }
             return "   DAY   ";
         }
