@@ -309,9 +309,11 @@ prot_start:
     cmp dword [edx], 0x050040BC
     jne bad_kernel_entry
 
-    ; Zero-initialize BSS / heap padding (64 KB immediately following kernel load)
+    ; Zero-initialize BSS / heap padding (32 MB immediately following kernel load)
     mov edi, [dest_phys]
-    mov ecx, 16384                     ; 16384 dwords = 64 KB
+    add edi, 3
+    and edi, ~3                        ; Ensure 4-byte alignment
+    mov ecx, 8388608                   ; 8,388,608 dwords = 32 MB
     xor eax, eax
     cld
     rep stosd
@@ -709,7 +711,7 @@ chunk_count dw 0
 chunk_index dw 0
 
 ; Patchable variables (updated by make_isohybrid.py)
-rem_sectors dd 16449
+rem_sectors dd 16448
 entry_point dd 0x2410b00
 
 align 4

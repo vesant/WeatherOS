@@ -13,3 +13,7 @@ obj/
 *.pyc
 __pycache__/
 WeatherOS_build.raw
+*.exe
+scratch/*
+!scratch/patch_kernel_alignment.py
+!scratch/update_payload.py

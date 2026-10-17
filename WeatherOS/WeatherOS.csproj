@@ -30,11 +30,13 @@
     </ItemGroup>
 
     <Target Name="AssembleBootloaderPayload" BeforeTargets="BeforeBuild;CoreCompile">
-        <Exec Command="python &quot;$(MSBuildThisFileDirectory)..\..\scratch\update_payload.py&quot;" />
+        <Exec Command="python &quot;$(MSBuildThisFileDirectory)..\scratch\update_payload.py&quot;" Condition="Exists('$(MSBuildThisFileDirectory)..\scratch\update_payload.py')" />
+        <Exec Command="python &quot;$(MSBuildThisFileDirectory)..\..\scratch\update_payload.py&quot;" Condition="!Exists('$(MSBuildThisFileDirectory)..\scratch\update_payload.py')" />
     </Target>
 
     <Target Name="AlignKernelStart" AfterTargets="IL2CPU" BeforeTargets="Nasm">
-        <Exec Command="python &quot;$(MSBuildThisFileDirectory)..\..\scratch\patch_kernel_alignment.py&quot; &quot;$(MSBuildThisFileDirectory)bin\cosmos\$(Configuration)\$(TargetFramework)\$(TargetName).asm&quot;" />
+        <Exec Command="python &quot;$(MSBuildThisFileDirectory)..\scratch\patch_kernel_alignment.py&quot; &quot;$(MSBuildThisFileDirectory)bin\cosmos\$(Configuration)\$(TargetFramework)\$(TargetName).asm&quot;" Condition="Exists('$(MSBuildThisFileDirectory)..\scratch\patch_kernel_alignment.py')" />
+        <Exec Command="python &quot;$(MSBuildThisFileDirectory)..\..\scratch\patch_kernel_alignment.py&quot; &quot;$(MSBuildThisFileDirectory)bin\cosmos\$(Configuration)\$(TargetFramework)\$(TargetName).asm&quot;" Condition="!Exists('$(MSBuildThisFileDirectory)..\scratch\patch_kernel_alignment.py')" />
     </Target>
 
     <Target Name="GenerateNativeBootloader" AfterTargets="MakeIso">
