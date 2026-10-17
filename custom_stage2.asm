@@ -204,10 +204,10 @@ load_done:
     mov dword [es:56], 1
     mov dword [es:60], 0
 
-    ; Fallback Entry 1: Safe High RAM (1 MB .. 896 MB)
+    ; Fallback Entry 1: Safe High RAM (1 MB .. 128 MB)
     mov dword [es:64], 0x00100000
     mov dword [es:68], 0x00000000
-    mov dword [es:72], 0x37F00000
+    mov dword [es:72], 0x08000000
     mov dword [es:76], 0x00000000
     mov dword [es:80], 1
     mov dword [es:84], 0
@@ -406,6 +406,16 @@ ISR_NOERR 30
 ISR_NOERR 31
 
 common_isr_handler:
+    ; Immediately preserve all processor state
+    push ds
+    push es
+    pushad
+
+    ; Force flat 4GB data segments so VGA writes never fault
+    mov ax, 0x10
+    mov ds, ax
+    mov es, ax
+
     ; Emergency Exception Diagnostic Screen (white text on red background)
     ; Row 1: FAULT: XX  ERR: XXXXXXXX  EIP: XXXXXXXX  ESP: XXXXXXXX
     mov edi, 0x000B80A0
@@ -417,8 +427,8 @@ common_isr_handler:
     mov word [edi + 12], 0x4F20       ; ' '
     add edi, 14
 
-    ; Hex vector (2 digits)
-    mov edx, [esp]
+    ; Hex vector (2 digits) from [esp + 40]
+    mov edx, [esp + 40]
     mov al, dl
     shr al, 4
     and al, 0x0F
@@ -434,7 +444,7 @@ common_isr_handler:
     mov dword [edi + 8], 0x4F3A4F52   ; 'R', ':'
     mov word [edi + 12], 0x4F20
     add edi, 14
-    mov edx, [esp + 4]                 ; Error Code
+    mov edx, [esp + 44]                ; Error Code
     call print_hex_dword
 
     ; "  EIP: "
@@ -444,7 +454,7 @@ common_isr_handler:
     mov dword [edi + 8], 0x4F3A4F50   ; 'P', ':'
     mov word [edi + 12], 0x4F20
     add edi, 14
-    mov edx, [esp + 8]                 ; Fault EIP
+    mov edx, [esp + 48]                ; Fault EIP
     call print_hex_dword
 
     ; "  ESP: "
@@ -454,17 +464,17 @@ common_isr_handler:
     mov dword [edi + 8], 0x4F3A4F50   ; 'P', ':'
     mov word [edi + 12], 0x4F20
     add edi, 14
-    lea edx, [esp + 20]                ; Fault ESP
+    lea edx, [esp + 60]                ; Fault ESP before exception
     call print_hex_dword
 
-    ; Row 2 (0x000B8140): CS: XXXX  EFL: XXXXXXXX  CR0: XXXXXXXX
+    ; Row 2 (0x000B8140): CS: XXXXXXXX  EFL: XXXXXXXX  CR0: XXXXXXXX  DS: XXXX
     mov edi, 0x000B8140
 
     ; "CS: "
     mov dword [edi], 0x4F534F43       ; 'C', 'S'
     mov dword [edi + 4], 0x4F204F3A   ; ':', ' '
     add edi, 8
-    mov edx, [esp + 12]                ; CS
+    mov edx, [esp + 52]                ; CS
     call print_hex_dword
 
     ; "  EFL: "
@@ -474,7 +484,7 @@ common_isr_handler:
     mov dword [edi + 8], 0x4F3A4F4C   ; 'L', ':'
     mov word [edi + 12], 0x4F20
     add edi, 14
-    mov edx, [esp + 16]                ; EFLAGS
+    mov edx, [esp + 56]                ; EFLAGS
     call print_hex_dword
 
     ; "  CR0: "
@@ -487,30 +497,98 @@ common_isr_handler:
     mov edx, cr0
     call print_hex_dword
 
-    ; Row 3 (0x000B81E0): STK: [esp+20] [esp+24] [esp+28] [esp+32]
-    mov edi, 0x000B81E0
-    mov dword [edi], 0x4F544F53       ; 'S', 'T'
-    mov dword [edi + 4], 0x4F204F4B   ; 'K', ' '
-    add edi, 8
-
-    mov ebp, 0
-.next_stk_dword:
-    mov edx, [esp + 20 + ebp*4]
-    call print_hex_dword
+    ; "  DS: "
     mov word [edi], 0x4F20
-    add edi, 2
-    inc ebp
-    cmp ebp, 4
-    jb .next_stk_dword
+    mov word [edi + 2], 0x4F20
+    mov dword [edi + 4], 0x4F534F44   ; 'D', 'S'
+    mov dword [edi + 8], 0x4F204F3A   ; ':', ' '
+    add edi, 12
+    movzx edx, word [esp + 36]        ; Saved DS
+    call print_hex_word
 
-    ; Row 4 (0x000B8280): CODE: [EIP-4] [EIP] [EIP+4] [EIP+8]
+    ; Row 3 (0x000B81E0): EAX: XXXXXXXX  EBX: XXXXXXXX  ECX: XXXXXXXX  EDX: XXXXXXXX
+    mov edi, 0x000B81E0
+
+    ; "EAX: "
+    mov dword [edi], 0x4F414F45       ; 'E', 'A'
+    mov dword [edi + 4], 0x4F3A4F58   ; 'X', ':'
+    mov word [edi + 8], 0x4F20
+    add edi, 10
+    mov edx, [esp + 28]                ; EAX
+    call print_hex_dword
+
+    ; " EBX: "
+    mov word [edi], 0x4F20
+    mov dword [edi + 2], 0x4F424F45   ; 'E', 'B'
+    mov dword [edi + 6], 0x4F3A4F58   ; 'X', ':'
+    mov word [edi + 10], 0x4F20
+    add edi, 12
+    mov edx, [esp + 16]                ; EBX
+    call print_hex_dword
+
+    ; " ECX: "
+    mov word [edi], 0x4F20
+    mov dword [edi + 2], 0x4F434F45   ; 'E', 'C'
+    mov dword [edi + 6], 0x4F3A4F58   ; 'X', ':'
+    mov word [edi + 10], 0x4F20
+    add edi, 12
+    mov edx, [esp + 24]                ; ECX
+    call print_hex_dword
+
+    ; " EDX: "
+    mov word [edi], 0x4F20
+    mov dword [edi + 2], 0x4F444F45   ; 'E', 'D'
+    mov dword [edi + 6], 0x4F3A4F58   ; 'X', ':'
+    mov word [edi + 10], 0x4F20
+    add edi, 12
+    mov edx, [esp + 20]                ; EDX
+    call print_hex_dword
+
+    ; Row 4 (0x000B8280): ESI: XXXXXXXX  EDI: XXXXXXXX  EBP: XXXXXXXX  ES: XXXX
     mov edi, 0x000B8280
+
+    ; "ESI: "
+    mov dword [edi], 0x4F534F45       ; 'E', 'S'
+    mov dword [edi + 4], 0x4F3A4F49   ; 'I', ':'
+    mov word [edi + 8], 0x4F20
+    add edi, 10
+    mov edx, [esp + 4]                 ; ESI
+    call print_hex_dword
+
+    ; " EDI: "
+    mov word [edi], 0x4F20
+    mov dword [edi + 2], 0x4F444F45   ; 'E', 'D'
+    mov dword [edi + 6], 0x4F3A4F49   ; 'I', ':'
+    mov word [edi + 10], 0x4F20
+    add edi, 12
+    mov edx, [esp + 0]                 ; EDI
+    call print_hex_dword
+
+    ; " EBP: "
+    mov word [edi], 0x4F20
+    mov dword [edi + 2], 0x4F424F45   ; 'E', 'B'
+    mov dword [edi + 6], 0x4F3A4F50   ; 'P', ':'
+    mov word [edi + 10], 0x4F20
+    add edi, 12
+    mov edx, [esp + 8]                 ; EBP
+    call print_hex_dword
+
+    ; " ES: "
+    mov word [edi], 0x4F20
+    mov dword [edi + 2], 0x4F534F45   ; 'E', 'S'
+    mov dword [edi + 6], 0x4F204F3A   ; ':', ' '
+    add edi, 10
+    movzx edx, word [esp + 32]        ; Saved ES
+    call print_hex_word
+
+    ; Row 5 (0x000B8320): CODE: [EIP-4] [EIP] [EIP+4] [EIP+8]
+    mov edi, 0x000B8320
     mov dword [edi], 0x4F4F4F43       ; 'C', 'O'
     mov dword [edi + 4], 0x4F454F44   ; 'D', 'E'
     mov dword [edi + 8], 0x4F204F3A   ; ':', ' '
     add edi, 12
 
-    mov esi, [esp + 8]                 ; Fault EIP
+    mov esi, [esp + 48]               ; Fault EIP
     sub esi, 4
     mov ebp, 0
 .next_code_dword:
@@ -522,14 +600,30 @@ common_isr_handler:
     cmp ebp, 4
     jb .next_code_dword
 
-    ; Row 5 (0x000B8320): STK+: [esp+36] [esp+40] [esp+44] [esp+48]
-    mov edi, 0x000B8320
+    ; Row 6 (0x000B83C0): STK: [esp+60] [esp+64] [esp+68] [esp+72]
+    mov edi, 0x000B83C0
     mov dword [edi], 0x4F544F53       ; 'S', 'T'
-    mov dword [edi + 4], 0x4F2B4F4B   ; 'K', '+'
+    mov dword [edi + 4], 0x4F204F4B   ; 'K', ' '
+    add edi, 8
+
+    mov ebp, 0
+.next_stk_dword:
+    mov edx, [esp + 60 + ebp*4]
+    call print_hex_dword
+    mov word [edi], 0x4F20
+    add edi, 2
+    inc ebp
+    cmp ebp, 4
+    jb .next_stk_dword
+
+    ; Row 7 (0x000B8460): STK2: [esp+76] [esp+80] [esp+84] [esp+88]
+    mov edi, 0x000B8460
+    mov dword [edi], 0x4F544F53       ; 'S', 'T'
+    mov dword [edi + 4], 0x4F324F4B   ; 'K', '2'
     add edi, 8
     mov ebp, 4
 .next_stk_dword2:
-    mov edx, [esp + 20 + ebp*4]
+    mov edx, [esp + 60 + ebp*4]
     call print_hex_dword
     mov word [edi], 0x4F20
     add edi, 2
@@ -537,23 +631,8 @@ common_isr_handler:
     cmp ebp, 8
     jb .next_stk_dword2
 
-    ; Row 6 (0x000B83C0): STK2: [esp+52] [esp+56] [esp+60] [esp+64]
-    mov edi, 0x000B83C0
-    mov dword [edi], 0x4F544F53       ; 'S', 'T'
-    mov dword [edi + 4], 0x4F324F4B   ; 'K', '2'
-    add edi, 8
-    mov ebp, 8
-.next_stk_dword3:
-    mov edx, [esp + 20 + ebp*4]
-    call print_hex_dword
-    mov word [edi], 0x4F20
-    add edi, 2
-    inc ebp
-    cmp ebp, 12
-    jb .next_stk_dword3
-
-    ; Row 7 (0x000B8460): LAST: [0x02058e5b]
-    mov edi, 0x000B8460
+    ; Row 8 (0x000B8500): LAST: [0x02058e5b]  RAM: [0x02770000]
+    mov edi, 0x000B8500
     mov dword [edi], 0x4F414F4C       ; 'L', 'A'
     mov dword [edi + 4], 0x4F544F53   ; 'S', 'T'
     mov word [edi + 8], 0x4F3A        ; ':'
@@ -562,26 +641,33 @@ common_isr_handler:
     mov edx, [0x02058e5b]
     call print_hex_dword
 
-    ; Row 8 (0x000B8500): RAM: [0x02770000] [0x02770004] [0x02770008] [0x0277000C]
-    mov edi, 0x000B8500
-    mov dword [edi], 0x4F414F52       ; 'R', 'A'
-    mov dword [edi + 4], 0x4F3A4F4D   ; 'M', ':'
-    mov word [edi + 8], 0x4F20        ; ' '
-    add edi, 10
-    mov ebp, 0
-.next_ram_dword:
-    mov edx, [0x02770000 + ebp*4]
-    call print_hex_dword
     mov word [edi], 0x4F20
-    add edi, 2
-    inc ebp
-    cmp ebp, 4
-    jb .next_ram_dword
+    mov word [edi + 2], 0x4F20
+    mov dword [edi + 4], 0x4F414F52   ; 'R', 'A'
+    mov dword [edi + 8], 0x4F3A4F4D   ; 'M', ':'
+    mov word [edi + 12], 0x4F20       ; ' '
+    add edi, 14
+    mov edx, [0x02770000]
+    call print_hex_dword
 
 .hang_fault:
     cli
     hlt
     jmp .hang_fault
+
+print_hex_word:
+    push ecx
+    mov ecx, 4
+    shl edx, 16
+.phw_loop:
+    rol edx, 4
+    mov al, dl
+    and al, 0x0F
+    call hex_nibble_to_vga
+    dec ecx
+    jnz .phw_loop
+    pop ecx
+    ret
 
 print_hex_dword:
     push ecx
@@ -711,7 +797,7 @@ chunk_count dw 0
 chunk_index dw 0
 
 ; Patchable variables (updated by make_isohybrid.py)
-rem_sectors dd 16448
+rem_sectors dd 16449
 entry_point dd 0x2410b00
 
 align 4

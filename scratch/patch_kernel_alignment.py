@@ -112,7 +112,40 @@ def patch_asm_file(asm_path):
             content = content.replace(old_block, new_block, 1)
             print("Patched CPU.GetLargestMemoryBlock entries offset (map + 16)!")
 
-    # 6. Patch HeapSmall.Alloc null-pointer check at IL_0046
+    # 6. Patch GCImplementation.Init to cap memLength to 128 MB (0x08000000)
+    gc_target = (
+        "\t\tSystemVoidCosmosCoreGCImplementationInit.IL_010D:" + nl +
+        "\t\t\t; Conv_U4" + nl +
+        "\t\t\tpop dword EAX" + nl +
+        "\t\t\tadd ESP, 0x4" + nl +
+        "\t\t\tpush dword EAX" + nl +
+        nl +
+        "\t\tSystemVoidCosmosCoreGCImplementationInit.IL_010E:" + nl +
+        "\t\t\t; Call" + nl +
+        "\t\t\tCall SystemVoidCosmosCoreMemoryRATInitSystemBytepointerSystemUInt32"
+    )
+    gc_repl = (
+        "\t\tSystemVoidCosmosCoreGCImplementationInit.IL_010D:" + nl +
+        "\t\t\t; Conv_U4" + nl +
+        "\t\t\tpop dword EAX" + nl +
+        "\t\t\tadd ESP, 0x4" + nl +
+        "\t\t\tcmp EAX, 0x08000000" + nl +
+        "\t\t\tjbe .safe_mem_len" + nl +
+        "\t\t\tmov EAX, 0x08000000" + nl +
+        "\t\t\tmov dword [static_field__Cosmos_Core_GCImplementation_memLength], EAX" + nl +
+        "\t\t\tmov dword [static_field__Cosmos_Core_GCImplementation_memLength + 4], 0" + nl +
+        ".safe_mem_len:" + nl +
+        "\t\t\tpush dword EAX" + nl +
+        nl +
+        "\t\tSystemVoidCosmosCoreGCImplementationInit.IL_010E:" + nl +
+        "\t\t\t; Call" + nl +
+        "\t\t\tCall SystemVoidCosmosCoreMemoryRATInitSystemBytepointerSystemUInt32"
+    )
+    if gc_target in content:
+        content = content.replace(gc_target, gc_repl, 1)
+        print("Patched GCImplementation.Init with 128 MB safe heap cap!")
+
+    # 7. Patch HeapSmall.Alloc segment reload and null-pointer check at IL_0046
     hs_target = (
         "\t\tSystemBytepointerCosmosCoreMemoryHeapSmallAllocSystemUInt16.IL_0046:" + nl +
         "\t\t\t; Ldfld" + nl +
@@ -137,6 +170,9 @@ def patch_asm_file(asm_path):
         "\t\t\t; Offset: 0 (includes object header)" + nl +
         "\t\t\tpop dword ECX" + nl +
         "\t\t\tadd ECX, 0x0" + nl +
+        "\t\t\tmov ax, 0x10" + nl +
+        "\t\t\tmov ds, ax" + nl +
+        "\t\t\tmov es, ax" + nl +
         "\t\t\ttest ECX, ECX" + nl +
         "\t\t\tjnz .smt_valid_alloc" + nl +
         "\t\t\tmov edi, 0x000B8140" + nl +
@@ -150,7 +186,12 @@ def patch_asm_file(asm_path):
     )
     if hs_target in content:
         content = content.replace(hs_target, hs_repl, 1)
-        print("Patched HeapSmall.Alloc with null check safety!")
+        print("Patched HeapSmall.Alloc with segment reload and null check safety!")
+    elif "mov ax, 0x10" not in content and ".smt_valid_alloc:" in content:
+        old_hs = "add ECX, 0x0" + nl + "\t\t\ttest ECX, ECX"
+        new_hs = "add ECX, 0x0" + nl + "\t\t\tmov ax, 0x10" + nl + "\t\t\tmov ds, ax" + nl + "\t\t\tmov es, ax" + nl + "\t\t\ttest ECX, ECX"
+        content = content.replace(old_hs, new_hs, 1)
+        print("Upgraded HeapSmall.Alloc with segment reload!")
 
     with open(asm_path, "w", encoding="latin-1") as f:
         f.write(content)
