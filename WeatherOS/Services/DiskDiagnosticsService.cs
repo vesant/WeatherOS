@@ -562,7 +562,7 @@ namespace WeatherOS.Services
 
                 // Wait for BSY to clear AND DRQ (0x08) to become asserted
                 // Note: Real mechanical HDDs return status 0x00 while preparing identify sector data!
-                int timeout = 500000;
+                int timeout = 150000;
                 while (timeout-- > 0)
                 {
                     status = pCmd.Byte;

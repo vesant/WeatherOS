@@ -440,16 +440,22 @@ namespace WeatherOS.Services
                             if ((bar0 & 1) == 1 && (bar0 & 0xFFFC) > 0)
                             {
                                 ushort priCmd = (ushort)(bar0 & 0xFFFC);
-                                ushort priCtrl = ((bar1 & 1) == 1 && (bar1 & 0xFFFC) > 0) ? (ushort)((bar1 & 0xFFFC) + 2) : (ushort)(priCmd + 0x206);
-                                ProbeChannel(priCmd, priCtrl, $"PCI [{device.bus:X2}:{device.slot:X2}.{device.function:X2}] BAR0 (0x{priCmd:X4})");
+                                if (priCmd != 0x1F0)
+                                {
+                                    ushort priCtrl = ((bar1 & 1) == 1 && (bar1 & 0xFFFC) > 0) ? (ushort)((bar1 & 0xFFFC) + 2) : (ushort)(priCmd + 0x206);
+                                    ProbeChannel(priCmd, priCtrl, $"PCI [{device.bus:X2}:{device.slot:X2}.{device.function:X2}] BAR0 (0x{priCmd:X4})");
+                                }
                             }
 
                             // Secondary Channel
                             if ((bar2 & 1) == 1 && (bar2 & 0xFFFC) > 0)
                             {
                                 ushort secCmd = (ushort)(bar2 & 0xFFFC);
-                                ushort secCtrl = ((bar3 & 1) == 1 && (bar3 & 0xFFFC) > 0) ? (ushort)((bar3 & 0xFFFC) + 2) : (ushort)(secCmd + 0x206);
-                                ProbeChannel(secCmd, secCtrl, $"PCI [{device.bus:X2}:{device.slot:X2}.{device.function:X2}] BAR2 (0x{secCmd:X4})");
+                                if (secCmd != 0x170)
+                                {
+                                    ushort secCtrl = ((bar3 & 1) == 1 && (bar3 & 0xFFFC) > 0) ? (ushort)((bar3 & 0xFFFC) + 2) : (ushort)(secCmd + 0x206);
+                                    ProbeChannel(secCmd, secCtrl, $"PCI [{device.bus:X2}:{device.slot:X2}.{device.function:X2}] BAR2 (0x{secCmd:X4})");
+                                }
                             }
                         }
                     }
@@ -497,16 +503,28 @@ namespace WeatherOS.Services
                 {
                     // Verify that Sector 0 can actually be read from this hardware channel
                     byte[] sec0 = new byte[512];
-                    bool sec0Ok = CustomPciAtaBlockDevice.ReadSectorPio(cmdBase, ctrlBase, drvSel, info.IsLba48, 0, sec0, 0, 30000);
-                    if (!sec0Ok) return; // Unresponsive channel or non-existent slave
-
-                    // Filter out floating bus noise (all 0xFF only; do NOT filter all 0x00 as empty sectors are valid!)
-                    bool allFF = true;
-                    for (int b = 0; b < 16; b++)
+                    bool sec0Ok = CustomPciAtaBlockDevice.ReadSectorPio(cmdBase, ctrlBase, drvSel, info.IsLba48, 0, sec0, 0, 1500000);
+                    if (!sec0Ok)
                     {
-                        if (sec0[b] != 0xFF) { allFF = false; break; }
+                        // Retry once with 2.5M cycles in case the drive head was parking or spinning up
+                        sec0Ok = CustomPciAtaBlockDevice.ReadSectorPio(cmdBase, ctrlBase, drvSel, info.IsLba48, 0, sec0, 0, 2500000);
                     }
-                    if (allFF) return;
+
+                    if (sec0Ok)
+                    {
+                        // Filter out floating bus noise (all 0xFF only; do NOT filter all 0x00 as empty sectors are valid!)
+                        bool allFF = true;
+                        for (int b = 0; b < 16; b++)
+                        {
+                            if (sec0[b] != 0xFF) { allFF = false; break; }
+                        }
+                        if (allFF) return;
+                    }
+                    else
+                    {
+                        // If sector 0 timed out but drive IDENTIFY was successful with non-zero capacity, do not discard
+                        if (info.TotalSectors == 0) return;
+                    }
 
                     // Inspect MBR partition table to get true drive capacity if GParted partitioned the disk
                     if (sec0[510] == 0x55 && sec0[511] == 0xAA)
