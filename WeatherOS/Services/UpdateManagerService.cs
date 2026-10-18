@@ -74,6 +74,12 @@ namespace WeatherOS.Services
 
                 // Flush ATA write cache ONCE after all sectors have been transferred
                 CustomPciAtaBlockDevice.FlushPio(ata.CmdBase, ata.DriveSelect, ata.IsLba48);
+                try
+                {
+                    var pStatus = new Cosmos.Core.IOPort((ushort)(ata.CmdBase + 7));
+                    byte finalSt = pStatus.Byte;
+                }
+                catch { }
                 return true;
             }
 
@@ -1053,24 +1059,60 @@ namespace WeatherOS.Services
                             try
                             {
                                 byte[] s2Block = new byte[8 * 512];
-                                SafeReadSectors(dev, 1, 8, s2Block, 0);
-                                if (NativeBootloaderPayload.Stage2RemSectorsOffset > 0 &&
-                                    NativeBootloaderPayload.Stage2RemSectorsOffset + 4 <= (uint)s2Block.Length)
+                                if (SafeReadSectors(dev, 1, 8, s2Block, 0))
                                 {
-                                    s2Block[NativeBootloaderPayload.Stage2RemSectorsOffset] = (byte)(totalSec & 0xFF);
-                                    s2Block[NativeBootloaderPayload.Stage2RemSectorsOffset + 1] = (byte)((totalSec >> 8) & 0xFF);
-                                    s2Block[NativeBootloaderPayload.Stage2RemSectorsOffset + 2] = (byte)((totalSec >> 16) & 0xFF);
-                                    s2Block[NativeBootloaderPayload.Stage2RemSectorsOffset + 3] = (byte)((totalSec >> 24) & 0xFF);
+                                    int rsecIdx = FindByteSequence(s2Block, new byte[] { (byte)'R', (byte)'S', (byte)'E', (byte)'C' }, 0, s2Block.Length);
+                                    if (rsecIdx >= 0 && rsecIdx + 8 <= s2Block.Length)
+                                    {
+                                        int off = rsecIdx + 4;
+                                        s2Block[off] = (byte)(totalSec & 0xFF);
+                                        s2Block[off + 1] = (byte)((totalSec >> 8) & 0xFF);
+                                        s2Block[off + 2] = (byte)((totalSec >> 16) & 0xFF);
+                                        s2Block[off + 3] = (byte)((totalSec >> 24) & 0xFF);
+                                    }
+                                    else if (NativeBootloaderPayload.Stage2RemSectorsOffset > 0 &&
+                                             NativeBootloaderPayload.Stage2RemSectorsOffset + 4 <= (uint)s2Block.Length)
+                                    {
+                                        s2Block[NativeBootloaderPayload.Stage2RemSectorsOffset] = (byte)(totalSec & 0xFF);
+                                        s2Block[NativeBootloaderPayload.Stage2RemSectorsOffset + 1] = (byte)((totalSec >> 8) & 0xFF);
+                                        s2Block[NativeBootloaderPayload.Stage2RemSectorsOffset + 2] = (byte)((totalSec >> 16) & 0xFF);
+                                        s2Block[NativeBootloaderPayload.Stage2RemSectorsOffset + 3] = (byte)((totalSec >> 24) & 0xFF);
+                                    }
+
+                                    int epntIdx = FindByteSequence(s2Block, new byte[] { (byte)'E', (byte)'P', (byte)'N', (byte)'T' }, 0, s2Block.Length);
+                                    if (epntIdx >= 0 && epntIdx + 8 <= s2Block.Length)
+                                    {
+                                        int off = epntIdx + 4;
+                                        s2Block[off] = (byte)(newEntryPoint & 0xFF);
+                                        s2Block[off + 1] = (byte)((newEntryPoint >> 8) & 0xFF);
+                                        s2Block[off + 2] = (byte)((newEntryPoint >> 16) & 0xFF);
+                                        s2Block[off + 3] = (byte)((newEntryPoint >> 24) & 0xFF);
+                                    }
+                                    else if (NativeBootloaderPayload.Stage2EntryPointOffset > 0 &&
+                                             NativeBootloaderPayload.Stage2EntryPointOffset + 4 <= (uint)s2Block.Length)
+                                    {
+                                        s2Block[NativeBootloaderPayload.Stage2EntryPointOffset] = (byte)(newEntryPoint & 0xFF);
+                                        s2Block[NativeBootloaderPayload.Stage2EntryPointOffset + 1] = (byte)((newEntryPoint >> 8) & 0xFF);
+                                        s2Block[NativeBootloaderPayload.Stage2EntryPointOffset + 2] = (byte)((newEntryPoint >> 16) & 0xFF);
+                                        s2Block[NativeBootloaderPayload.Stage2EntryPointOffset + 3] = (byte)((newEntryPoint >> 24) & 0xFF);
+                                    }
+
+                                    SafeWriteSectors(dev, 1, 8, s2Block, 0);
                                 }
-                                if (NativeBootloaderPayload.Stage2EntryPointOffset > 0 &&
-                                    NativeBootloaderPayload.Stage2EntryPointOffset + 4 <= (uint)s2Block.Length)
+
+                                // Also synchronize MBR Partition 1 length at LBA 0 (offset 458)
+                                byte[] mbrBlock = new byte[512];
+                                if (SafeReadSectors(dev, 0, 1, mbrBlock, 0))
                                 {
-                                    s2Block[NativeBootloaderPayload.Stage2EntryPointOffset] = (byte)(newEntryPoint & 0xFF);
-                                    s2Block[NativeBootloaderPayload.Stage2EntryPointOffset + 1] = (byte)((newEntryPoint >> 8) & 0xFF);
-                                    s2Block[NativeBootloaderPayload.Stage2EntryPointOffset + 2] = (byte)((newEntryPoint >> 16) & 0xFF);
-                                    s2Block[NativeBootloaderPayload.Stage2EntryPointOffset + 3] = (byte)((newEntryPoint >> 24) & 0xFF);
+                                    if (mbrBlock[510] == 0x55 && mbrBlock[511] == 0xAA && mbrBlock[450] == 0x83)
+                                    {
+                                        mbrBlock[458] = (byte)(totalSec & 0xFF);
+                                        mbrBlock[459] = (byte)((totalSec >> 8) & 0xFF);
+                                        mbrBlock[460] = (byte)((totalSec >> 16) & 0xFF);
+                                        mbrBlock[461] = (byte)((totalSec >> 24) & 0xFF);
+                                        SafeWriteSectors(dev, 0, 1, mbrBlock, 0);
+                                    }
                                 }
-                                SafeWriteSectors(dev, 1, 8, s2Block, 0);
                             }
                             catch { }
                         }
@@ -1142,21 +1184,17 @@ namespace WeatherOS.Services
                     }
                     catch { }
                 }
-                else if (dev != null)
-                {
-                    string aStat;
-                    DiskWipeService.WriteFileDirectToFat32(dev, "apps.ini", appsManifest, out aStat);
-                }
+                StorageService.PutMemoryFile("apps.ini", appsManifest);
 
                 // 4. Update Component: System Version Manifest
                 if (string.IsNullOrEmpty(manifestUpdate))
                 {
                     manifestUpdate =
                         "[WeatherOS]\n" +
-                        "Version=3.1.3-release\n" +
+                        "Version=3.2.0-release\n" +
                         "BuildDate=2026-10-18\n" +
                         "Branch=32bit\n" +
-                        "LatestCommit=1e24606\n" +
+                        "LatestCommit=49a9992\n" +
                         $"LastUpdateFile={fileName}\n" +
                         $"LastUpdateChecksum={crcStr}\n" +
                         "BackupAvailable=true\n" +
@@ -1172,11 +1210,7 @@ namespace WeatherOS.Services
                     }
                     catch { }
                 }
-                else if (dev != null)
-                {
-                    string mStat;
-                    DiskWipeService.WriteFileDirectToFat32(dev, "version.ini", manifestUpdate, out mStat);
-                }
+                StorageService.PutMemoryFile("version.ini", manifestUpdate);
 
                 _forceInstalledFlag = true;
 

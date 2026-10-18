@@ -873,17 +873,8 @@ namespace WeatherOS.Services
                 Fat32VolumeInfo vol;
                 if (!FindFat32Volume(dev, out vol))
                 {
-                    string fmtStatus;
-                    if (!FormatDriveAsFat32(dev, out fmtStatus))
-                    {
-                        status = $"Auto-format failed: {fmtStatus}";
-                        return false;
-                    }
-                    if (!FindFat32Volume(dev, out vol))
-                    {
-                        status = "FAT32 volume could not be initialized.";
-                        return false;
-                    }
+                    status = "No FAT32 partition found on disk.";
+                    return false;
                 }
 
                 // Format 8.3 filename

@@ -223,12 +223,27 @@ namespace WeatherOS.Apps
                     lastDrawnStatus = curStatus;
                     if (curStatus == TransferStatus.Success)
                     {
-                        win.WriteRow(6, "[SUCCESS] Transfer completed successfully!", ConsoleColor.Green, 2, fillRemaining: true);
-                        win.WriteRow(7, $"File Name : {FileTransferService.CurrentFileName}", ConsoleColor.White, 2, fillRemaining: true);
-                        win.WriteRow(8, $"File Size : {FileTransferService.TotalFileSize} bytes", ConsoleColor.White, 2, fillRemaining: true);
-                        win.WriteRow(9, "Saved to  : FAT32 Storage / RAM Virtual Disk", ConsoleColor.Cyan, 2, fillRemaining: true);
-                        win.DrawBar(2, 11, "Finished", 100, ConsoleColor.Green);
-                        win.WriteRow(13, "Press [R] to listen for another file.", ConsoleColor.Yellow, 2, fillRemaining: true);
+                        bool isPkg = !string.IsNullOrEmpty(FileTransferService.CurrentFileName) &&
+                                     FileTransferService.CurrentFileName.ToLower().EndsWith(".pkg");
+
+                        if (isPkg)
+                        {
+                            win.WriteRow(6, "[SUCCESS] SYSTEM UPDATE FLASHED TO DISK!", ConsoleColor.Green, 2, fillRemaining: true);
+                            win.WriteRow(7, $"Package   : {FileTransferService.CurrentFileName}", ConsoleColor.White, 2, fillRemaining: true);
+                            win.WriteRow(8, $"Kernel    : Flashed to Physical Storage (LBA 64)", ConsoleColor.Cyan, 2, fillRemaining: true);
+                            win.WriteRow(9, $"Status    : Ready to boot into new version", ConsoleColor.Green, 2, fillRemaining: true);
+                            win.DrawBar(2, 11, "Update Complete", 100, ConsoleColor.Green);
+                            win.WriteRow(13, "Press [ENTER] to Reboot Now  |  [R] Listen Again  |  [ESC] Menu", ConsoleColor.Yellow, 2, fillRemaining: true);
+                        }
+                        else
+                        {
+                            win.WriteRow(6, "[SUCCESS] Transfer completed successfully!", ConsoleColor.Green, 2, fillRemaining: true);
+                            win.WriteRow(7, $"File Name : {FileTransferService.CurrentFileName}", ConsoleColor.White, 2, fillRemaining: true);
+                            win.WriteRow(8, $"File Size : {FileTransferService.TotalFileSize} bytes", ConsoleColor.White, 2, fillRemaining: true);
+                            win.WriteRow(9, "Saved to  : FAT32 Storage / RAM Virtual Disk", ConsoleColor.Cyan, 2, fillRemaining: true);
+                            win.DrawBar(2, 11, "Finished", 100, ConsoleColor.Green);
+                            win.WriteRow(13, "Press [R] to listen for another file.", ConsoleColor.Yellow, 2, fillRemaining: true);
+                        }
                     }
                     else if (curStatus == TransferStatus.Error)
                     {
@@ -524,6 +539,17 @@ namespace WeatherOS.Apps
 
         private void HandleReceiveInput(TuiDesktop desktop, KeyEvent keyEvent)
         {
+            if (FileTransferService.Status == TransferStatus.Success &&
+                !string.IsNullOrEmpty(FileTransferService.CurrentFileName) &&
+                FileTransferService.CurrentFileName.ToLower().EndsWith(".pkg"))
+            {
+                if (keyEvent.Key == ConsoleKeyEx.Enter || keyEvent.KeyChar == '\r' || keyEvent.KeyChar == '\n')
+                {
+                    Cosmos.System.Power.Reboot();
+                    return;
+                }
+            }
+
             if (keyEvent.KeyChar == 'r' || keyEvent.KeyChar == 'R')
             {
                 FileTransferService.StartListening();
