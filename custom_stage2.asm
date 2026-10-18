@@ -322,7 +322,28 @@ prot_start:
     ; Verify Entry Point code: mov esp, 0x02050040 (0xBC 0x40 0x00 0x05 -> 0x050040BC)
     mov edx, [entry_point]
     cmp dword [edx], 0x050040BC
-    jne bad_kernel_entry
+    je .entry_ok
+
+    ; Auto-scan fallback: search 0x02000000 .. 0x02500000 for Kernel_Start (mov esp, 0x02050040; cli)
+    mov edi, 0x02000000
+    mov ecx, 0x00500000
+.scan_ep:
+    cmp dword [edi], 0x050040BC
+    jne .next_ep
+    cmp byte [edi + 4], 0x02
+    jne .next_ep
+    cmp byte [edi + 5], 0xFA
+    je .found_ep
+.next_ep:
+    inc edi
+    dec ecx
+    jnz .scan_ep
+    jmp bad_kernel_entry
+
+.found_ep:
+    mov edx, edi
+
+.entry_ok:
 
     ; Zero-initialize BSS / heap padding (32 MB immediately following kernel load)
     mov edi, [dest_phys]
@@ -825,11 +846,11 @@ chunk_index dw 0
 ; Patchable variables (updated by make_isohybrid.py)
 align 4
 rem_sec_sig db "RSEC"
-rem_sectors dd 16724
+rem_sectors dd 16733
 
 align 4
 entry_point_sig db "EPNT"
-entry_point dd 0x24184f0
+entry_point dd 0x24184e0
 
 align 4
 dap_read:

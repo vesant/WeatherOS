@@ -397,18 +397,18 @@ namespace WeatherOS.Services
                     string saveStatus = "";
                     bool saved = false;
 
-                    // 1. Direct write to VFS 0:\ root and 0:\Updates\ if available
-                    try
+                    // 1. Direct write to VFS 0:\ root and 0:\Updates\ ONLY if VFS drive 0: is mounted
+                    if (StorageService.IsVfsAvailable())
                     {
-                        if (Directory.Exists("0:\\"))
+                        try
                         {
                             File.WriteAllBytes("0:\\" + CurrentFileName, fileData);
                             if (!Directory.Exists("0:\\Updates")) Directory.CreateDirectory("0:\\Updates");
                             File.WriteAllBytes("0:\\Updates\\" + CurrentFileName, fileData);
                             saved = true;
                         }
+                        catch { }
                     }
-                    catch { }
 
                     // 2. StorageService fallback & RAM store sync
                     string stgStatus;

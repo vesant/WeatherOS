@@ -61,6 +61,26 @@ namespace WeatherOS.Services
     {
         private static List<StoredFile> _memoryFiles = new List<StoredFile>();
 
+        public static bool IsVfsAvailable()
+        {
+            try
+            {
+                var drives = Cosmos.System.FileSystem.VFS.VFSManager.GetLogicalDrives();
+                if (drives != null && drives.Count > 0)
+                {
+                    for (int i = 0; i < drives.Count; i++)
+                    {
+                        if (string.Equals(drives[i].TrimEnd('\\'), "0:", StringComparison.OrdinalIgnoreCase))
+                        {
+                            return true;
+                        }
+                    }
+                }
+            }
+            catch { }
+            return false;
+        }
+
         public static string NormalizeFilename(string filename)
         {
             if (string.IsNullOrWhiteSpace(filename)) filename = "untitled.txt";
@@ -474,15 +494,15 @@ namespace WeatherOS.Services
             }
 
             bool vfsSaved = false;
-            try
+            if (IsVfsAvailable())
             {
-                if (Directory.Exists("0:\\"))
+                try
                 {
                     File.WriteAllBytes("0:\\" + filename, data);
                     vfsSaved = true;
                 }
+                catch { }
             }
-            catch { }
 
             string diskName;
             var targetDev = GetTargetDisk(locationId, out diskName);
@@ -669,9 +689,9 @@ namespace WeatherOS.Services
                 }
             }
             catch { }
-            try
+            if (IsVfsAvailable())
             {
-                if (Directory.Exists("0:\\"))
+                try
                 {
                     string[] vFiles = Directory.GetFiles("0:\\");
                     if (vFiles != null)
@@ -695,8 +715,8 @@ namespace WeatherOS.Services
                         }
                     }
                 }
+                catch { }
             }
-            catch { }
 
             return files;
         }

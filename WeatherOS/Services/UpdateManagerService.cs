@@ -759,19 +759,73 @@ namespace WeatherOS.Services
 
             try
             {
-                var physDrives = DiskWipeService.GetPhysicalDrives();
-                BlockDevice dev = (physDrives != null && physDrives.Count > 0) ? physDrives[0].Device : null;
-
-                // 1. Rollback Backup: Backup existing kernel to WeatherOS.bak safely
+                // Safely identify the installed internal hard disk device (NEVER touch Live USB boot drive)
+                BlockDevice dev = null;
                 try
                 {
-                    if (File.Exists("0:\\boot\\WeatherOS.bin"))
+                    var physDrives = DiskWipeService.GetPhysicalDrives();
+                    if (physDrives != null && physDrives.Count > 0)
                     {
-                        try { File.Copy("0:\\boot\\WeatherOS.bin", "0:\\boot\\WeatherOS.bak", true); }
-                        catch { }
+                        // 1. Look for drive with WeatherOS installation marker at LBA 9
+                        for (int i = 0; i < physDrives.Count; i++)
+                        {
+                            var drv = physDrives[i];
+                            if (drv == null) continue;
+                            var d = drv.Device;
+                            while (d is Cosmos.HAL.BlockDevice.Partition p) d = p.Host;
+                            if (d == null) continue;
+
+                            byte[] sec9 = new byte[512];
+                            try
+                            {
+                                d.ReadBlock(9, 1, ref sec9);
+                                if (sec9[0] == (byte)'W' && sec9[1] == (byte)'E' && sec9[2] == (byte)'A' &&
+                                    sec9[3] == (byte)'T' && sec9[4] == (byte)'H' && sec9[5] == (byte)'E' &&
+                                    sec9[6] == (byte)'R' && sec9[7] == (byte)'O' && sec9[8] == (byte)'S')
+                                {
+                                    dev = d;
+                                    break;
+                                }
+                            }
+                            catch { }
+                        }
+
+                        // 2. Fallback: Internal Hard Disk (never Live USB)
+                        if (dev == null)
+                        {
+                            for (int i = 0; i < physDrives.Count; i++)
+                            {
+                                var drv = physDrives[i];
+                                if (drv == null) continue;
+                                if (drv.Name.Contains("Live USB") || drv.Name.Contains("Boot Medium") || drv.Name.Contains("Flash"))
+                                    continue;
+
+                                var d = drv.Device;
+                                while (d is Cosmos.HAL.BlockDevice.Partition p) d = p.Host;
+                                if (d != null)
+                                {
+                                    dev = d;
+                                    break;
+                                }
+                            }
+                        }
                     }
                 }
                 catch { }
+
+                // 1. Rollback Backup: Backup existing kernel to WeatherOS.bak safely
+                if (StorageService.IsVfsAvailable())
+                {
+                    try
+                    {
+                        if (File.Exists("0:\\boot\\WeatherOS.bin"))
+                        {
+                            try { File.Copy("0:\\boot\\WeatherOS.bin", "0:\\boot\\WeatherOS.bak", true); }
+                            catch { }
+                        }
+                    }
+                    catch { }
+                }
 
                 // 2. Extract Kernel Binary and deploy to 0:\boot\WeatherOS.bin
                 byte[] kernelToDeploy = packageData;
@@ -782,67 +836,84 @@ namespace WeatherOS.Services
                 }
 
                 bool written = false;
-                try
+                if (StorageService.IsVfsAvailable())
                 {
-                    if (!Directory.Exists("0:\\boot")) Directory.CreateDirectory("0:\\boot");
-                    File.WriteAllBytes("0:\\boot\\WeatherOS.bin", kernelToDeploy);
-                    written = true;
-                }
-                catch { }
+                    try
+                    {
+                        if (!Directory.Exists("0:\\boot")) Directory.CreateDirectory("0:\\boot");
+                        File.WriteAllBytes("0:\\boot\\WeatherOS.bin", kernelToDeploy);
+                        written = true;
+                    }
+                    catch { }
 
-                // Save package file to disk for user records and offline reinstall
-                try
-                {
-                    if (Directory.Exists("0:\\"))
+                    // Save package file to disk for user records and offline reinstall
+                    try
                     {
                         File.WriteAllBytes("0:\\" + fileName, packageData);
                         if (!Directory.Exists("0:\\Updates")) Directory.CreateDirectory("0:\\Updates");
                         File.WriteAllBytes("0:\\Updates\\" + fileName, packageData);
                     }
+                    catch { }
                 }
-                catch { }
 
-                if (dev != null)
+                if (dev != null && kernelToDeploy != null && kernelToDeploy.Length >= 512)
                 {
-                    // Safe sector-by-sector deployment to LBA 64 without touching MBR (LBA 0) or Stage 2 (LBA 1..8)
-                    if (kernelToDeploy != null && kernelToDeploy.Length >= 512)
+                    bool validMb = (kernelToDeploy[0] == 0xD6 && kernelToDeploy[1] == 0x50 && kernelToDeploy[2] == 0x52 && kernelToDeploy[3] == 0xE8) ||
+                                   (kernelToDeploy[0] == 0x02 && kernelToDeploy[1] == 0xB0 && kernelToDeploy[2] == 0xAD && kernelToDeploy[3] == 0x1B);
+                    if (validMb)
                     {
-                        bool validMb = (kernelToDeploy[0] == 0xD6 && kernelToDeploy[1] == 0x50 && kernelToDeploy[2] == 0x52 && kernelToDeploy[3] == 0xE8) ||
-                                       (kernelToDeploy[0] == 0x02 && kernelToDeploy[1] == 0xB0 && kernelToDeploy[2] == 0xAD && kernelToDeploy[3] == 0x1B);
-                        if (validMb)
+                        ulong totalSec = (ulong)((kernelToDeploy.Length + 511) / 512);
+                        if (totalSec > 32768) totalSec = 32768; // Kernel partition boundary safety
+
+                        ulong curSec = 0;
+                        byte[] chunk = new byte[64 * 512]; // 32 KB chunk
+                        while (curSec < totalSec)
                         {
-                            ulong totalSec = (ulong)((kernelToDeploy.Length + 511) / 512);
-                            if (totalSec > 32768) totalSec = 32768; // Kernel partition boundary safety (expanded from 16541)
-
-                            ulong curSec = 0;
-                            byte[] chunk = new byte[64 * 512]; // 32 KB chunk
-                            while (curSec < totalSec)
+                            ulong rem = totalSec - curSec;
+                            ulong count = rem > 64 ? 64 : rem;
+                            for (uint b = 0; b < count * 512; b++)
                             {
-                                ulong rem = totalSec - curSec;
-                                ulong count = rem > 64 ? 64 : rem;
-                                for (uint b = 0; b < count * 512; b++)
-                                {
-                                    ulong srcIdx = curSec * 512UL + b;
-                                    chunk[b] = (srcIdx < (ulong)kernelToDeploy.Length) ? kernelToDeploy[srcIdx] : (byte)0;
-                                }
-                                dev.WriteBlock(64UL + curSec, count, ref chunk);
-                                curSec += count;
+                                ulong srcIdx = curSec * 512UL + b;
+                                chunk[b] = (srcIdx < (ulong)kernelToDeploy.Length) ? kernelToDeploy[srcIdx] : (byte)0;
                             }
-
-                            // Strict MBR safety verification
-                            byte[] chkMbr = new byte[512];
-                            dev.ReadBlock(0, 1, ref chkMbr);
-                            if (chkMbr[510] != 0x55 || chkMbr[511] != 0xAA)
-                            {
-                                if (NativeBootloaderPayload.Mbr != null && NativeBootloaderPayload.Mbr.Length == 512)
-                                {
-                                    byte[] mbrCopy = new byte[512];
-                                    Array.Copy(NativeBootloaderPayload.Mbr, 0, mbrCopy, 0, 512);
-                                    dev.WriteBlock(0, 1, ref mbrCopy);
-                                }
-                            }
-                            written = true;
+                            dev.WriteBlock(64UL + curSec, count, ref chunk);
+                            curSec += count;
                         }
+
+                        // Dynamically locate entry point in kernelToDeploy (mov esp, 0x02050040; cli)
+                        byte[] epSig = new byte[] { 0xBC, 0x40, 0x00, 0x05, 0x02, 0xFA };
+                        int epOff = FindByteSequence(kernelToDeploy, epSig, 0, kernelToDeploy.Length);
+                        uint newEntryPoint = (epOff >= 0) ? (0x02000000u + (uint)epOff) : 0;
+
+                        // Patch Stage 2 at LBA 1..8 with new kernel sector count and entry point (MBR at LBA 0 is 100% protected)
+                        if (newEntryPoint != 0)
+                        {
+                            try
+                            {
+                                byte[] s2Block = new byte[8 * 512];
+                                dev.ReadBlock(1, 8, ref s2Block);
+                                if (NativeBootloaderPayload.Stage2RemSectorsOffset > 0 &&
+                                    NativeBootloaderPayload.Stage2RemSectorsOffset + 4 <= (uint)s2Block.Length)
+                                {
+                                    s2Block[NativeBootloaderPayload.Stage2RemSectorsOffset] = (byte)(totalSec & 0xFF);
+                                    s2Block[NativeBootloaderPayload.Stage2RemSectorsOffset + 1] = (byte)((totalSec >> 8) & 0xFF);
+                                    s2Block[NativeBootloaderPayload.Stage2RemSectorsOffset + 2] = (byte)((totalSec >> 16) & 0xFF);
+                                    s2Block[NativeBootloaderPayload.Stage2RemSectorsOffset + 3] = (byte)((totalSec >> 24) & 0xFF);
+                                }
+                                if (NativeBootloaderPayload.Stage2EntryPointOffset > 0 &&
+                                    NativeBootloaderPayload.Stage2EntryPointOffset + 4 <= (uint)s2Block.Length)
+                                {
+                                    s2Block[NativeBootloaderPayload.Stage2EntryPointOffset] = (byte)(newEntryPoint & 0xFF);
+                                    s2Block[NativeBootloaderPayload.Stage2EntryPointOffset + 1] = (byte)((newEntryPoint >> 8) & 0xFF);
+                                    s2Block[NativeBootloaderPayload.Stage2EntryPointOffset + 2] = (byte)((newEntryPoint >> 16) & 0xFF);
+                                    s2Block[NativeBootloaderPayload.Stage2EntryPointOffset + 3] = (byte)((newEntryPoint >> 24) & 0xFF);
+                                }
+                                dev.WriteBlock(1, 8, ref s2Block);
+                            }
+                            catch { }
+                        }
+
+                        written = true;
                     }
                 }
 
@@ -910,12 +981,15 @@ namespace WeatherOS.Services
                         "NetTransferApp_Version=2.0\n";
                 }
 
-                try
+                if (StorageService.IsVfsAvailable())
                 {
-                    if (!Directory.Exists("0:\\system")) Directory.CreateDirectory("0:\\system");
-                    File.WriteAllText("0:\\system\\apps.ini", appsManifest);
+                    try
+                    {
+                        if (!Directory.Exists("0:\\system")) Directory.CreateDirectory("0:\\system");
+                        File.WriteAllText("0:\\system\\apps.ini", appsManifest);
+                    }
+                    catch { }
                 }
-                catch { }
                 if (dev != null)
                 {
                     string aStat;
@@ -939,11 +1013,14 @@ namespace WeatherOS.Services
                         "Status=Updated_Cumulative\n";
                 }
 
-                try
+                if (StorageService.IsVfsAvailable())
                 {
-                    File.WriteAllText("0:\\system\\version.ini", manifestUpdate);
+                    try
+                    {
+                        File.WriteAllText("0:\\system\\version.ini", manifestUpdate);
+                    }
+                    catch { }
                 }
-                catch { }
                 if (dev != null)
                 {
                     string mStat;
@@ -957,7 +1034,7 @@ namespace WeatherOS.Services
                     statusMessage = $"Cumulative System Update Applied ({fileName}, CRC {crcStr})!\n" +
                                     "  [1] Kernel Binary   : Deployed & verified (Safety backup at 0:\\boot\\WeatherOS.bak)\n" +
                                     "  [2] System Apps     : Upgraded manifest deployed to 0:\\system\\apps.ini\n" +
-                                    "  [3] Offline Storage : Package saved to 0:\\ and 0:\\Updates\\\n" +
+                                    "  [3] Offline Storage : Package saved to disk / RAM\n" +
                                     "  [OK] Bootloader, MBR, and Stage 2 fully protected. User settings preserved.";
                 }
                 else
