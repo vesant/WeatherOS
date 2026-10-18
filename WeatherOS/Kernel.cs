@@ -54,9 +54,9 @@ namespace WeatherOS
                 {
                     System.Console.WriteLine("Configuring Static IP (Bypassing DHCP Freeze)...");
                     
-                    var ip = new Cosmos.System.Network.IPv4.Address(192, 168, 31, 100);
+                    var ip = new Cosmos.System.Network.IPv4.Address(192, 168, 1, 155);
                     var subnet = new Cosmos.System.Network.IPv4.Address(255, 255, 255, 0);
-                    var gateway = new Cosmos.System.Network.IPv4.Address(192, 168, 31, 1);
+                    var gateway = new Cosmos.System.Network.IPv4.Address(192, 168, 1, 1);
                     
                     var config = new Cosmos.System.Network.Config.IPConfig(ip, subnet, gateway);
                     Cosmos.System.Network.NetworkStack.ConfigIP(Cosmos.HAL.NetworkDevice.Devices[0], config);

@@ -45,6 +45,7 @@ namespace WeatherOS.Services
         public static bool _dhcpAckReceived = false;
         public static bool _arpReplyReceived = false;
         public static byte[] _pendingArpIp = null;
+        public static byte[] _pendingArpMac = new byte[6];
         public static byte[] _gatewayIp = new byte[4];
         public static byte[] _dhcpServerIp = new byte[4];
         
@@ -136,7 +137,15 @@ namespace WeatherOS.Services
 
             bool isGui = WeatherOS.Graphics.TuiDesktop.IsGuiActive;
 
-            // Check if physical link is down up front (Ethernet cable unplugged)
+            // Wait up to 2.5 seconds for physical PHY link to complete auto-negotiation
+            int linkSpins = 0;
+            while (WeatherOS.Kernel.CustomNIC != null && !WeatherOS.Kernel.CustomNIC.IsPhyLinkUp() && linkSpins < 125)
+            {
+                WeatherOS.Kernel.CustomNIC?.HackPoll();
+                HardwareDelayMs(20);
+                linkSpins++;
+            }
+
             if (WeatherOS.Kernel.CustomNIC != null && !WeatherOS.Kernel.CustomNIC.IsPhyLinkUp())
             {
                 if (!isGui) System.Console.WriteLine("[net] raw_tcp: no physical link detected (cable unplugged).");
@@ -201,9 +210,10 @@ namespace WeatherOS.Services
                     byte[] cand = candidateGateways[g];
                     _pendingArpIp = cand;
                     _arpReplyReceived = false;
+                    _ipSource = new byte[] { cand[0], cand[1], cand[2], 155 }; // Set valid subnet IP for ARP probe
                     SendArpRequest(cand);
 
-                    for (int a = 0; a < 15 && !_arpReplyReceived; a++)
+                    for (int a = 0; a < 25 && !_arpReplyReceived; a++)
                     {
                         WeatherOS.Kernel.CustomNIC?.HackPoll();
                         HardwareDelayMs(10);
@@ -212,10 +222,6 @@ namespace WeatherOS.Services
                     if (_arpReplyReceived)
                     {
                         Array.Copy(cand, 0, _gatewayIp, 0, 4);
-                        if (_ipSource[0] == 0 || _ipSource[2] != _gatewayIp[2])
-                        {
-                            _ipSource = new byte[] { _gatewayIp[0], _gatewayIp[1], _gatewayIp[2], 155 };
-                        }
                         if (!isGui)
                             System.Console.WriteLine($"[net] raw_tcp: Gateway detected: {_gatewayIp[0]}.{_gatewayIp[1]}.{_gatewayIp[2]}.{_gatewayIp[3]} (MAC: {_macDest[0]:X2}:{_macDest[1]:X2}:{_macDest[2]:X2}:{_macDest[3]:X2}:{_macDest[4]:X2}:{_macDest[5]:X2})");
                         break;
@@ -346,7 +352,7 @@ namespace WeatherOS.Services
 
             if (_arpReplyReceived)
             {
-                Array.Copy(_macDest, 0, outMac, 0, 6);
+                Array.Copy(_pendingArpMac, 0, outMac, 0, 6);
                 return true;
             }
 
@@ -969,16 +975,24 @@ namespace WeatherOS.Services
                 ushort op = (ushort)((packet[20] << 8) | packet[21]);
                 if (op == 0x0002) // ARP Reply
                 {
-                    bool match = false;
-                    if (_pendingArpIp != null && packet[28] == _pendingArpIp[0] && packet[29] == _pendingArpIp[1] &&
-                        packet[30] == _pendingArpIp[2] && packet[31] == _pendingArpIp[3]) match = true;
-                    if (_gatewayIp[0] != 0 && packet[28] == _gatewayIp[0] && packet[29] == _gatewayIp[1] &&
-                        packet[30] == _gatewayIp[2] && packet[31] == _gatewayIp[3]) match = true;
+                    bool isPendingMatch = (_pendingArpIp != null &&
+                        packet[28] == _pendingArpIp[0] && packet[29] == _pendingArpIp[1] &&
+                        packet[30] == _pendingArpIp[2] && packet[31] == _pendingArpIp[3]);
 
-                    if (match)
+                    bool isGatewayMatch = (_gatewayIp != null && _gatewayIp[0] != 0 &&
+                        packet[28] == _gatewayIp[0] && packet[29] == _gatewayIp[1] &&
+                        packet[30] == _gatewayIp[2] && packet[31] == _gatewayIp[3]);
+
+                    if (isPendingMatch || isGatewayMatch)
                     {
-                        Array.Copy(packet, 22, _macDest, 0, 6);
-                        Array.Copy(packet, 28, _gatewayIp, 0, 4);
+                        if (isPendingMatch)
+                        {
+                            Array.Copy(packet, 22, _pendingArpMac, 0, 6);
+                        }
+                        if (isGatewayMatch)
+                        {
+                            Array.Copy(packet, 22, _macDest, 0, 6);
+                        }
                         _arpReplyReceived = true;
                     }
                 }
@@ -1025,6 +1039,7 @@ namespace WeatherOS.Services
 
                 int udpDestPort = (packet[udpOff + 2] << 8) | packet[udpOff + 3];
                 int udpSrcPort = (packet[udpOff] << 8) | packet[udpOff + 1];
+                int udpLen = (packet[udpOff + 4] << 8) | packet[udpOff + 5];
 
                 if (udpDestPort == FileTransferService.PORT)
                 {
@@ -1054,16 +1069,19 @@ namespace WeatherOS.Services
                 if (packet[udpOff + 2] == 0x00 && packet[udpOff + 3] == 0x44)
                 {
                     int dhcpOff = udpOff + 8;
-                    if (packet.Length >= dhcpOff + 240 && packet[dhcpOff + 236] == 0x63 && packet[dhcpOff + 237] == 0x82)
+                    int dhcpEnd = udpOff + udpLen;
+                    if (dhcpEnd > packet.Length) dhcpEnd = packet.Length;
+
+                    if (dhcpEnd >= dhcpOff + 240 && packet[dhcpOff + 236] == 0x63 && packet[dhcpOff + 237] == 0x82)
                     {
                         byte dhcpMsgType = 0;
                         int optIdx = dhcpOff + 240;
-                        while (optIdx + 1 < packet.Length && packet[optIdx] != 255)
+                        while (optIdx + 1 < dhcpEnd && packet[optIdx] != 255)
                         {
                             byte opt = packet[optIdx];
                             if (opt == 0) { optIdx++; continue; }
                             byte len = packet[optIdx + 1];
-                            if (len == 0 || optIdx + 2 + len > packet.Length) break;
+                            if (len == 0 || optIdx + 2 + len > dhcpEnd) break;
                             if (opt == 53 && len >= 1) dhcpMsgType = packet[optIdx + 2];
                             if (opt == 3 && len >= 4) Array.Copy(packet, optIdx + 2, _gatewayIp, 0, 4);
                             if (opt == 54 && len >= 4) Array.Copy(packet, optIdx + 2, _dhcpServerIp, 0, 4);
