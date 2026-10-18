@@ -137,29 +137,38 @@ namespace WeatherOS.Services
 
             bool isGui = WeatherOS.Graphics.TuiDesktop.IsGuiActive;
 
-            // Allow settling time for PHY transceiver
-            for (int initWait = 0; initWait < 10; initWait++)
+            // Check hardware PHY link status (cable plugged in)
+            bool linkUp = true;
+            if (nic is Cosmos.HAL.Network.RTL8102E rtlNic)
             {
-                WeatherOS.Kernel.CustomNIC?.HackPoll();
-                HardwareDelayMs(10);
+                linkUp = rtlNic.IsPhyLinkUp();
             }
 
-            // 1. DHCP Discover with fast local LAN retransmissions (max 1.5 seconds)
-            if (!isGui) System.Console.Write("[net] raw_tcp: broadcasting DHCP Discover");
+            if (!linkUp)
+            {
+                _ipSource = new byte[] { 0, 0, 0, 0 };
+                _gatewayIp = new byte[] { 0, 0, 0, 0 };
+                if (!isGui) System.Console.WriteLine("[net] raw_tcp: Ethernet cable disconnected (PHY link DOWN). Skipping network boot wait.");
+                EnsurePacketHandlerActive();
+                return;
+            }
+
+            // 1. DHCP Discover with fast local LAN retransmissions (max 800ms)
+            if (!isGui) System.Console.Write("[net] raw_tcp: DHCP Discover");
             _dhcpOfferReceived = false;
             _dhcpAckReceived = false;
             byte[] dhcp = BuildDhcpPacket(1, null, null); // Discover
             nic.QueueBytes(dhcp);
 
-            for (int i = 0; i < 60 && !_dhcpOfferReceived; i++)
+            for (int i = 0; i < 32 && !_dhcpOfferReceived; i++)
             {
                 WeatherOS.Kernel.CustomNIC?.HackPoll();
                 HardwareDelayMs(25);
-                if (i == 8 || i == 20 || i == 35)
+                if (i == 4 || i == 12 || i == 20)
                 {
-                    nic.QueueBytes(dhcp); // Retransmit Discover at 200ms, 500ms, 875ms
+                    nic.QueueBytes(dhcp); // Retransmit Discover at 100ms, 300ms, 500ms
                 }
-                if (!isGui && (i % 5 == 0)) System.Console.Write(".");
+                if (!isGui && (i % 4 == 0)) System.Console.Write(".");
             }
             if (!isGui) System.Console.WriteLine();
             
@@ -204,7 +213,7 @@ namespace WeatherOS.Services
                     _arpReplyReceived = false;
                     SendArpRequest(cand);
 
-                    for (int a = 0; a < 35 && !_arpReplyReceived; a++)
+                    for (int a = 0; a < 10 && !_arpReplyReceived; a++)
                     {
                         WeatherOS.Kernel.CustomNIC?.HackPoll();
                         HardwareDelayMs(10);

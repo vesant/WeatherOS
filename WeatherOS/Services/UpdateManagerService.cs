@@ -1042,14 +1042,31 @@ namespace WeatherOS.Services
                             return false;
                         }
 
-                        // Verify written kernel header at LBA 64
+                        // Comprehensive multi-sector flash verification across kernel (LBA 64, middle, VMT, and end)
+                        ulong[] verifySectors = new ulong[] { 0, totalSec / 4, totalSec / 2, (totalSec * 3) / 4, totalSec - 1 };
                         byte[] vfySec = new byte[512];
-                        if (SafeReadSectors(dev, 64UL, 1, vfySec, 0))
+                        for (int vi = 0; vi < verifySectors.Length; vi++)
                         {
-                            if (vfySec[0] != packageData[kernelStart] || vfySec[1] != packageData[kernelStart + 1] ||
-                                vfySec[2] != packageData[kernelStart + 2] || vfySec[3] != packageData[kernelStart + 3])
+                            ulong secIdx = verifySectors[vi];
+                            if (secIdx >= totalSec) continue;
+                            ulong lbaToVerify = 64UL + secIdx;
+                            int pkgSrcOff = kernelStart + (int)(secIdx * 512UL);
+
+                            if (SafeReadSectors(dev, lbaToVerify, 1, vfySec, 0))
                             {
-                                statusMessage = "Flash verification failed: Kernel header mismatch at LBA 64.";
+                                int bytesToCheck = Math.Min(512, kernelLen - (int)(secIdx * 512UL));
+                                for (int bi = 0; bi < bytesToCheck; bi += 64)
+                                {
+                                    if (vfySec[bi] != packageData[pkgSrcOff + bi])
+                                    {
+                                        statusMessage = $"Flash verification failed: Sector mismatch at LBA {lbaToVerify} (offset +{bi}). Expected 0x{packageData[pkgSrcOff + bi]:X2}, disk had 0x{vfySec[bi]:X2}.";
+                                        return false;
+                                    }
+                                }
+                            }
+                            else
+                            {
+                                statusMessage = $"Flash verification error: Could not read back LBA {lbaToVerify}.";
                                 return false;
                             }
                         }
@@ -1272,6 +1289,16 @@ namespace WeatherOS.Services
             bodyStart = pkgOffset;
             bodyLen = pkgLen;
             if (pkgData == null || pkgLen < 512) return;
+
+            // If the package already begins with Multiboot2 header (0xD6 0x50 0x52 0xE8) or Multiboot1 (0x02 0xB0 0xAD 0x1B),
+            // it is already a direct raw monolithic kernel! Do NOT scan inner string constants for SECTION markers.
+            bool isDirectKernel = (pkgData[pkgOffset] == 0xD6 && pkgData[pkgOffset + 1] == 0x50 && pkgData[pkgOffset + 2] == 0x52 && pkgData[pkgOffset + 3] == 0xE8) ||
+                                  (pkgData[pkgOffset] == 0x02 && pkgData[pkgOffset + 1] == 0xB0 && pkgData[pkgOffset + 2] == 0xAD && pkgData[pkgOffset + 3] == 0x1B);
+            if (isDirectKernel)
+            {
+                return;
+            }
+
             try
             {
                 byte[] secKernel = new byte[] { (byte)'-', (byte)'-', (byte)'-', (byte)'S', (byte)'E', (byte)'C', (byte)'T', (byte)'I', (byte)'O', (byte)'N', (byte)':', (byte)'K', (byte)'E', (byte)'R', (byte)'N', (byte)'E', (byte)'L', (byte)'-', (byte)'-', (byte)'-' };
@@ -1286,12 +1313,10 @@ namespace WeatherOS.Services
                         start++;
                     }
 
-                    int scanStart = (pkgLen > 65536) ? (pkgOffset + pkgLen - 65536) : start;
-                    int aIdx = FindByteSequence(pkgData, secApps, scanStart, (pkgOffset + pkgLen) - scanStart);
-                    if (aIdx < 0)
-                    {
-                        aIdx = FindByteSequence(pkgData, secApps, start, (pkgOffset + pkgLen) - start);
-                    }
+                    // Search for ---SECTION:APPS--- strictly from the END of the package backwards (last 16 KB)
+                    int scanLen = Math.Min(16384, (pkgOffset + pkgLen) - start);
+                    int scanStart = (pkgOffset + pkgLen) - scanLen;
+                    int aIdx = FindByteSequence(pkgData, secApps, scanStart, scanLen);
 
                     if (aIdx > start)
                     {
