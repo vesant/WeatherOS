@@ -386,17 +386,6 @@ namespace WeatherOS.Services
         {
             if (cmdBase == 0) return;
 
-            // Software reset channel to ensure hardware is out of standby and in a known state
-            try
-            {
-                var pCtrl = new IOPort(ctrlBase);
-                pCtrl.Byte = 0x04; // SRST
-                for (int i = 0; i < 50; i++) { byte dummy = pCtrl.Byte; }
-                pCtrl.Byte = 0x00; // clear SRST
-                for (int i = 0; i < 500; i++) { byte dummy = pCtrl.Byte; }
-            }
-            catch { }
-
             // Probe Master (0xA0)
             ProbeSingleTarget(cmdBase, ctrlBase, 0xA0, $"{channelTag} Master");
 
@@ -413,7 +402,7 @@ namespace WeatherOS.Services
                 {
                     // Verify that Sector 0 can actually be read from this hardware channel
                     byte[] sec0 = new byte[512];
-                    bool sec0Ok = CustomPciAtaBlockDevice.ReadSectorPio(cmdBase, ctrlBase, drvSel, false, 0, sec0);
+                    bool sec0Ok = CustomPciAtaBlockDevice.ReadSectorPio(cmdBase, ctrlBase, drvSel, info.IsLba48, 0, sec0);
                     if (!sec0Ok) return; // Unresponsive channel or non-existent slave
 
                     // Filter out floating bus noise (all 0xFF only; do NOT filter all 0x00 as empty sectors are valid!)

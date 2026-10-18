@@ -27,7 +27,7 @@ namespace WeatherOS
 
         protected override void OnBoot()
         {
-            Cosmos.System.Global.Init(new Cosmos.HAL.TextScreen(), false, true, false, false);
+            Cosmos.System.Global.Init(new Cosmos.HAL.TextScreen(), false, true, false, true);
         }
 
         protected override void BeforeRun()

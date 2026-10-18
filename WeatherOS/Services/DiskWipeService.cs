@@ -82,21 +82,16 @@ namespace WeatherOS.Services
 
         public static bool IsLiveBootDrive(BlockDevice dev, ulong sectorCount, string model, byte[] sec0)
         {
+            if (dev is Cosmos.HAL.BlockDevice.Ata || dev is AhciBlockDevice || dev is CustomPciAtaBlockDevice)
+            {
+                // Physical ATA / SATA drives are internal hardware fixed disks!
+                return false;
+            }
+
             if (!string.IsNullOrEmpty(model))
             {
                 if (model.Contains("USB") || model.Contains("Live") || model.Contains("Boot Medium") || model.Contains("Flash"))
                     return true;
-            }
-
-            // WeatherOS ISO Live Boot Medium sector count (~3.3 GB / ~7,077,996 sectors)
-            if (sectorCount >= 6000000UL && sectorCount <= 8000000UL)
-            {
-                // ISO 9660 / El Torito signature: bytes 510-511 are not standard MBR 0x55, 0xAA
-                if (sec0 != null && sec0.Length >= 512)
-                {
-                    if (sec0[510] != 0x55 || sec0[511] != 0xAA) return true;
-                }
-                return true;
             }
 
             return false;
@@ -106,61 +101,29 @@ namespace WeatherOS.Services
         {
             if (existingList == null || existingList.Count == 0 || newDev == null) return false;
 
-            ulong newBlocks = newDev.BlockCount;
-            bool newIsLiveUsb = (newBlocks >= 6000000UL && newBlocks <= 8000000UL);
-
             for (int i = 0; i < existingList.Count; i++)
             {
                 var ex = existingList[i];
                 if (ex.Device == newDev) return true;
 
-                bool exIsLiveUsb = ex.Name.Contains("Live USB") || ex.Name.Contains("Boot Medium") || ex.Name.Contains("Boot Drive");
-
-                // CRITICAL RULE: A PC running Live OS only has ONE physical Live USB boot stick!
-                // If a Live USB drive is already registered, NEVER add another Live USB drive entry!
-                if (exIsLiveUsb && newIsLiveUsb)
+                // Match Custom PCI ATA device duplicates
+                if (ex.Device is CustomPciAtaBlockDevice cpEx && newDev is CustomPciAtaBlockDevice cpNew)
                 {
-                    return true;
+                    if (cpEx.CmdBase == cpNew.CmdBase && cpEx.DriveSelect == cpNew.DriveSelect) return true;
                 }
 
-                // If sector counts are identical or within 2048 sectors (~1MB tolerance)
-                if (ex.SectorCount > 0 && newBlocks > 0)
+                // Match between Cosmos ATA driver and Custom PCI ATA driver on the same port
+                if (ex.Device is Cosmos.HAL.BlockDevice.Ata ataEx && newDev is CustomPciAtaBlockDevice cpNew2)
                 {
-                    long diff = (long)ex.SectorCount - (long)newBlocks;
-                    if (diff < 0) diff = -diff;
-                    if (diff < 2048)
-                    {
-                        // Check if Sector 0 matches in first 32 bytes
-                        if (sec0 != null && ex.Sector0Cache != null)
-                        {
-                            bool sameStart = true;
-                            for (int b = 0; b < 32; b++)
-                            {
-                                if (sec0[b] != ex.Sector0Cache[b]) { sameStart = false; break; }
-                            }
-                            if (sameStart) return true;
-                        }
-                        else
-                        {
-                            return true;
-                        }
-                    }
+                    ushort exBase = (ataEx.ControllerID == Cosmos.HAL.BlockDevice.Ata.ControllerIdEnum.Primary) ? (ushort)0x1F0 : (ushort)0x170;
+                    byte exSel = (ataEx.BusPosition == Cosmos.HAL.BlockDevice.Ata.BusPositionEnum.Master) ? (byte)0xA0 : (byte)0xB0;
+                    if (exBase == cpNew2.CmdBase && exSel == cpNew2.DriveSelect) return true;
                 }
-
-                // Compare Sector 0 signatures
-                if (sec0 != null && ex.Sector0Cache != null)
+                if (ex.Device is CustomPciAtaBlockDevice cpEx2 && newDev is Cosmos.HAL.BlockDevice.Ata ataNew)
                 {
-                    bool same64 = true;
-                    for (int b = 0; b < 64; b++)
-                    {
-                        if (sec0[b] != ex.Sector0Cache[b]) { same64 = false; break; }
-                    }
-                    if (same64 && ex.SectorCount > 0 && newBlocks > 0)
-                    {
-                        long diff = (long)ex.SectorCount - (long)newBlocks;
-                        if (diff < 0) diff = -diff;
-                        if (diff < 4096) return true;
-                    }
+                    ushort newBase = (ataNew.ControllerID == Cosmos.HAL.BlockDevice.Ata.ControllerIdEnum.Primary) ? (ushort)0x1F0 : (ushort)0x170;
+                    byte newSel = (ataNew.BusPosition == Cosmos.HAL.BlockDevice.Ata.BusPositionEnum.Master) ? (byte)0xA0 : (byte)0xB0;
+                    if (cpEx2.CmdBase == newBase && cpEx2.DriveSelect == newSel) return true;
                 }
             }
             return false;
@@ -357,8 +320,19 @@ namespace WeatherOS.Services
                             continue; // Don't duplicate Live USB
                         }
 
-                        string cleanModel = CustomPciAtaBlockDevice.SanitizeAtaModel(ataInfo.Model);
-                        if (string.IsNullOrEmpty(cleanModel)) cleanModel = isUsbDev ? "Live USB Boot Drive" : $"Internal Hard Disk #{i}";
+                        string cleanModel = "";
+                        if (dev is Cosmos.HAL.BlockDevice.ATA_PIO pioDev && !string.IsNullOrWhiteSpace(pioDev.ModelNo))
+                        {
+                            cleanModel = CustomPciAtaBlockDevice.SanitizeAtaModel(pioDev.ModelNo);
+                        }
+                        if (string.IsNullOrEmpty(cleanModel) && ataInfo.Exists && !string.IsNullOrWhiteSpace(ataInfo.Model))
+                        {
+                            cleanModel = CustomPciAtaBlockDevice.SanitizeAtaModel(ataInfo.Model);
+                        }
+                        if (string.IsNullOrEmpty(cleanModel))
+                        {
+                            cleanModel = isUsbDev ? "Live USB Boot Drive" : $"Internal Hard Disk #{i}";
+                        }
 
                         string driveName = isUsbDev ? $"Disk {list.Count} (Live USB Boot Drive, {FormatSectors(safeCount)})" : $"Disk {list.Count} ({cleanModel}, {FormatSectors(safeCount)})";
 

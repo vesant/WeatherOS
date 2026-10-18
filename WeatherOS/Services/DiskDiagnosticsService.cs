@@ -529,24 +529,15 @@ namespace WeatherOS.Services
                 byte status = pCmd.Byte;
                 if (status == 0xFF) return info; // Floating bus
 
-                // Canonical ATA presence test: Write 0x55 / 0xAA to SecCount / LbaLow
-                pSecCount.Byte = 0x55;
-                pLbaLow.Byte = 0xAA;
-                for (int i = 0; i < 4; i++) { byte dummy = pCmd.Byte; }
-                if (pSecCount.Byte != 0x55 || pLbaLow.Byte != 0xAA)
-                {
-                    return info; // Absent channel or disconnected port
-                }
-
                 // Wait for drive not busy before issuing command
-                int preWait = 100000;
+                int preWait = 200000;
                 while (preWait-- > 0)
                 {
                     status = pCmd.Byte;
-                    if (status == 0xFF) return info;
+                    if (status == 0xFF) return info; // Floating bus - no drive
                     if ((status & 0x80) == 0) break;
                 }
-                if ((status & 0x80) != 0) return info; // Drive stuck busy
+                if ((status & 0x80) != 0 || status == 0xFF) return info; // Drive stuck busy or absent
 
                 // 2. Zero LBA registers
                 pSecCount.Byte = 0;
@@ -632,14 +623,7 @@ namespace WeatherOS.Services
                 }
                 if (string.IsNullOrEmpty(info.Model))
                 {
-                    if (info.TotalSectors > 0 && info.TotalSectors < 10000000UL)
-                    {
-                        info.Model = "USB Boot Medium";
-                    }
-                    else
-                    {
-                        info.Model = "Fixed ATA Storage";
-                    }
+                    info.Model = "Internal Fixed ATA Storage";
                 }
             }
             catch { }
