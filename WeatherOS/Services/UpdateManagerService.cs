@@ -19,60 +19,177 @@ namespace WeatherOS.Services
         private static BootSource _bootSource = BootSource.LiveRam;
         private static bool _forceInstalledFlag = false;
 
-        public static bool SafeWriteSectors(BlockDevice dev, ulong startSector, ulong count, byte[] data, int offset = 0)
+        public static bool SafeWriteSectors(BlockDevice dev, ulong startSector, ulong count, byte[] data, int offset = 0, Action<ulong, ulong> progressCallback = null)
         {
             if (dev == null || data == null || count == 0) return false;
-            byte[] singleSector = new byte[512];
-            for (ulong s = 0; s < count; s++)
+
+            BlockDevice rootDev = dev;
+            while (rootDev is Cosmos.HAL.BlockDevice.Partition part) rootDev = part.Host;
+
+            if (rootDev is CustomPciAtaBlockDevice ata)
             {
-                int srcOff = offset + (int)(s * 512);
-                int toCopy = Math.Min(512, Math.Max(0, data.Length - srcOff));
+                byte[] pad = new byte[512];
+                for (ulong s = 0; s < count; s++)
+                {
+                    int srcOff = offset + (int)(s * 512);
+                    byte[] bufToWrite;
+                    int bufOff;
+
+                    if (srcOff + 512 <= data.Length)
+                    {
+                        bufToWrite = data;
+                        bufOff = srcOff;
+                    }
+                    else
+                    {
+                        int avail = Math.Max(0, data.Length - srcOff);
+                        if (avail > 0)
+                        {
+                            Array.Copy(data, srcOff, pad, 0, avail);
+                            Array.Clear(pad, avail, 512 - avail);
+                        }
+                        else
+                        {
+                            Array.Clear(pad, 0, 512);
+                        }
+                        bufToWrite = pad;
+                        bufOff = 0;
+                    }
+
+                    bool ok = CustomPciAtaBlockDevice.WriteSectorPio(ata.CmdBase, ata.CtrlBase, ata.DriveSelect, ata.IsLba48, startSector + s, bufToWrite, bufOff);
+                    if (!ok)
+                    {
+                        // Retry once on failure
+                        if (!CustomPciAtaBlockDevice.WriteSectorPio(ata.CmdBase, ata.CtrlBase, ata.DriveSelect, ata.IsLba48, startSector + s, bufToWrite, bufOff))
+                        {
+                            return false;
+                        }
+                    }
+
+                    if (progressCallback != null && ((s & 0xFF) == 0 || s == count - 1))
+                    {
+                        progressCallback(s + 1, count);
+                    }
+                }
+
+                // Flush ATA write cache ONCE after all sectors have been transferred
+                CustomPciAtaBlockDevice.FlushPio(ata.CmdBase, ata.DriveSelect, ata.IsLba48);
+                return true;
+            }
+
+            // Generic BlockDevice fallback:
+            // Write in batches of up to 64 sectors (32 KB) per WriteBlock call to eliminate per-sector cache flushes.
+            const ulong BATCH_SECTORS = 64;
+            byte[] batchBuf = new byte[BATCH_SECTORS * 512];
+            ulong written = 0;
+
+            while (written < count)
+            {
+                ulong batchCount = Math.Min(BATCH_SECTORS, count - written);
+                int batchBytes = (int)(batchCount * 512);
+                int srcOff = offset + (int)(written * 512);
+                int avail = Math.Max(0, data.Length - srcOff);
+                int toCopy = Math.Min(batchBytes, avail);
+
                 if (toCopy > 0)
                 {
-                    Array.Copy(data, srcOff, singleSector, 0, toCopy);
-                    if (toCopy < 512)
+                    Array.Copy(data, srcOff, batchBuf, 0, toCopy);
+                    if (toCopy < batchBytes)
                     {
-                        Array.Clear(singleSector, toCopy, 512 - toCopy);
+                        Array.Clear(batchBuf, toCopy, batchBytes - toCopy);
                     }
                 }
                 else
                 {
-                    Array.Clear(singleSector, 0, 512);
+                    Array.Clear(batchBuf, 0, batchBytes);
                 }
 
                 try
                 {
-                    dev.WriteBlock(startSector + s, 1, ref singleSector);
+                    rootDev.WriteBlock(startSector + written, batchCount, ref batchBuf);
                 }
                 catch
                 {
                     return false;
                 }
+
+                written += batchCount;
+
+                if (progressCallback != null)
+                {
+                    progressCallback(written, count);
+                }
             }
+
             return true;
         }
 
         public static bool SafeReadSectors(BlockDevice dev, ulong startSector, ulong count, byte[] buffer, int offset = 0)
         {
             if (dev == null || buffer == null || count == 0) return false;
-            byte[] singleSector = new byte[512];
-            for (ulong s = 0; s < count; s++)
+
+            BlockDevice rootDev = dev;
+            while (rootDev is Cosmos.HAL.BlockDevice.Partition part) rootDev = part.Host;
+
+            if (rootDev is CustomPciAtaBlockDevice ata)
             {
+                byte[] pad = new byte[512];
+                for (ulong s = 0; s < count; s++)
+                {
+                    int dstOff = offset + (int)(s * 512);
+                    if (dstOff + 512 <= buffer.Length)
+                    {
+                        if (!CustomPciAtaBlockDevice.ReadSectorPio(ata.CmdBase, ata.CtrlBase, ata.DriveSelect, ata.IsLba48, startSector + s, buffer, dstOff))
+                        {
+                            return false;
+                        }
+                    }
+                    else
+                    {
+                        if (!CustomPciAtaBlockDevice.ReadSectorPio(ata.CmdBase, ata.CtrlBase, ata.DriveSelect, ata.IsLba48, startSector + s, pad, 0))
+                        {
+                            return false;
+                        }
+                        int avail = Math.Max(0, buffer.Length - dstOff);
+                        if (avail > 0)
+                        {
+                            Array.Copy(pad, 0, buffer, dstOff, avail);
+                        }
+                    }
+                }
+                return true;
+            }
+
+            // Generic BlockDevice fallback:
+            const ulong BATCH_SECTORS = 64;
+            byte[] batchBuf = new byte[BATCH_SECTORS * 512];
+            ulong read = 0;
+
+            while (read < count)
+            {
+                ulong batchCount = Math.Min(BATCH_SECTORS, count - read);
+                int batchBytes = (int)(batchCount * 512);
+                int dstOff = offset + (int)(read * 512);
+
                 try
                 {
-                    dev.ReadBlock(startSector + s, 1, ref singleSector);
-                    int dstOff = offset + (int)(s * 512);
-                    int toCopy = Math.Min(512, Math.Max(0, buffer.Length - dstOff));
-                    if (toCopy > 0)
-                    {
-                        Array.Copy(singleSector, 0, buffer, dstOff, toCopy);
-                    }
+                    rootDev.ReadBlock(startSector + read, batchCount, ref batchBuf);
                 }
                 catch
                 {
                     return false;
                 }
+
+                int avail = Math.Max(0, buffer.Length - dstOff);
+                int toCopy = Math.Min(batchBytes, avail);
+                if (toCopy > 0)
+                {
+                    Array.Copy(batchBuf, 0, buffer, dstOff, toCopy);
+                }
+
+                read += batchCount;
             }
+
             return true;
         }
 
@@ -921,7 +1038,32 @@ namespace WeatherOS.Services
                         ulong totalSec = (ulong)((kernelToDeploy.Length + 511) / 512);
                         if (totalSec > 32768) totalSec = 32768; // Kernel partition boundary safety
 
-                        SafeWriteSectors(dev, 64UL, totalSec, kernelToDeploy, 0);
+                        FileTransferService.StatusMessage = "Flashing kernel to physical storage (LBA 64)...";
+                        bool writeOk = SafeWriteSectors(dev, 64UL, totalSec, kernelToDeploy, 0, (writtenSec, totalSecs) =>
+                        {
+                            int pct = (int)((writtenSec * 100UL) / totalSecs);
+                            ulong mbDone = (writtenSec * 512UL) / (1024UL * 1024UL);
+                            ulong mbTotal = (totalSecs * 512UL) / (1024UL * 1024UL);
+                            FileTransferService.StatusMessage = $"Flashing kernel to disk: {pct}% ({mbDone}MB / {mbTotal}MB)...";
+                        });
+
+                        if (!writeOk)
+                        {
+                            statusMessage = "Hardware error: Failed writing kernel sectors to disk.";
+                            return false;
+                        }
+
+                        // Verify written kernel header at LBA 64
+                        byte[] vfySec = new byte[512];
+                        if (SafeReadSectors(dev, 64UL, 1, vfySec, 0))
+                        {
+                            if (vfySec[0] != kernelToDeploy[0] || vfySec[1] != kernelToDeploy[1] ||
+                                vfySec[2] != kernelToDeploy[2] || vfySec[3] != kernelToDeploy[3])
+                            {
+                                statusMessage = "Flash verification failed: Kernel header mismatch at LBA 64.";
+                                return false;
+                            }
+                        }
 
                         // Dynamically locate entry point in kernelToDeploy (mov esp, 0x02050040; cli)
                         byte[] epSig = new byte[] { 0xBC, 0x40, 0x00, 0x05, 0x02, 0xFA };

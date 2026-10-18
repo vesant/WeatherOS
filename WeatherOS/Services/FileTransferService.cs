@@ -407,6 +407,7 @@ namespace WeatherOS.Services
                     // 1. Process OTA system updates (.pkg) directly through UpdateManagerService
                     if (CurrentFileName.ToLower().EndsWith(".pkg"))
                     {
+                        StatusMessage = "Processing and installing system update...";
                         string updStatus;
                         bool updated = UpdateManagerService.ApplyUpdate(fileData, CurrentFileName, out updStatus);
                         if (updated)

@@ -206,7 +206,15 @@ namespace WeatherOS.Apps
                         lastDrawnChunk = curChunk;
 
                         win.WriteRow(8, $"Chunk: {curChunk} / {totalChunks} ({FileTransferService.TransferredBytes} / {FileTransferService.TotalFileSize} B)", ConsoleColor.White, 2, fillRemaining: true);
+                        if (!string.IsNullOrEmpty(FileTransferService.StatusMessage))
+                        {
+                            win.WriteRow(9, FileTransferService.StatusMessage, ConsoleColor.Yellow, 2, fillRemaining: true);
+                        }
                         win.DrawBar(2, 10, "Transfer", pct, ConsoleColor.Green);
+                    }
+                    else if (!string.IsNullOrEmpty(FileTransferService.StatusMessage))
+                    {
+                        win.WriteRow(9, FileTransferService.StatusMessage, ConsoleColor.Yellow, 2, fillRemaining: true);
                     }
                 }
                 else if (curStatus != lastDrawnStatus)
