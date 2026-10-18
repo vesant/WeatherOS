@@ -22,6 +22,7 @@ namespace Cosmos.HAL.Network
         public override string Name => "RTL8102E";
         public override bool Ready => true;
 
+        private static readonly byte[] _reusableRxPacket = new byte[1536];
         public static uint HardwareTxBytes = 0;
         public static uint HardwareRxBytes = 0;
         public static uint HardwareTxPackets = 0;
@@ -376,19 +377,20 @@ namespace Cosmos.HAL.Network
 
                 if (length > 0)
                 {
-                    // Read into managed array for Cosmos NetworkStack
-                    byte[] packet = new byte[length];
-                    for (uint i = 0; i < length; i++)
+                    // Copy into static reusable buffer with zero GC allocations
+                    uint copyLen = length <= 1536 ? length : 1536;
+                    for (uint i = 0; i < copyLen; i++)
                     {
-                        packet[i] = rxBuffers[currentRxDesc][i];
+                        _reusableRxPacket[i] = rxBuffers[currentRxDesc][i];
                     }
+                    if (copyLen < 1536) _reusableRxPacket[copyLen] = 0;
 
                     // Send to NetworkStack (or our custom Interceptor)
                     if (DataReceived != null)
                     {
                         try
                         {
-                            DataReceived(packet);
+                            DataReceived(_reusableRxPacket);
                         }
                         catch { }
                     }

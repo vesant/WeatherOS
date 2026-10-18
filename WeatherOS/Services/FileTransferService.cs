@@ -53,12 +53,22 @@ namespace WeatherOS.Services
         public static byte[] RemoteMac { get; set; } = new byte[6];
         public static byte[] RemoteIp { get; set; } = new byte[4];
         public static ushort RemotePort { get; set; } = 7331;
+        public static ushort CurrentChunkSize { get; set; } = 1024;
 
         private static ushort _ipIdCounter = 0xA100;
 
-        // 2 MB Static Buffer for file reception
-        private static byte[] _rxBuffer = new byte[2097152];
+        // 16 MB Static Buffer for file reception and high-speed OTA streaming
+        private static byte[] _rxBuffer = new byte[16777216];
         private static int _rxBufferLength = 0;
+
+        // Reusable zero-allocation packet frames
+        private static readonly byte[] _txFrameBuffer = new byte[1536];
+        private static readonly byte[] _destMac = new byte[6];
+        private static readonly byte[] _srcMac = new byte[6];
+        private static readonly byte[] _srcIp = new byte[4];
+        private static readonly byte[] _dataAckPayload = new byte[8] { 0x57, 0x4F, 0x53, 0x46, MSG_DATA_ACK, 0, 0, 0 };
+        private static readonly byte[] _startAckPayload = new byte[6] { 0x57, 0x4F, 0x53, 0x46, MSG_START_ACK, 0 };
+        private static readonly byte[] _finishAckPayload = new byte[6] { 0x57, 0x4F, 0x53, 0x46, MSG_FINISH_ACK, 0 };
 
         // Signals for synchronous wait loops
         public static volatile bool _startAckReceived = false;
@@ -104,7 +114,7 @@ namespace WeatherOS.Services
         }
 
         /// <summary>
-        /// Sends raw Ethernet + IPv4 + UDP packet directly to NIC queue.
+        /// Sends raw Ethernet + IPv4 + UDP packet directly to NIC queue with zero GC heap allocations.
         /// </summary>
         public static void SendUdp(byte[] targetMac, byte[] targetIp, ushort srcPort, ushort destPort, byte[] payload)
         {
@@ -115,24 +125,23 @@ namespace WeatherOS.Services
             int udpLen = 8 + payloadLen;
             int ipLen = 20 + udpLen;
             int frameLen = 14 + ipLen;
-            byte[] frame = new byte[frameLen];
+            if (frameLen > _txFrameBuffer.Length) return;
 
             // 1. Ethernet Header (14 bytes)
-            byte[] destMac = new byte[6];
             bool macFound = false;
 
             if (targetMac != null && targetMac.Length == 6 &&
                 (targetMac[0] != 0 || targetMac[1] != 0 || targetMac[2] != 0) &&
                 (targetMac[0] != 0xFF || targetMac[1] != 0xFF || targetMac[2] != 0xFF))
             {
-                Array.Copy(targetMac, 0, destMac, 0, 6);
+                for (int i = 0; i < 6; i++) _destMac[i] = targetMac[i];
                 macFound = true;
             }
             else if (RemoteMac != null && RemoteMac.Length == 6 &&
                      (RemoteMac[0] != 0 || RemoteMac[1] != 0 || RemoteMac[2] != 0) &&
                      (RemoteMac[0] != 0xFF || RemoteMac[1] != 0xFF || RemoteMac[2] != 0xFF))
             {
-                Array.Copy(RemoteMac, 0, destMac, 0, 6);
+                for (int i = 0; i < 6; i++) _destMac[i] = RemoteMac[i];
                 macFound = true;
             }
             else if (targetIp != null && targetIp.Length == 4 && (targetIp[0] != 0xFF || targetIp[1] != 0xFF))
@@ -140,52 +149,61 @@ namespace WeatherOS.Services
                 byte[] rMac = RawTcpHttp.GetRouterMac();
                 if (rMac != null && (rMac[0] != 0 || rMac[1] != 0 || rMac[2] != 0) && (rMac[0] != 0xFF || rMac[1] != 0xFF))
                 {
-                    Array.Copy(rMac, 0, destMac, 0, 6);
+                    for (int i = 0; i < 6; i++) _destMac[i] = rMac[i];
                     macFound = true;
                 }
             }
 
             if (!macFound)
             {
-                for (int i = 0; i < 6; i++) destMac[i] = 0xFF; // Broadcast fallback
+                for (int i = 0; i < 6; i++) _destMac[i] = 0xFF; // Broadcast fallback
             }
 
-            Array.Copy(destMac, 0, frame, 0, 6);
+            for (int i = 0; i < 6; i++) _txFrameBuffer[i] = _destMac[i];
 
-            byte[] myMac = nic.MACAddress != null ? nic.MACAddress.bytes : new byte[6];
-            Array.Copy(myMac, 0, frame, 6, 6);
-            frame[12] = 0x08; frame[13] = 0x00; // IPv4
+            byte[] myMac = nic.MACAddress != null ? nic.MACAddress.bytes : null;
+            for (int i = 0; i < 6; i++) _txFrameBuffer[6 + i] = (myMac != null && i < myMac.Length) ? myMac[i] : (byte)0;
+            _txFrameBuffer[12] = 0x08; _txFrameBuffer[13] = 0x00; // IPv4
 
             // 2. IPv4 Header (20 bytes)
-            frame[14] = 0x45; frame[15] = 0x00;
-            frame[16] = (byte)(ipLen >> 8); frame[17] = (byte)(ipLen & 0xFF);
-            frame[18] = (byte)(_ipIdCounter >> 8); frame[19] = (byte)(_ipIdCounter & 0xFF); _ipIdCounter++;
-            frame[20] = 0x40; frame[21] = 0x00; // Don't fragment
-            frame[22] = 0x40; // TTL 64
-            frame[23] = 17;   // Protocol UDP
-            frame[24] = 0x00; frame[25] = 0x00; // Checksum placeholder
+            _txFrameBuffer[14] = 0x45; _txFrameBuffer[15] = 0x00;
+            _txFrameBuffer[16] = (byte)(ipLen >> 8); _txFrameBuffer[17] = (byte)(ipLen & 0xFF);
+            _txFrameBuffer[18] = (byte)(_ipIdCounter >> 8); _txFrameBuffer[19] = (byte)(_ipIdCounter & 0xFF); _ipIdCounter++;
+            _txFrameBuffer[20] = 0x40; _txFrameBuffer[21] = 0x00; // Don't fragment
+            _txFrameBuffer[22] = 0x40; // TTL 64
+            _txFrameBuffer[23] = 17;   // Protocol UDP
+            _txFrameBuffer[24] = 0x00; _txFrameBuffer[25] = 0x00; // Checksum placeholder
 
             byte[] myIp = RawTcpHttp.GetSourceIpBytes();
-            Array.Copy(myIp, 0, frame, 26, 4);
-            Array.Copy(targetIp, 0, frame, 30, 4);
+            for (int i = 0; i < 4; i++) _txFrameBuffer[26 + i] = (myIp != null && i < myIp.Length) ? myIp[i] : (byte)0;
+            for (int i = 0; i < 4; i++) _txFrameBuffer[30 + i] = (targetIp != null && i < targetIp.Length) ? targetIp[i] : (byte)0;
 
-            int ipSum = RawTcpHttp.CalculateIpChecksum(frame, 14, 20);
-            frame[24] = (byte)(ipSum >> 8); frame[25] = (byte)(ipSum & 0xFF);
+            int ipSum = RawTcpHttp.CalculateIpChecksum(_txFrameBuffer, 14, 20);
+            _txFrameBuffer[24] = (byte)(ipSum >> 8); _txFrameBuffer[25] = (byte)(ipSum & 0xFF);
 
             // 3. UDP Header (8 bytes)
-            frame[34] = (byte)(srcPort >> 8); frame[35] = (byte)(srcPort & 0xFF);
-            frame[36] = (byte)(destPort >> 8); frame[37] = (byte)(destPort & 0xFF);
-            frame[38] = (byte)(udpLen >> 8); frame[39] = (byte)(udpLen & 0xFF);
-            frame[40] = 0x00; frame[41] = 0x00; // UDP checksum 0 (disabled)
+            _txFrameBuffer[34] = (byte)(srcPort >> 8); _txFrameBuffer[35] = (byte)(srcPort & 0xFF);
+            _txFrameBuffer[36] = (byte)(destPort >> 8); _txFrameBuffer[37] = (byte)(destPort & 0xFF);
+            _txFrameBuffer[38] = (byte)(udpLen >> 8); _txFrameBuffer[39] = (byte)(udpLen & 0xFF);
+            _txFrameBuffer[40] = 0x00; _txFrameBuffer[41] = 0x00; // UDP checksum 0 (disabled)
 
             // 4. Payload
-            if (payloadLen > 0)
+            if (payloadLen > 0 && payload != null)
             {
-                Array.Copy(payload, 0, frame, 42, payloadLen);
+                Array.Copy(payload, 0, _txFrameBuffer, 42, payloadLen);
             }
 
-            RawTcpHttp.TotalTxBytes += (uint)frame.Length;
-            nic.QueueBytes(frame);
+            RawTcpHttp.TotalTxBytes += (uint)frameLen;
+            if (nic is Cosmos.HAL.Network.RTL8102E rtl)
+            {
+                rtl.QueueBytes(_txFrameBuffer, 0, frameLen);
+            }
+            else
+            {
+                byte[] temp = new byte[frameLen];
+                Array.Copy(_txFrameBuffer, 0, temp, 0, frameLen);
+                nic.QueueBytes(temp);
+            }
         }
 
         /// <summary>
@@ -209,17 +227,14 @@ namespace WeatherOS.Services
                 return;
             }
 
-            byte[] srcMac = new byte[6];
-            Array.Copy(packet, 6, srcMac, 0, 6);
-
-            byte[] srcIp = new byte[4];
-            Array.Copy(packet, 26, srcIp, 0, 4);
+            for (int i = 0; i < 6; i++) _srcMac[i] = packet[6 + i];
+            for (int i = 0; i < 4; i++) _srcIp[i] = packet[26 + i];
 
             byte[] myIpBytes = RawTcpHttp.GetSourceIpBytes();
             if (myIpBytes != null && myIpBytes.Length == 4)
             {
                 // Ignore own broadcast
-                if (srcIp[0] == myIpBytes[0] && srcIp[1] == myIpBytes[1] && srcIp[2] == myIpBytes[2] && srcIp[3] == myIpBytes[3])
+                if (_srcIp[0] == myIpBytes[0] && _srcIp[1] == myIpBytes[1] && _srcIp[2] == myIpBytes[2] && _srcIp[3] == myIpBytes[3])
                 {
                     return;
                 }
@@ -229,21 +244,21 @@ namespace WeatherOS.Services
                 {
                     if (myIpBytes[0] == 192 && myIpBytes[1] == 168)
                     {
-                        if (srcIp[0] != 192 || srcIp[1] != 168 || srcIp[2] != myIpBytes[2])
+                        if (_srcIp[0] != 192 || _srcIp[1] != 168 || _srcIp[2] != myIpBytes[2])
                         {
                             return; // Different 192.168.x subnet
                         }
                     }
                     else if (myIpBytes[0] == 172 && (myIpBytes[1] >= 16 && myIpBytes[1] <= 31))
                     {
-                        if (srcIp[0] != 172 || srcIp[1] != myIpBytes[1])
+                        if (_srcIp[0] != 172 || _srcIp[1] != myIpBytes[1])
                         {
                             return; // Different 172.x subnet
                         }
                     }
                     else if (myIpBytes[0] == 10)
                     {
-                        if (srcIp[0] != 10 || srcIp[1] != myIpBytes[1])
+                        if (_srcIp[0] != 10 || _srcIp[1] != myIpBytes[1])
                         {
                             return; // Different 10.x subnet
                         }
@@ -251,9 +266,9 @@ namespace WeatherOS.Services
                 }
             }
 
-            LastPeerIp = $"{srcIp[0]}.{srcIp[1]}.{srcIp[2]}.{srcIp[3]}";
-            Array.Copy(srcMac, 0, RemoteMac, 0, 6);
-            Array.Copy(srcIp, 0, RemoteIp, 0, 4);
+            LastPeerIp = $"{_srcIp[0]}.{_srcIp[1]}.{_srcIp[2]}.{_srcIp[3]}";
+            for (int i = 0; i < 6; i++) RemoteMac[i] = _srcMac[i];
+            for (int i = 0; i < 4; i++) RemoteIp[i] = _srcIp[i];
 
             byte msgType = packet[payloadOff + 4];
 
@@ -271,7 +286,7 @@ namespace WeatherOS.Services
                 pong[4] = MSG_PONG;
                 Array.Copy(infoBytes, 0, pong, 5, infoBytes.Length);
 
-                SendUdp(srcMac, srcIp, PORT, srcPort, pong);
+                SendUdp(_srcMac, _srcIp, PORT, srcPort, pong);
                 return;
             }
 
@@ -298,6 +313,7 @@ namespace WeatherOS.Services
                     ushort cSize = (ushort)((packet[payloadOff + 11] << 8) | packet[payloadOff + 12]);
                     string fName = Encoding.ASCII.GetString(packet, payloadOff + 13, payloadLen - 13).Trim();
 
+                    CurrentChunkSize = cSize > 0 ? cSize : (ushort)1024;
                     CurrentFileName = fName;
                     TotalFileSize = fSize;
                     TotalChunks = tChunks;
@@ -305,20 +321,17 @@ namespace WeatherOS.Services
                     TransferredBytes = 0;
                     _rxBufferLength = 0;
 
-                    RemoteIpStr = $"{srcIp[0]}.{srcIp[1]}.{srcIp[2]}.{srcIp[3]}";
-                    Array.Copy(srcMac, 0, RemoteMac, 0, 6);
-                    Array.Copy(srcIp, 0, RemoteIp, 0, 4);
+                    RemoteIpStr = $"{_srcIp[0]}.{_srcIp[1]}.{_srcIp[2]}.{_srcIp[3]}";
+                    for (int i = 0; i < 6; i++) RemoteMac[i] = _srcMac[i];
+                    for (int i = 0; i < 4; i++) RemoteIp[i] = _srcIp[i];
                     RemotePort = srcPort;
 
                     Status = TransferStatus.Receiving;
                     StatusMessage = $"Receiving '{fName}' ({fSize} B) from {RemoteIpStr}...";
 
-                    // Reply START_ACK
-                    byte[] ack = new byte[6];
-                    ack[0] = 0x57; ack[1] = 0x4F; ack[2] = 0x53; ack[3] = 0x46;
-                    ack[4] = MSG_START_ACK;
-                    ack[5] = 0x00; // Status OK
-                    SendUdp(srcMac, srcIp, PORT, srcPort, ack);
+                    // Reply START_ACK using preallocated payload
+                    _startAckPayload[5] = 0x00; // Status OK
+                    SendUdp(_srcMac, _srcIp, PORT, srcPort, _startAckPayload);
                 }
                 return;
             }
@@ -338,7 +351,7 @@ namespace WeatherOS.Services
                     ushort chunkIdx = (ushort)((packet[payloadOff + 5] << 8) | packet[payloadOff + 6]);
                     ushort chunkLen = (ushort)((packet[payloadOff + 7] << 8) | packet[payloadOff + 8]);
 
-                    int bufferOffset = chunkIdx * CHUNK_SIZE;
+                    int bufferOffset = chunkIdx * CurrentChunkSize;
                     if (bufferOffset + chunkLen <= _rxBuffer.Length && payloadLen >= 9 + chunkLen)
                     {
                         Array.Copy(packet, payloadOff + 9, _rxBuffer, bufferOffset, chunkLen);
@@ -348,15 +361,12 @@ namespace WeatherOS.Services
                         TransferredBytes = _rxBufferLength;
                     }
 
-                    // Reply DATA_ACK with chunk index
-                    byte[] dAck = new byte[8];
-                    dAck[0] = 0x57; dAck[1] = 0x4F; dAck[2] = 0x53; dAck[3] = 0x46;
-                    dAck[4] = MSG_DATA_ACK;
-                    dAck[5] = (byte)(chunkIdx >> 8);
-                    dAck[6] = (byte)(chunkIdx & 0xFF);
-                    dAck[7] = 0x00; // Status OK
+                    // Reply DATA_ACK with chunk index using zero-allocation pre-allocated frame
+                    _dataAckPayload[5] = (byte)(chunkIdx >> 8);
+                    _dataAckPayload[6] = (byte)(chunkIdx & 0xFF);
+                    _dataAckPayload[7] = 0x00; // Status OK
 
-                    SendUdp(srcMac, srcIp, PORT, srcPort, dAck);
+                    SendUdp(_srcMac, _srcIp, PORT, srcPort, _dataAckPayload);
                 }
                 return;
             }
@@ -386,17 +396,29 @@ namespace WeatherOS.Services
                     string saveStatus;
                     bool saved = StorageService.SaveBinaryFileToLocation(CurrentFileName, fileData, "disk0", out saveStatus);
 
+                    if (CurrentFileName.ToLower().EndsWith(".pkg"))
+                    {
+                        string updStatus;
+                        bool updated = UpdateManagerService.ApplyUpdate(fileData, CurrentFileName, out updStatus);
+                        if (updated)
+                        {
+                            saved = true;
+                            saveStatus = "Update package applied successfully: " + updStatus;
+                        }
+                        else
+                        {
+                            saveStatus = "Package saved, but update apply failed: " + updStatus;
+                        }
+                    }
+
                     Status = saved ? TransferStatus.Success : TransferStatus.Error;
                     StatusMessage = saved
                         ? $"[SUCCESS] Received '{CurrentFileName}' ({saveLen} B) and saved to storage!"
                         : $"[ERROR] File received but storage save failed: {saveStatus}";
 
-                    // Reply FINISH_ACK
-                    byte[] fAck = new byte[6];
-                    fAck[0] = 0x57; fAck[1] = 0x4F; fAck[2] = 0x53; fAck[3] = 0x46;
-                    fAck[4] = MSG_FINISH_ACK;
-                    fAck[5] = (byte)(saved ? 0x00 : 0x01);
-                    SendUdp(srcMac, srcIp, PORT, srcPort, fAck);
+                    // Reply FINISH_ACK using pre-allocated frame
+                    _finishAckPayload[5] = (byte)(saved ? 0x00 : 0x01);
+                    SendUdp(_srcMac, _srcIp, PORT, srcPort, _finishAckPayload);
                 }
                 return;
             }

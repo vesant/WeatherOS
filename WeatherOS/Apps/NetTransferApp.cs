@@ -20,7 +20,7 @@ namespace WeatherOS.Apps
     {
         public string Id => "transfer";
         public string Name => "File Transfer & OTA";
-        public bool IsRealTime => true;
+        public bool IsRealTime => false;
 
         private NetTransferMode _mode = NetTransferMode.Menu;
         private int _menuIndex = 0; // 0=Receive, 1=Send, 2=Ping
@@ -131,57 +131,106 @@ namespace WeatherOS.Apps
 
         private void DrawReceive(TuiWindow win, TuiDesktop desktop)
         {
-            win.WriteRow(1, "--- RECEIVE MODE (LISTENING ON UDP PORT 7331) ---", ConsoleColor.Yellow, 2);
+            win.WriteRow(1, "--- RECEIVE MODE (LISTENING ON UDP PORT 7331) ---", ConsoleColor.Yellow, 2, fillRemaining: true);
             string ip = RawTcpHttp.GetAssignedIp();
-            win.WriteRow(2, "Local IP Address : " + ip + " : 7331", ConsoleColor.Cyan, 2);
+            win.WriteRow(2, "Local IP Address : " + ip + " : 7331", ConsoleColor.Cyan, 2, fillRemaining: true);
 
             if (FileTransferService.IsPeerConnected)
             {
-                win.WriteRow(3, $"Paired Peer      : Windows PC at {FileTransferService.LastPeerIp} [ONLINE]", ConsoleColor.Green, 2);
+                win.WriteRow(3, $"Paired Peer      : Windows PC at {FileTransferService.LastPeerIp} [ONLINE]", ConsoleColor.Green, 2, fillRemaining: true);
             }
             else
             {
-                win.WriteRow(3, "Peer State       : Broadcasting readiness to Windows Companion on LAN...", ConsoleColor.DarkCyan, 2);
+                win.WriteRow(3, "Peer State       : Ready on LAN (Broadcasting UDP 7331)...", ConsoleColor.DarkCyan, 2, fillRemaining: true);
             }
             win.WriteSeparator(4);
-
-            var status = FileTransferService.Status;
-            if (status == TransferStatus.Listening)
-            {
-                win.WriteRow(6, "Waiting for transmission from companion Windows app...", ConsoleColor.White, 2);
-                win.WriteRow(7, "On Windows, choose option [1] Send File in 'run-transfer.bat'.", ConsoleColor.Cyan, 2);
-                win.DrawBar(2, 9, "Listening", 0, ConsoleColor.DarkGray);
-            }
-            else if (status == TransferStatus.Receiving)
-            {
-                win.WriteRow(6, $"Receiving File: {FileTransferService.CurrentFileName}", ConsoleColor.Green, 2);
-                win.WriteRow(7, $"From Remote PC: {FileTransferService.RemoteIpStr}", ConsoleColor.Cyan, 2);
-                win.WriteRow(8, $"Chunk: {FileTransferService.CurrentChunk} / {FileTransferService.TotalChunks} ({FileTransferService.TransferredBytes} / {FileTransferService.TotalFileSize} B)", ConsoleColor.White, 2);
-
-                int pct = 0;
-                if (FileTransferService.TotalChunks > 0)
-                {
-                    pct = (FileTransferService.CurrentChunk * 100) / FileTransferService.TotalChunks;
-                }
-                win.DrawBar(2, 10, "Transfer", pct, ConsoleColor.Green);
-            }
-            else if (status == TransferStatus.Success)
-            {
-                win.WriteRow(6, "[SUCCESS] Transfer completed successfully!", ConsoleColor.Green, 2);
-                win.WriteRow(7, $"File Name : {FileTransferService.CurrentFileName}", ConsoleColor.White, 2);
-                win.WriteRow(8, $"File Size : {FileTransferService.TotalFileSize} bytes", ConsoleColor.White, 2);
-                win.WriteRow(9, "Saved to  : FAT32 Storage / RAM Virtual Disk", ConsoleColor.Cyan, 2);
-                win.DrawBar(2, 11, "Finished", 100, ConsoleColor.Green);
-                win.WriteRow(13, "Press [R] to listen for another file.", ConsoleColor.Yellow, 2);
-            }
-            else if (status == TransferStatus.Error)
-            {
-                win.WriteRow(6, "[ERROR] Transfer failed or interrupted.", ConsoleColor.Red, 2);
-                win.WriteRow(7, FileTransferService.StatusMessage, ConsoleColor.Red, 2);
-                win.WriteRow(9, "Press [R] to retry listening.", ConsoleColor.Yellow, 2);
-            }
-
+            win.WriteRow(6, "Waiting for transmission from companion Windows app...", ConsoleColor.White, 2, fillRemaining: true);
+            win.WriteRow(7, "On Windows, choose option [1] Send File in 'run-transfer.bat'.", ConsoleColor.Cyan, 2, fillRemaining: true);
+            win.WriteRow(8, "", ConsoleColor.Black, 2, fillRemaining: true);
+            win.DrawBar(2, 9, "Listening", 0, ConsoleColor.DarkGray);
             win.WriteFooter("[R] Restart Listener  |  [ESC] Return to Menu", ConsoleColor.Yellow);
+
+            int lastDrawnChunk = -1;
+            int lastDrawnPct = -1;
+            TransferStatus lastDrawnStatus = FileTransferService.Status;
+
+            while (_mode == NetTransferMode.Receive)
+            {
+                // Active bare-metal hardware packet pump
+                WeatherOS.Kernel.CustomNIC?.HackPoll();
+
+                // Non-blocking keyboard poll
+                if (TuiDesktop.TryReadDesktopKey(out var keyEvent))
+                {
+                    if (keyEvent.Key == ConsoleKeyEx.Escape)
+                    {
+                        FileTransferService.StopListening();
+                        _mode = NetTransferMode.Menu;
+                        break;
+                    }
+                    if (keyEvent.KeyChar == 'r' || keyEvent.KeyChar == 'R')
+                    {
+                        FileTransferService.StartListening();
+                        lastDrawnChunk = -1;
+                        lastDrawnPct = -1;
+                        lastDrawnStatus = TransferStatus.Idle;
+                        win.WriteRow(6, "Waiting for transmission from companion Windows app...", ConsoleColor.White, 2, fillRemaining: true);
+                        win.WriteRow(7, "On Windows, choose option [1] Send File in 'run-transfer.bat'.", ConsoleColor.Cyan, 2, fillRemaining: true);
+                        win.WriteRow(8, "", ConsoleColor.Black, 2, fillRemaining: true);
+                        win.WriteRow(9, "", ConsoleColor.Black, 2, fillRemaining: true);
+                        win.WriteRow(10, "", ConsoleColor.Black, 2, fillRemaining: true);
+                        win.WriteRow(11, "", ConsoleColor.Black, 2, fillRemaining: true);
+                        win.WriteRow(13, "", ConsoleColor.Black, 2, fillRemaining: true);
+                        win.DrawBar(2, 9, "Listening", 0, ConsoleColor.DarkGray);
+                    }
+                }
+
+                var curStatus = FileTransferService.Status;
+                int curChunk = FileTransferService.CurrentChunk;
+
+                if (curStatus == TransferStatus.Receiving)
+                {
+                    int totalChunks = FileTransferService.TotalChunks;
+                    int pct = totalChunks > 0 ? (curChunk * 100) / totalChunks : 0;
+
+                    if (curChunk != lastDrawnChunk || curStatus != lastDrawnStatus)
+                    {
+                        lastDrawnChunk = curChunk;
+                        lastDrawnStatus = curStatus;
+
+                        win.WriteRow(6, $"Receiving File: {FileTransferService.CurrentFileName}", ConsoleColor.Green, 2, fillRemaining: true);
+                        win.WriteRow(7, $"From Remote PC: {FileTransferService.RemoteIpStr}", ConsoleColor.Cyan, 2, fillRemaining: true);
+                        win.WriteRow(8, $"Chunk: {curChunk} / {totalChunks} ({FileTransferService.TransferredBytes} / {FileTransferService.TotalFileSize} B)", ConsoleColor.White, 2, fillRemaining: true);
+                    }
+
+                    if (pct != lastDrawnPct)
+                    {
+                        lastDrawnPct = pct;
+                        win.DrawBar(2, 10, "Transfer", pct, ConsoleColor.Green);
+                    }
+                }
+                else if (curStatus != lastDrawnStatus)
+                {
+                    lastDrawnStatus = curStatus;
+                    if (curStatus == TransferStatus.Success)
+                    {
+                        win.WriteRow(6, "[SUCCESS] Transfer completed successfully!", ConsoleColor.Green, 2, fillRemaining: true);
+                        win.WriteRow(7, $"File Name : {FileTransferService.CurrentFileName}", ConsoleColor.White, 2, fillRemaining: true);
+                        win.WriteRow(8, $"File Size : {FileTransferService.TotalFileSize} bytes", ConsoleColor.White, 2, fillRemaining: true);
+                        win.WriteRow(9, "Saved to  : FAT32 Storage / RAM Virtual Disk", ConsoleColor.Cyan, 2, fillRemaining: true);
+                        win.DrawBar(2, 11, "Finished", 100, ConsoleColor.Green);
+                        win.WriteRow(13, "Press [R] to listen for another file.", ConsoleColor.Yellow, 2, fillRemaining: true);
+                    }
+                    else if (curStatus == TransferStatus.Error)
+                    {
+                        win.WriteRow(6, "[ERROR] Transfer failed or interrupted.", ConsoleColor.Red, 2, fillRemaining: true);
+                        win.WriteRow(7, FileTransferService.StatusMessage, ConsoleColor.Red, 2, fillRemaining: true);
+                        win.WriteRow(9, "Press [R] to retry listening.", ConsoleColor.Yellow, 2, fillRemaining: true);
+                    }
+                }
+
+                TuiDesktop.HardwareDelayMs(1);
+            }
         }
 
         private void DrawSendSelectFile(TuiWindow win, TuiDesktop desktop)
