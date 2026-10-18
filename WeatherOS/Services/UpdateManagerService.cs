@@ -67,10 +67,10 @@ namespace WeatherOS.Services
                         }
                     }
 
-                    // Every 128 sectors (64 KB), perform a status read delay to allow mechanical drive cache synchronization
-                    if ((s & 0x7F) == 0)
+                    // Every 256 sectors (128 KB), synchronize with drive cache to ensure mechanical media doesn't saturate
+                    if ((s & 0xFF) == 0)
                     {
-                        CustomPciAtaBlockDevice.WaitIoStatic(ata.CmdBase);
+                        CustomPciAtaBlockDevice.SyncDriveCache(ata.CmdBase);
                     }
 
                     if (progressCallback != null && ((s & 0xFF) == 0 || s == count - 1))
@@ -1033,7 +1033,6 @@ namespace WeatherOS.Services
                             int pct = (int)((writtenSec * 100UL) / totalSecs);
                             ulong mbDone = (writtenSec * 512UL) / (1024UL * 1024UL);
                             ulong mbTotal = (totalSecs * 512UL) / (1024UL * 1024UL);
-                            FileTransferService.StatusMessage = $"Flashing kernel to disk: {pct}% ({mbDone}MB / {mbTotal}MB)...";
                             liveProgressCallback?.Invoke(pct, mbDone, mbTotal);
                         });
 

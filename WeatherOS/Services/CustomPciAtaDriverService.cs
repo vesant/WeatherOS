@@ -135,7 +135,13 @@ namespace WeatherOS.Services
             WaitIo(_pCmd);
         }
 
-        public static bool ReadSectorPio(ushort cmdBase, ushort ctrlBase, byte drvSel, bool lba48, ulong lba, byte[] buffer, int offset = 0)
+        public static void SyncDriveCache(ushort cmdBase)
+        {
+            EnsurePorts(cmdBase);
+            WaitReady(_pCmd, 500000);
+        }
+
+        public static bool ReadSectorPio(ushort cmdBase, ushort ctrlBase, byte drvSel, bool lba48, ulong lba, byte[] buffer, int offset = 0, int timeout = 1500000)
         {
             try
             {
@@ -149,7 +155,7 @@ namespace WeatherOS.Services
                 var pCmd = _pCmd;
 
                 // Wait for drive to be READY (BSY=0, DRDY=1)
-                if (!WaitReady(pCmd, 1500000)) return false;
+                if (!WaitReady(pCmd, timeout)) return false;
 
                 if (lba48 && lba >= 0x0FFFFFFFU)
                 {
@@ -184,13 +190,21 @@ namespace WeatherOS.Services
                 }
 
                 WaitIo(pCmd);
-                if (!WaitDrq(pCmd, 1500000)) return false;
+                if (!WaitDrq(pCmd, timeout)) return false;
 
-                for (int w = 0; w < 256; w++)
+                Cosmos.Core.CPU.DisableInterrupts();
+                try
                 {
-                    ushort word = pData.Word;
-                    buffer[offset + (w * 2)] = (byte)(word & 0xFF);
-                    buffer[offset + (w * 2) + 1] = (byte)(word >> 8);
+                    for (int w = 0; w < 256; w++)
+                    {
+                        ushort word = pData.Word;
+                        buffer[offset + (w * 2)] = (byte)(word & 0xFF);
+                        buffer[offset + (w * 2) + 1] = (byte)(word >> 8);
+                    }
+                }
+                finally
+                {
+                    Cosmos.Core.CPU.EnableInterrupts();
                 }
                 return true;
             }
@@ -214,7 +228,7 @@ namespace WeatherOS.Services
                 var pCmd = _pCmd;
 
                 // 1. Wait for drive to be READY (BSY=0, DRDY=1) before issuing command
-                if (!WaitReady(pCmd, 1500000)) return false;
+                if (!WaitReady(pCmd, 2500000)) return false;
 
                 if (lba48 && lba >= 0x0FFFFFFFU)
                 {
@@ -248,18 +262,26 @@ namespace WeatherOS.Services
 
                 // 2. Wait 400ns + wait for DRQ
                 WaitIo(pCmd);
-                if (!WaitDrq(pCmd, 1500000)) return false;
+                if (!WaitDrq(pCmd, 2500000)) return false;
 
-                // 3. Write 256 words (512 bytes)
-                for (int w = 0; w < 256; w++)
+                // 3. Write 256 words (512 bytes) atomically with CPU interrupts disabled to prevent FIFO desync
+                Cosmos.Core.CPU.DisableInterrupts();
+                try
                 {
-                    ushort word = (ushort)(buffer[offset + (w * 2)] | (buffer[offset + (w * 2) + 1] << 8));
-                    pData.Word = word;
+                    for (int w = 0; w < 256; w++)
+                    {
+                        ushort word = (ushort)(buffer[offset + (w * 2)] | (buffer[offset + (w * 2) + 1] << 8));
+                        pData.Word = word;
+                    }
+                }
+                finally
+                {
+                    Cosmos.Core.CPU.EnableInterrupts();
                 }
 
                 // 4. CRITICAL: 400ns delay for drive controller to raise BSY bit, then wait for sector write to complete
                 WaitIo(pCmd);
-                return WaitNotBusy(pCmd, 1500000);
+                return WaitNotBusy(pCmd, 2500000);
             }
             catch
             {
@@ -475,7 +497,7 @@ namespace WeatherOS.Services
                 {
                     // Verify that Sector 0 can actually be read from this hardware channel
                     byte[] sec0 = new byte[512];
-                    bool sec0Ok = CustomPciAtaBlockDevice.ReadSectorPio(cmdBase, ctrlBase, drvSel, info.IsLba48, 0, sec0);
+                    bool sec0Ok = CustomPciAtaBlockDevice.ReadSectorPio(cmdBase, ctrlBase, drvSel, info.IsLba48, 0, sec0, 0, 30000);
                     if (!sec0Ok) return; // Unresponsive channel or non-existent slave
 
                     // Filter out floating bus noise (all 0xFF only; do NOT filter all 0x00 as empty sectors are valid!)

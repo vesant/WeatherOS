@@ -105,6 +105,13 @@ namespace WeatherOS.Graphics
         {
             if (string.IsNullOrEmpty(text)) return "";
 
+            bool hasNonAscii = false;
+            for (int i = 0; i < text.Length; i++)
+            {
+                if (text[i] > 127) { hasNonAscii = true; break; }
+            }
+            if (!hasNonAscii) return text;
+
             return text
                 .Replace("▲", "^")
                 .Replace("▼", "v")

@@ -222,7 +222,7 @@ namespace WeatherOS.Apps
                                         int lastPctDrawn = -1;
                                         bool updated = UpdateManagerService.ApplyUpdateDirect(pkgBytes, 0, pkgLen, FileTransferService.CurrentFileName, (pct, mbDone, mbTotal) =>
                                         {
-                                            if (pct != lastPctDrawn)
+                                            if (pct - lastPctDrawn >= 2 || pct == 100)
                                             {
                                                 lastPctDrawn = pct;
                                                 win.WriteRow(9, $"Writing sectors to disk: {pct}% ({mbDone}MB / {mbTotal}MB)...", ConsoleColor.White, 2, fillRemaining: true);

@@ -153,6 +153,9 @@ namespace WeatherOS.Graphics
             Screen.WriteClipped(x, y, text, maxSpan, fg, Background, padToWidth);
         }
 
+        private static readonly string _barFilled = "====================";
+        private static readonly string _barEmpty  = "                    ";
+
         /// <summary>
         /// Draws a progress / resource bar at relative coordinates within the window safely.
         /// </summary>
@@ -163,13 +166,20 @@ namespace WeatherOS.Graphics
 
             int clampedPct = Math.Max(0, Math.Min(100, percentage));
             int bars = clampedPct / 5; // 0 to 20
+            if (bars > 20) bars = 20;
 
             string labelPart = (label + " : ").PadRight(11);
             WriteAt(relX, relY, labelPart + "[", ConsoleColor.White);
 
             int barRelX = relX + labelPart.Length + 1;
-            WriteAt(barRelX, relY, new string('=', bars), color);
-            WriteAt(barRelX + bars, relY, new string(' ', 20 - bars), ConsoleColor.DarkGray);
+            if (bars > 0)
+            {
+                WriteAt(barRelX, relY, _barFilled.Substring(0, bars), color);
+            }
+            if (bars < 20)
+            {
+                WriteAt(barRelX + bars, relY, _barEmpty.Substring(0, 20 - bars), ConsoleColor.DarkGray);
+            }
             WriteAt(barRelX + 20, relY, "] " + clampedPct.ToString().PadLeft(3) + "%", ConsoleColor.White);
         }
     }
