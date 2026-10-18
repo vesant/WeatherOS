@@ -221,16 +221,34 @@ def build_native_bootable_image():
         os.path.join(root_dir, "WeatherOS.iso"),
         os.path.join(root_dir, "WeatherOS.img"),
         os.path.join(root_dir, "WeatherOS.raw"),
+        os.path.join(root_dir, "final", "WeatherOS.iso"),
+        os.path.join(root_dir, "final", "WeatherOS.img"),
+        os.path.join(root_dir, "final", "WeatherOS.raw"),
+        os.path.join(script_dir, "final", "WeatherOS.iso"),
+        os.path.join(script_dir, "final", "WeatherOS.img"),
+        os.path.join(script_dir, "final", "WeatherOS.raw"),
     ]
 
     for t in targets:
         t_dir = os.path.dirname(t)
-        if os.path.exists(t_dir):
-            with open(t, "wb") as f:
-                f.write(full_image)
-            print(f"Wrote image: {t} ({os.path.getsize(t)} bytes)")
+        os.makedirs(t_dir, exist_ok=True)
+        with open(t, "wb") as f:
+            f.write(full_image)
+        print(f"Wrote image: {t} ({os.path.getsize(t)} bytes)")
 
-    print("\nSUCCESS: Native bare-metal bootloader image successfully created!")
+    # 8. Export OTA update package (.pkg) with patched loadable kernel
+    pkg_targets = [
+        os.path.join(root_dir, "final", "Updates", "WeatherOS-Update-FileManager-v3.2.0.pkg"),
+        os.path.join(script_dir, "final", "Updates", "WeatherOS-Update-FileManager-v3.2.0.pkg"),
+    ]
+    for p in pkg_targets:
+        p_dir = os.path.dirname(p)
+        os.makedirs(p_dir, exist_ok=True)
+        with open(p, "wb") as f:
+            f.write(kernel_segment)
+        print(f"Wrote OTA package: {p} ({os.path.getsize(p)} bytes)")
+
+    print("\nSUCCESS: Native bare-metal bootloader image and OTA package successfully created!")
     return True
 
 if __name__ == "__main__":

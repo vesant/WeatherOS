@@ -92,6 +92,7 @@ namespace WeatherOS.Services
         }
 
         private static ushort _cachedCmdBase = 0;
+        private static ushort _cachedCtrlBase = 0;
         private static IOPort _pData;
         private static IOPort _pSecCount;
         private static IOPort _pLbaLow;
@@ -99,8 +100,9 @@ namespace WeatherOS.Services
         private static IOPort _pLbaHigh;
         private static IOPort _pDrive;
         private static IOPort _pCmd;
+        private static IOPort _pCtrl;
 
-        private static void EnsurePorts(ushort cmdBase)
+        public static void EnsurePorts(ushort cmdBase, ushort ctrlBase = 0)
         {
             if (_cachedCmdBase != cmdBase || _pData == null)
             {
@@ -113,13 +115,31 @@ namespace WeatherOS.Services
                 _pDrive = new IOPort((ushort)(cmdBase + 6));
                 _pCmd = new IOPort((ushort)(cmdBase + 7));
             }
+
+            if (ctrlBase != 0 && (_cachedCtrlBase != ctrlBase || _pCtrl == null))
+            {
+                _cachedCtrlBase = ctrlBase;
+                _pCtrl = new IOPort(ctrlBase);
+                try
+                {
+                    // Mask hardware ATA interrupts (nIEN = 1, bit 1) for polled PIO stability
+                    _pCtrl.Byte = 0x02;
+                }
+                catch { }
+            }
+        }
+
+        public static void WaitIoStatic(ushort cmdBase)
+        {
+            EnsurePorts(cmdBase);
+            WaitIo(_pCmd);
         }
 
         public static bool ReadSectorPio(ushort cmdBase, ushort ctrlBase, byte drvSel, bool lba48, ulong lba, byte[] buffer, int offset = 0)
         {
             try
             {
-                EnsurePorts(cmdBase);
+                EnsurePorts(cmdBase, ctrlBase);
                 var pData = _pData;
                 var pSecCount = _pSecCount;
                 var pLbaLow = _pLbaLow;
@@ -128,8 +148,8 @@ namespace WeatherOS.Services
                 var pDrive = _pDrive;
                 var pCmd = _pCmd;
 
-                // Wait for drive not busy
-                if (!WaitNotBusy(pCmd, 200000)) return false;
+                // Wait for drive to be READY (BSY=0, DRDY=1)
+                if (!WaitReady(pCmd, 1500000)) return false;
 
                 if (lba48 && lba >= 0x0FFFFFFFU)
                 {
@@ -163,7 +183,8 @@ namespace WeatherOS.Services
                     pCmd.Byte = 0x20; // READ SECTORS
                 }
 
-                if (!WaitDrq(pCmd, 200000)) return false;
+                WaitIo(pCmd);
+                if (!WaitDrq(pCmd, 1500000)) return false;
 
                 for (int w = 0; w < 256; w++)
                 {
@@ -183,7 +204,7 @@ namespace WeatherOS.Services
         {
             try
             {
-                EnsurePorts(cmdBase);
+                EnsurePorts(cmdBase, ctrlBase);
                 var pData = _pData;
                 var pSecCount = _pSecCount;
                 var pLbaLow = _pLbaLow;
@@ -192,7 +213,8 @@ namespace WeatherOS.Services
                 var pDrive = _pDrive;
                 var pCmd = _pCmd;
 
-                if (!WaitNotBusy(pCmd, 200000)) return false;
+                // 1. Wait for drive to be READY (BSY=0, DRDY=1) before issuing command
+                if (!WaitReady(pCmd, 1500000)) return false;
 
                 if (lba48 && lba >= 0x0FFFFFFFU)
                 {
@@ -224,16 +246,20 @@ namespace WeatherOS.Services
                     pCmd.Byte = 0x30; // WRITE SECTORS
                 }
 
-                if (!WaitDrq(pCmd, 200000)) return false;
+                // 2. Wait 400ns + wait for DRQ
+                WaitIo(pCmd);
+                if (!WaitDrq(pCmd, 1500000)) return false;
 
+                // 3. Write 256 words (512 bytes)
                 for (int w = 0; w < 256; w++)
                 {
                     ushort word = (ushort)(buffer[offset + (w * 2)] | (buffer[offset + (w * 2) + 1] << 8));
                     pData.Word = word;
                 }
 
-                // Wait for BSY to clear after writing sector
-                return WaitNotBusy(pCmd, 200000);
+                // 4. CRITICAL: 400ns delay for drive controller to raise BSY bit, then wait for sector write to complete
+                WaitIo(pCmd);
+                return WaitNotBusy(pCmd, 1500000);
             }
             catch
             {
@@ -251,7 +277,8 @@ namespace WeatherOS.Services
                 pDrive.Byte = (byte)(0xE0 | (drvSel == 0xB0 ? 0x10 : 0x00));
                 WaitIo(pCmd);
                 pCmd.Byte = (lba48 && drvSel == 0xA0) ? (byte)0xEA : (byte)0xE7; // FLUSH CACHE EXT / FLUSH CACHE
-                WaitNotBusy(pCmd, 2000000);
+                WaitIo(pCmd);
+                WaitNotBusy(pCmd, 5000000);
             }
             catch { }
         }
@@ -264,8 +291,26 @@ namespace WeatherOS.Services
             b = pStatus.Byte;
         }
 
+        private static bool WaitReady(IOPort pStatus, int timeout)
+        {
+            WaitIo(pStatus);
+            while (timeout-- > 0)
+            {
+                byte st = pStatus.Byte;
+                if (st == 0xFF) return false;
+                // BSY (bit 7) must be 0, DRDY (bit 6) must be 1
+                if ((st & 0x80) == 0)
+                {
+                    if ((st & 0x01) != 0 || (st & 0x20) != 0) return false; // ERR or DF
+                    if ((st & 0x40) != 0) return true; // DRDY set
+                }
+            }
+            return false;
+        }
+
         private static bool WaitNotBusy(IOPort pStatus, int timeout)
         {
+            WaitIo(pStatus);
             while (timeout-- > 0)
             {
                 byte st = pStatus.Byte;
@@ -277,13 +322,14 @@ namespace WeatherOS.Services
 
         private static bool WaitDrq(IOPort pStatus, int timeout)
         {
+            WaitIo(pStatus);
             while (timeout-- > 0)
             {
                 byte st = pStatus.Byte;
                 if (st == 0xFF) return false;
                 if ((st & 0x80) == 0)
                 {
-                    if ((st & 0x01) != 0) return false; // ERR bit set
+                    if ((st & 0x01) != 0 || (st & 0x20) != 0) return false; // ERR or DF
                     if ((st & 0x08) != 0) return true;  // DRQ ready
                 }
             }

@@ -59,11 +59,18 @@ namespace WeatherOS.Services
                     bool ok = CustomPciAtaBlockDevice.WriteSectorPio(ata.CmdBase, ata.CtrlBase, ata.DriveSelect, ata.IsLba48, startSector + s, bufToWrite, bufOff);
                     if (!ok)
                     {
-                        // Retry once on failure
+                        // Give drive controller time to clear error / flush track buffer, then retry
+                        CustomPciAtaBlockDevice.WaitIoStatic(ata.CmdBase);
                         if (!CustomPciAtaBlockDevice.WriteSectorPio(ata.CmdBase, ata.CtrlBase, ata.DriveSelect, ata.IsLba48, startSector + s, bufToWrite, bufOff))
                         {
                             return false;
                         }
+                    }
+
+                    // Every 128 sectors (64 KB), perform a status read delay to allow mechanical drive cache synchronization
+                    if ((s & 0x7F) == 0)
+                    {
+                        CustomPciAtaBlockDevice.WaitIoStatic(ata.CmdBase);
                     }
 
                     if (progressCallback != null && ((s & 0xFF) == 0 || s == count - 1))
