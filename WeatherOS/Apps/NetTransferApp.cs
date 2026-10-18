@@ -40,6 +40,9 @@ namespace WeatherOS.Apps
         // Ping state
         private string _pingResult = "";
 
+        // OTA Flash state
+        private bool _pkgAlreadyFlashed = false;
+
         public NetTransferApp()
         {
             InitTargetIp();
@@ -150,6 +153,7 @@ namespace WeatherOS.Apps
             win.DrawBar(2, 9, "Listening", 0, ConsoleColor.DarkGray);
             win.WriteFooter("[R] Restart Listener  |  [ESC] Return to Menu", ConsoleColor.Yellow);
 
+            _pkgAlreadyFlashed = false;
             int lastDrawnChunk = -1;
             int lastDrawnPct = -1;
             string lastDrawnStatusMsg = "";
@@ -172,6 +176,7 @@ namespace WeatherOS.Apps
                     if (keyEvent.KeyChar == 'r' || keyEvent.KeyChar == 'R')
                     {
                         FileTransferService.StartListening();
+                        _pkgAlreadyFlashed = false;
                         lastDrawnChunk = -1;
                         lastDrawnPct = -1;
                         lastDrawnStatusMsg = "";
@@ -184,6 +189,61 @@ namespace WeatherOS.Apps
                         win.WriteRow(11, "", ConsoleColor.Black, 2, fillRemaining: true);
                         win.WriteRow(13, "", ConsoleColor.Black, 2, fillRemaining: true);
                         win.DrawBar(2, 9, "Listening", 0, ConsoleColor.DarkGray);
+                    }
+                    if (keyEvent.Key == ConsoleKeyEx.Enter || keyEvent.KeyChar == '\r' || keyEvent.KeyChar == '\n')
+                    {
+                        if (FileTransferService.Status == TransferStatus.Success)
+                        {
+                            bool isPkg = !string.IsNullOrEmpty(FileTransferService.CurrentFileName) &&
+                                         FileTransferService.CurrentFileName.ToLower().EndsWith(".pkg");
+
+                            if (isPkg)
+                            {
+                                if (_pkgAlreadyFlashed)
+                                {
+                                    Cosmos.System.Power.Reboot();
+                                    return;
+                                }
+                                else
+                                {
+                                    // Trigger safe kernel flash to disk with live on-screen progress
+                                    win.WriteRow(6, "FLASHING SYSTEM UPDATE TO PHYSICAL DISK...", ConsoleColor.Yellow, 2, fillRemaining: true);
+                                    win.WriteRow(7, $"Package   : {FileTransferService.CurrentFileName}", ConsoleColor.White, 2, fillRemaining: true);
+                                    win.WriteRow(8, "Deploying kernel to LBA 64 and updating bootloader...", ConsoleColor.Cyan, 2, fillRemaining: true);
+                                    win.WriteRow(9, "Starting hardware flash...", ConsoleColor.White, 2, fillRemaining: true);
+                                    win.DrawBar(2, 10, "Flashing", 0, ConsoleColor.Yellow);
+                                    win.WriteRow(13, "Flashing in progress... Please wait...", ConsoleColor.DarkGray, 2, fillRemaining: true);
+
+                                    string updStatus;
+                                    byte[] pkgBytes;
+                                    if (StorageService.TryGetMemoryBinaryFile(FileTransferService.CurrentFileName, out pkgBytes) && pkgBytes != null)
+                                    {
+                                        int lastPctDrawn = -1;
+                                        bool updated = UpdateManagerService.ApplyUpdateDirect(pkgBytes, 0, pkgBytes.Length, FileTransferService.CurrentFileName, (pct, mbDone, mbTotal) =>
+                                        {
+                                            if (pct != lastPctDrawn)
+                                            {
+                                                lastPctDrawn = pct;
+                                                win.WriteRow(9, $"Writing sectors to disk: {pct}% ({mbDone}MB / {mbTotal}MB)...", ConsoleColor.White, 2, fillRemaining: true);
+                                                win.DrawBar(2, 10, "Flashing", pct, ConsoleColor.Green);
+                                            }
+                                        }, out updStatus);
+
+                                        if (updated)
+                                        {
+                                            _pkgAlreadyFlashed = true;
+                                            lastDrawnStatus = TransferStatus.Idle; // force redraw
+                                        }
+                                        else
+                                        {
+                                            win.WriteRow(6, "[ERROR] FAILED TO FLASH SYSTEM UPDATE TO DISK", ConsoleColor.Red, 2, fillRemaining: true);
+                                            win.WriteRow(7, updStatus, ConsoleColor.Red, 2, fillRemaining: true);
+                                            win.WriteRow(13, "Press [R] to Listen Again  |  [ESC] Menu", ConsoleColor.Yellow, 2, fillRemaining: true);
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
 
@@ -228,12 +288,24 @@ namespace WeatherOS.Apps
 
                         if (isPkg)
                         {
-                            win.WriteRow(6, "[SUCCESS] SYSTEM UPDATE FLASHED TO DISK!", ConsoleColor.Green, 2, fillRemaining: true);
-                            win.WriteRow(7, $"Package   : {FileTransferService.CurrentFileName}", ConsoleColor.White, 2, fillRemaining: true);
-                            win.WriteRow(8, $"Kernel    : Flashed to Physical Storage (LBA 64)", ConsoleColor.Cyan, 2, fillRemaining: true);
-                            win.WriteRow(9, $"Status    : Ready to boot into new version", ConsoleColor.Green, 2, fillRemaining: true);
-                            win.DrawBar(2, 11, "Update Complete", 100, ConsoleColor.Green);
-                            win.WriteRow(13, "Press [ENTER] to Reboot Now  |  [R] Listen Again  |  [ESC] Menu", ConsoleColor.Yellow, 2, fillRemaining: true);
+                            if (_pkgAlreadyFlashed)
+                            {
+                                win.WriteRow(6, "[SUCCESS] SYSTEM UPDATE FLASHED TO DISK!", ConsoleColor.Green, 2, fillRemaining: true);
+                                win.WriteRow(7, $"Package   : {FileTransferService.CurrentFileName}", ConsoleColor.White, 2, fillRemaining: true);
+                                win.WriteRow(8, $"Kernel    : Flashed to Physical Storage (LBA 64)", ConsoleColor.Cyan, 2, fillRemaining: true);
+                                win.WriteRow(9, $"Status    : Ready to boot into new version", ConsoleColor.Green, 2, fillRemaining: true);
+                                win.DrawBar(2, 11, "Update Complete", 100, ConsoleColor.Green);
+                                win.WriteRow(13, "Press [ENTER] to Reboot Now  |  [R] Listen Again  |  [ESC] Menu", ConsoleColor.Yellow, 2, fillRemaining: true);
+                            }
+                            else
+                            {
+                                win.WriteRow(6, "[SUCCESS] SYSTEM UPDATE RECEIVED & STAGED IN MEMORY!", ConsoleColor.Green, 2, fillRemaining: true);
+                                win.WriteRow(7, $"Package   : {FileTransferService.CurrentFileName}", ConsoleColor.White, 2, fillRemaining: true);
+                                win.WriteRow(8, $"Size      : {FileTransferService.TotalFileSize / 1024} KB (Stored in RAM Virtual Store)", ConsoleColor.Cyan, 2, fillRemaining: true);
+                                win.WriteRow(9, $"Status    : Staged in memory and ready to install.", ConsoleColor.Green, 2, fillRemaining: true);
+                                win.DrawBar(2, 11, "Received 100%", 100, ConsoleColor.Green);
+                                win.WriteRow(13, "Press [ENTER] Flash Update to Disk  |  [ESC] Menu / File Picker  |  [R] Listen", ConsoleColor.Yellow, 2, fillRemaining: true);
+                            }
                         }
                         else
                         {

@@ -403,53 +403,23 @@ namespace WeatherOS.Services
                     int saveLen = (int)TotalFileSize;
                     if (saveLen > _rxBufferLength) saveLen = _rxBufferLength;
 
-                    string saveStatus = "";
-                    bool saved = false;
+                    // Copy received payload and register in StorageService (RAM Store) so it is immediately accessible
+                    byte[] fileData = new byte[saveLen];
+                    Array.Copy(_rxBuffer, 0, fileData, 0, saveLen);
+                    StorageService.PutMemoryBinaryFile(CurrentFileName, fileData);
 
-                    // 1. Process OTA system updates (.pkg) directly through UpdateManagerService with zero heap duplication
-                    if (CurrentFileName.ToLower().EndsWith(".pkg"))
+                    // If physical VFS is available, also persist to disk
+                    if (StorageService.IsVfsAvailable())
                     {
-                        StatusMessage = "Processing and installing system update...";
-                        string updStatus;
-                        bool updated = UpdateManagerService.ApplyUpdateDirect(_rxBuffer, 0, saveLen, CurrentFileName, out updStatus);
-                        if (updated)
+                        try
                         {
-                            saved = true;
-                            saveStatus = "Update package applied successfully: " + updStatus;
+                            File.WriteAllBytes("0:\\" + CurrentFileName, fileData);
                         }
-                        else
-                        {
-                            saveStatus = "Package received, but update apply failed: " + updStatus;
-                        }
-                    }
-                    else
-                    {
-                        // 2. Normal file: write once to 0:\CurrentFileName if VFS is available
-                        byte[] fileData = new byte[saveLen];
-                        Array.Copy(_rxBuffer, 0, fileData, 0, saveLen);
-                        if (StorageService.IsVfsAvailable())
-                        {
-                            try
-                            {
-                                File.WriteAllBytes("0:\\" + CurrentFileName, fileData);
-                                saved = true;
-                                saveStatus = "File written to 0:\\" + CurrentFileName;
-                            }
-                            catch { }
-                        }
-
-                        if (!saved)
-                        {
-                            string stgStatus;
-                            saved = StorageService.SaveBinaryFileToLocation(CurrentFileName, fileData, "disk0", out stgStatus);
-                            saveStatus = saved ? "File successfully written to disk storage" : stgStatus;
-                        }
+                        catch { }
                     }
 
-                    Status = saved ? TransferStatus.Success : TransferStatus.Error;
-                    StatusMessage = saved
-                        ? $"[SUCCESS] Received '{CurrentFileName}' ({saveLen} B) and saved to storage!"
-                        : $"[ERROR] File received but storage save failed: {saveStatus}";
+                    Status = TransferStatus.Success;
+                    StatusMessage = $"File '{CurrentFileName}' ({saveLen} bytes) successfully received and staged in storage.";
                 }
                 return;
             }

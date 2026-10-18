@@ -367,10 +367,14 @@ namespace WeatherOS.Services
             {
                 for (int i = 0; i < _memoryFiles.Count; i++)
                 {
+                    long fSize = 0;
+                    if (_memoryFiles[i].RawBytes != null) fSize = _memoryFiles[i].RawBytes.Length;
+                    else if (_memoryFiles[i].Content != null) fSize = _memoryFiles[i].Content.Length;
+
                     list.Add(new StorageFileInfo
                     {
                         Name = _memoryFiles[i].Name,
-                        Size = _memoryFiles[i].Content.Length,
+                        Size = fSize,
                         LocationId = "ram",
                         LocationName = "RAM Store"
                     });
@@ -525,16 +529,13 @@ namespace WeatherOS.Services
                 directOk = DiskWipeService.WriteBinaryFileDirectToFat32(targetDev, filename, data, out directStatus);
             }
 
-            // Only cache in RAM if small (< 2MB) or if physical write failed
+            // Always ensure binary file is registered in RAM Virtual Store for immediate availability in apps
+            PutMemoryBinaryFile(filename, data);
+
             if (!vfsSaved && !directOk)
             {
-                PutMemoryBinaryFile(filename, data);
                 status = $"Disk save failed: {directStatus}. File saved in RAM temporary store.";
                 return false;
-            }
-            else if (data.Length < 2 * 1024 * 1024)
-            {
-                PutMemoryBinaryFile(filename, data);
             }
 
             status = $"Saved to {diskName}: {filename} ({data.Length} bytes) [OK]";

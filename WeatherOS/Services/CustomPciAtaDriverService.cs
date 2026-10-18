@@ -91,17 +91,42 @@ namespace WeatherOS.Services
             FlushPio(CmdBase, DriveSelect, IsLba48);
         }
 
+        private static ushort _cachedCmdBase = 0;
+        private static IOPort _pData;
+        private static IOPort _pSecCount;
+        private static IOPort _pLbaLow;
+        private static IOPort _pLbaMid;
+        private static IOPort _pLbaHigh;
+        private static IOPort _pDrive;
+        private static IOPort _pCmd;
+
+        private static void EnsurePorts(ushort cmdBase)
+        {
+            if (_cachedCmdBase != cmdBase || _pData == null)
+            {
+                _cachedCmdBase = cmdBase;
+                _pData = new IOPort(cmdBase);
+                _pSecCount = new IOPort((ushort)(cmdBase + 2));
+                _pLbaLow = new IOPort((ushort)(cmdBase + 3));
+                _pLbaMid = new IOPort((ushort)(cmdBase + 4));
+                _pLbaHigh = new IOPort((ushort)(cmdBase + 5));
+                _pDrive = new IOPort((ushort)(cmdBase + 6));
+                _pCmd = new IOPort((ushort)(cmdBase + 7));
+            }
+        }
+
         public static bool ReadSectorPio(ushort cmdBase, ushort ctrlBase, byte drvSel, bool lba48, ulong lba, byte[] buffer, int offset = 0)
         {
             try
             {
-                var pData = new IOPort(cmdBase);
-                var pSecCount = new IOPort((ushort)(cmdBase + 2));
-                var pLbaLow = new IOPort((ushort)(cmdBase + 3));
-                var pLbaMid = new IOPort((ushort)(cmdBase + 4));
-                var pLbaHigh = new IOPort((ushort)(cmdBase + 5));
-                var pDrive = new IOPort((ushort)(cmdBase + 6));
-                var pCmd = new IOPort((ushort)(cmdBase + 7));
+                EnsurePorts(cmdBase);
+                var pData = _pData;
+                var pSecCount = _pSecCount;
+                var pLbaLow = _pLbaLow;
+                var pLbaMid = _pLbaMid;
+                var pLbaHigh = _pLbaHigh;
+                var pDrive = _pDrive;
+                var pCmd = _pCmd;
 
                 // Wait for drive not busy
                 if (!WaitNotBusy(pCmd, 200000)) return false;
@@ -158,13 +183,14 @@ namespace WeatherOS.Services
         {
             try
             {
-                var pData = new IOPort(cmdBase);
-                var pSecCount = new IOPort((ushort)(cmdBase + 2));
-                var pLbaLow = new IOPort((ushort)(cmdBase + 3));
-                var pLbaMid = new IOPort((ushort)(cmdBase + 4));
-                var pLbaHigh = new IOPort((ushort)(cmdBase + 5));
-                var pDrive = new IOPort((ushort)(cmdBase + 6));
-                var pCmd = new IOPort((ushort)(cmdBase + 7));
+                EnsurePorts(cmdBase);
+                var pData = _pData;
+                var pSecCount = _pSecCount;
+                var pLbaLow = _pLbaLow;
+                var pLbaMid = _pLbaMid;
+                var pLbaHigh = _pLbaHigh;
+                var pDrive = _pDrive;
+                var pCmd = _pCmd;
 
                 if (!WaitNotBusy(pCmd, 200000)) return false;
 
@@ -219,12 +245,13 @@ namespace WeatherOS.Services
         {
             try
             {
-                var pDrive = new IOPort((ushort)(cmdBase + 6));
-                var pCmd = new IOPort((ushort)(cmdBase + 7));
+                EnsurePorts(cmdBase);
+                var pDrive = _pDrive;
+                var pCmd = _pCmd;
                 pDrive.Byte = (byte)(0xE0 | (drvSel == 0xB0 ? 0x10 : 0x00));
                 WaitIo(pCmd);
                 pCmd.Byte = (lba48 && drvSel == 0xA0) ? (byte)0xEA : (byte)0xE7; // FLUSH CACHE EXT / FLUSH CACHE
-                WaitNotBusy(pCmd, 200000);
+                WaitNotBusy(pCmd, 2000000);
             }
             catch { }
         }

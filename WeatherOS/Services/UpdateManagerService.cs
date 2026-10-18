@@ -74,12 +74,6 @@ namespace WeatherOS.Services
 
                 // Flush ATA write cache ONCE after all sectors have been transferred
                 CustomPciAtaBlockDevice.FlushPio(ata.CmdBase, ata.DriveSelect, ata.IsLba48);
-                try
-                {
-                    var pStatus = new Cosmos.Core.IOPort((ushort)(ata.CmdBase + 7));
-                    byte finalSt = pStatus.Byte;
-                }
-                catch { }
                 return true;
             }
 
@@ -934,6 +928,11 @@ namespace WeatherOS.Services
 
         public static bool ApplyUpdateDirect(byte[] packageData, int pkgOffset, int pkgLength, string fileName, out string statusMessage)
         {
+            return ApplyUpdateDirect(packageData, pkgOffset, pkgLength, fileName, null, out statusMessage);
+        }
+
+        public static bool ApplyUpdateDirect(byte[] packageData, int pkgOffset, int pkgLength, string fileName, Action<int, ulong, ulong> liveProgressCallback, out string statusMessage)
+        {
             if (packageData == null || pkgLength <= 0 || pkgOffset + pkgLength > packageData.Length)
             {
                 statusMessage = "Error: Update package buffer is empty or invalid.";
@@ -1028,6 +1027,7 @@ namespace WeatherOS.Services
                             ulong mbDone = (writtenSec * 512UL) / (1024UL * 1024UL);
                             ulong mbTotal = (totalSecs * 512UL) / (1024UL * 1024UL);
                             FileTransferService.StatusMessage = $"Flashing kernel to disk: {pct}% ({mbDone}MB / {mbTotal}MB)...";
+                            liveProgressCallback?.Invoke(pct, mbDone, mbTotal);
                         });
 
                         if (!writeOk)
