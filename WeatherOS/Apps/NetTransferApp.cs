@@ -193,19 +193,19 @@ namespace WeatherOS.Apps
                     int totalChunks = FileTransferService.TotalChunks;
                     int pct = totalChunks > 0 ? (curChunk * 100) / totalChunks : 0;
 
-                    if (curChunk != lastDrawnChunk || curStatus != lastDrawnStatus)
+                    if (curStatus != lastDrawnStatus)
                     {
-                        lastDrawnChunk = curChunk;
                         lastDrawnStatus = curStatus;
-
                         win.WriteRow(6, $"Receiving File: {FileTransferService.CurrentFileName}", ConsoleColor.Green, 2, fillRemaining: true);
                         win.WriteRow(7, $"From Remote PC: {FileTransferService.RemoteIpStr}", ConsoleColor.Cyan, 2, fillRemaining: true);
-                        win.WriteRow(8, $"Chunk: {curChunk} / {totalChunks} ({FileTransferService.TransferredBytes} / {FileTransferService.TotalFileSize} B)", ConsoleColor.White, 2, fillRemaining: true);
                     }
 
-                    if (pct != lastDrawnPct)
+                    if (pct != lastDrawnPct || curChunk == totalChunks)
                     {
                         lastDrawnPct = pct;
+                        lastDrawnChunk = curChunk;
+
+                        win.WriteRow(8, $"Chunk: {curChunk} / {totalChunks} ({FileTransferService.TransferredBytes} / {FileTransferService.TotalFileSize} B)", ConsoleColor.White, 2, fillRemaining: true);
                         win.DrawBar(2, 10, "Transfer", pct, ConsoleColor.Green);
                     }
                 }
@@ -229,7 +229,10 @@ namespace WeatherOS.Apps
                     }
                 }
 
-                TuiDesktop.HardwareDelayMs(1);
+                if (curStatus != TransferStatus.Receiving)
+                {
+                    TuiDesktop.HardwareDelayMs(1);
+                }
             }
         }
 

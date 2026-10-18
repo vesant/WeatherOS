@@ -8,14 +8,23 @@ using WeatherOS.Services;
 
 namespace WeatherOS.Apps
 {
+    public class FileExplorerItem
+    {
+        public string Name;
+        public bool IsDirectory;
+        public long Size;
+        public string FullPath;
+        public string Tag;
+    }
+
     public class DiskManagerApp : IApp
     {
         public string Id => "diskmgr";
         public string Name => "File & Storage Explorer";
         public bool IsRealTime => false;
 
-        private string _currentDrive = "RAM:\\";
-        private string _currentPath = "RAM:\\";
+        private string _currentDrive = "0:\\";
+        private string _currentPath = "0:\\";
         private List<FileExplorerItem> _items = new List<FileExplorerItem>();
         private int _selectedIndex = 0;
         private int _scrollOffset = 0;
@@ -29,10 +38,6 @@ namespace WeatherOS.Apps
 
         // Delete State
         private bool _isConfirmingDelete = false;
-
-        // Create Directory State
-        private bool _isCreatingDirectory = false;
-        private string _newDirName = "";
 
         public DiskManagerApp()
         {
@@ -48,13 +53,168 @@ namespace WeatherOS.Apps
 
         public void Refresh()
         {
-            _items = StorageService.GetDirectoryEntries(_currentPath);
+            _items.Clear();
             _selectedIndex = 0;
             _scrollOffset = 0;
             _isPreviewActive = false;
             _isConfirmingDelete = false;
-            _isCreatingDirectory = false;
-            _newDirName = "";
+
+            // 1. Parent folder option if not at drive root
+            if (!string.Equals(_currentPath, _currentDrive, StringComparison.OrdinalIgnoreCase) && 
+                _currentPath.Length > _currentDrive.Length)
+            {
+                string parent = GetParentDirectory(_currentPath);
+                _items.Add(new FileExplorerItem
+                {
+                    Name = "..",
+                    IsDirectory = true,
+                    Size = 0,
+                    FullPath = parent,
+                    Tag = "[UP]"
+                });
+            }
+
+            // 2. If in RAM Virtual Drive
+            if (string.Equals(_currentDrive, "RAM:\\", StringComparison.OrdinalIgnoreCase))
+            {
+                var mem = StorageService.GetMemoryStore();
+                if (mem != null)
+                {
+                    for (int i = 0; i < mem.Count; i++)
+                    {
+                        var f = mem[i];
+                        _items.Add(new FileExplorerItem
+                        {
+                            Name = f.Name,
+                            IsDirectory = false,
+                            Size = f.Content != null ? f.Content.Length : 0,
+                            FullPath = "RAM:\\" + f.Name,
+                            Tag = GetTagForFile(f.Name)
+                        });
+                    }
+                }
+                return;
+            }
+
+            // 3. Scan physical disk VFS or Direct FAT32
+            bool isDriveMounted = false;
+            try
+            {
+                var vfsDrives = VFSManager.GetLogicalDrives();
+                if (vfsDrives != null)
+                {
+                    for (int d = 0; d < vfsDrives.Count; d++)
+                    {
+                        if (string.Equals(vfsDrives[d].TrimEnd('\\'), _currentDrive.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase))
+                        {
+                            isDriveMounted = true;
+                            break;
+                        }
+                    }
+                }
+            }
+            catch { }
+
+            if (isDriveMounted)
+            {
+                try
+                {
+                    if (Directory.Exists(_currentPath))
+                    {
+                        // Directories
+                        string[] dirs = Directory.GetDirectories(_currentPath);
+                        if (dirs != null)
+                        {
+                            for (int i = 0; i < dirs.Length; i++)
+                            {
+                                string d = dirs[i];
+                                string dirName = Path.GetFileName(d);
+                                if (string.IsNullOrEmpty(dirName)) dirName = d;
+                                _items.Add(new FileExplorerItem
+                                {
+                                    Name = dirName,
+                                    IsDirectory = true,
+                                    Size = 0,
+                                    FullPath = d,
+                                    Tag = "[DIR]"
+                                });
+                            }
+                        }
+
+                        // Files
+                        string[] files = Directory.GetFiles(_currentPath);
+                        if (files != null)
+                        {
+                            for (int i = 0; i < files.Length; i++)
+                            {
+                                string f = files[i];
+                                string fileName = Path.GetFileName(f);
+                                if (string.IsNullOrEmpty(fileName)) fileName = f;
+                                long sz = 0;
+                                try { sz = new FileInfo(f).Length; } catch { }
+                                _items.Add(new FileExplorerItem
+                                {
+                                    Name = fileName,
+                                    IsDirectory = false,
+                                    Size = sz,
+                                    FullPath = f,
+                                    Tag = GetTagForFile(fileName)
+                                });
+                            }
+                        }
+                    }
+                }
+                catch { }
+            }
+            else
+            {
+                // Direct FAT32 scan from physical disk 0
+                try
+                {
+                    var physDrives = DiskWipeService.GetPhysicalDrives();
+                    if (physDrives != null && physDrives.Count > 0)
+                    {
+                        var diskFiles = DiskWipeService.ListFilesDetailedDirectFromFat32(physDrives[0].Device);
+                        if (diskFiles != null)
+                        {
+                            for (int i = 0; i < diskFiles.Count; i++)
+                            {
+                                var item = diskFiles[i];
+                                _items.Add(new FileExplorerItem
+                                {
+                                    Name = item.Name,
+                                    IsDirectory = false,
+                                    Size = item.Size,
+                                    FullPath = _currentDrive + item.Name,
+                                    Tag = GetTagForFile(item.Name)
+                                });
+                            }
+                        }
+                    }
+                }
+                catch { }
+            }
+        }
+
+        private static string GetTagForFile(string name)
+        {
+            if (string.IsNullOrEmpty(name)) return "[FILE]";
+            string n = name.ToUpper();
+            if (n.EndsWith(".TXT")) return "[TXT]";
+            if (n.EndsWith(".INI")) return "[INI]";
+            if (n.EndsWith(".DAT")) return "[DAT]";
+            if (n.EndsWith(".BIN")) return "[BIN]";
+            if (n.EndsWith(".CFG")) return "[CFG]";
+            if (n.EndsWith(".LOG")) return "[LOG]";
+            return "[FILE]";
+        }
+
+        private static string GetParentDirectory(string path)
+        {
+            if (string.IsNullOrEmpty(path)) return "0:\\";
+            int idx = path.LastIndexOf('\\');
+            if (idx <= 2) return path.Substring(0, Math.Min(path.Length, 3));
+            return path.Substring(0, idx);
         }
 
         private int _lastMemoryStoreCount = -1;
@@ -66,7 +226,7 @@ namespace WeatherOS.Apps
             if (_lastMemoryStoreCount != currentMemCount)
             {
                 _lastMemoryStoreCount = currentMemCount;
-                _items = StorageService.GetDirectoryEntries(_currentPath);
+                Refresh();
             }
 
             var win = desktop.CreateWindow("WEATHER OS - FILE & STORAGE EXPLORER", WindowSize.FullScreen);
@@ -78,7 +238,7 @@ namespace WeatherOS.Apps
             win.WriteRow(1, topBar, ConsoleColor.Yellow, 2);
             win.WriteSeparator(2);
 
-            // Main Items Area (Lines 6 to 15 = 10 visible items)
+            // Main Items Area (Lines 6 to 16 = 11 visible items)
             int maxVisible = 10;
             if (_selectedIndex < _scrollOffset) _scrollOffset = _selectedIndex;
             if (_selectedIndex >= _scrollOffset + maxVisible) _scrollOffset = _selectedIndex - maxVisible + 1;
@@ -91,7 +251,7 @@ namespace WeatherOS.Apps
 
                 System.Console.SetCursorPosition(5, 10);
                 System.Console.ForegroundColor = ConsoleColor.White;
-                System.Console.Write("  Press [M] to create a folder, [P] to paste, or [Tab] to switch drive.");
+                System.Console.Write("  Press [N] to create a new file in Notepad, or [Tab] to switch drive.");
             }
             else
             {
@@ -146,20 +306,12 @@ namespace WeatherOS.Apps
 
             // Status or prompt message line
             System.Console.SetCursorPosition(5, 18);
-            if (_isCreatingDirectory)
-            {
-                System.Console.BackgroundColor = ConsoleColor.DarkBlue;
-                System.Console.ForegroundColor = ConsoleColor.Yellow;
-                string prompt = " CREATE FOLDER: [" + _newDirName + "_]";
-                if (prompt.Length > 70) prompt = prompt.Substring(0, 70);
-                System.Console.Write(prompt.PadRight(70));
-            }
-            else if (_isConfirmingDelete && _selectedIndex >= 0 && _selectedIndex < _items.Count)
+            if (_isConfirmingDelete && _selectedIndex >= 0 && _selectedIndex < _items.Count)
             {
                 System.Console.BackgroundColor = ConsoleColor.Red;
                 System.Console.ForegroundColor = ConsoleColor.White;
                 var sel = _items[_selectedIndex];
-                string delPrompt = $" DELETE '{sel.Name}'? Press [Y] to Confirm or [N] to Cancel ";
+                string delPrompt = $" DELETE '{sel.Name}'? Press [Y] to Confirm Delete or [N] to Cancel ";
                 if (delPrompt.Length > 70) delPrompt = delPrompt.Substring(0, 70);
                 System.Console.Write(delPrompt.PadRight(70));
             }
@@ -172,19 +324,11 @@ namespace WeatherOS.Apps
             }
             else
             {
-                string clipInfo = StorageClipboard.HasData ? $"Clipboard: {StorageClipboard.CopiedName}" : "Clipboard: empty";
-                win.WriteRow(17, $"[M] New Folder  |  [C] Copy  |  [P] Paste  |  [Tab] Drive  |  {clipInfo}", ConsoleColor.Gray, 2);
+                win.WriteRow(17, "[F2] Partition Diag  |  [Tab] Switch Drive  |  [N] Notepad  |  [R] Reload", ConsoleColor.Gray, 2);
             }
 
             // Controls Footer
-            if (_isCreatingDirectory)
-            {
-                win.WriteFooter("[Enter] Confirm Creation  |  [ESC] Cancel", ConsoleColor.Yellow);
-            }
-            else
-            {
-                win.WriteFooter("[Enter] Open/Browse  |  [O/E] Open in Notepad  |  [V] Preview  |  [D] Delete  |  [ESC] Exit", ConsoleColor.Yellow);
-            }
+            win.WriteFooter("[Enter/V] Preview  |  [E] Edit Note  |  [D] Delete  |  [ESC] Exit", ConsoleColor.Yellow);
 
             // Modal Preview Window overlay if active
             if (_isPreviewActive)
@@ -247,45 +391,6 @@ namespace WeatherOS.Apps
                 return;
             }
 
-            // If creating directory
-            if (_isCreatingDirectory)
-            {
-                if (keyEvent.Key == ConsoleKeyEx.Escape)
-                {
-                    _isCreatingDirectory = false;
-                    _newDirName = "";
-                    _statusMessage = "Folder creation cancelled.";
-                }
-                else if (keyEvent.Key == ConsoleKeyEx.Enter)
-                {
-                    string status;
-                    bool ok = StorageService.CreateDirectory(_currentPath, _newDirName, out status);
-                    _statusMessage = status;
-                    _isCreatingDirectory = false;
-                    _newDirName = "";
-                    Refresh();
-                }
-                else if (keyEvent.Key == ConsoleKeyEx.Backspace)
-                {
-                    if (_newDirName.Length > 0)
-                    {
-                        _newDirName = _newDirName.Substring(0, _newDirName.Length - 1);
-                    }
-                }
-                else if (keyEvent.KeyChar >= 32 && keyEvent.KeyChar <= 126)
-                {
-                    char c = keyEvent.KeyChar;
-                    if (c != '/' && c != '\\' && c != ':' && c != '*' && c != '?' && c != '"' && c != '<' && c != '>' && c != '|')
-                    {
-                        if (_newDirName.Length < 32)
-                        {
-                            _newDirName += c;
-                        }
-                    }
-                }
-                return;
-            }
-
             // If in delete confirmation modal
             if (_isConfirmingDelete)
             {
@@ -294,17 +399,10 @@ namespace WeatherOS.Apps
                     if (_selectedIndex >= 0 && _selectedIndex < _items.Count)
                     {
                         var sel = _items[_selectedIndex];
-                        if (sel.Name == "..")
-                        {
-                            _statusMessage = "Cannot delete parent directory reference.";
-                        }
-                        else
-                        {
-                            string stat;
-                            bool ok = StorageService.DeletePath(sel.FullPath, sel.IsDirectory, out stat);
-                            _statusMessage = stat;
-                            Refresh();
-                        }
+                        string stat;
+                        bool ok = StorageService.DeleteFile(sel.Name, out stat);
+                        _statusMessage = ok ? $"Deleted '{sel.Name}' [OK]" : $"Could not delete '{sel.Name}'";
+                        Refresh();
                     }
                     _isConfirmingDelete = false;
                 }
@@ -342,12 +440,11 @@ namespace WeatherOS.Apps
                     {
                         _currentPath = sel.FullPath;
                         if (!_currentPath.EndsWith("\\")) _currentPath += "\\";
-                        _currentDrive = StorageService.GetDrivePrefix(_currentPath);
                         Refresh();
                     }
                     else
                     {
-                        OpenFileInNotepad(desktop, sel);
+                        OpenFilePreview(sel);
                     }
                 }
             }
@@ -362,57 +459,52 @@ namespace WeatherOS.Apps
                     }
                 }
             }
-            else if (keyEvent.KeyChar == 'm' || keyEvent.KeyChar == 'M')
-            {
-                _isCreatingDirectory = true;
-                _newDirName = "";
-                _statusMessage = "";
-            }
-            else if (keyEvent.KeyChar == 'c' || keyEvent.KeyChar == 'C')
-            {
-                if (_selectedIndex >= 0 && _selectedIndex < _items.Count)
-                {
-                    var sel = _items[_selectedIndex];
-                    if (sel.Name == "..")
-                    {
-                        _statusMessage = "Cannot copy parent directory reference.";
-                    }
-                    else
-                    {
-                        StorageClipboard.Copy(sel.FullPath, sel.Name, sel.IsDirectory);
-                        _statusMessage = $"Copied '{sel.Name}' to clipboard.";
-                    }
-                }
-            }
-            else if (keyEvent.KeyChar == 'p' || keyEvent.KeyChar == 'P')
-            {
-                string status;
-                bool ok = StorageService.PasteFile(_currentPath, out status);
-                _statusMessage = status;
-                if (ok)
-                {
-                    Refresh();
-                }
-            }
             else if (keyEvent.KeyChar == 'd' || keyEvent.KeyChar == 'D' || keyEvent.Key == ConsoleKeyEx.Delete)
             {
-                if (_selectedIndex >= 0 && _selectedIndex < _items.Count)
+                if (_selectedIndex >= 0 && _selectedIndex < _items.Count && !_items[_selectedIndex].IsDirectory)
                 {
-                    var sel = _items[_selectedIndex];
-                    if (sel.Name != "..")
-                    {
-                        _isConfirmingDelete = true;
-                    }
+                    _isConfirmingDelete = true;
                 }
             }
-            else if (keyEvent.KeyChar == 'o' || keyEvent.KeyChar == 'O' || keyEvent.KeyChar == 'e' || keyEvent.KeyChar == 'E')
+            else if (keyEvent.KeyChar == 'e' || keyEvent.KeyChar == 'E')
             {
-                if (_selectedIndex >= 0 && _selectedIndex < _items.Count)
+                if (_selectedIndex >= 0 && _selectedIndex < _items.Count && !_items[_selectedIndex].IsDirectory)
                 {
                     var sel = _items[_selectedIndex];
-                    if (!sel.IsDirectory)
+                    string content = "";
+                    string stat = "";
+                    bool loaded = false;
+
+                    if (string.Equals(_currentDrive, "RAM:\\", StringComparison.OrdinalIgnoreCase))
                     {
-                        OpenFileInNotepad(desktop, sel);
+                        var memStore = StorageService.GetMemoryStore();
+                        if (memStore != null)
+                        {
+                            for (int m = 0; m < memStore.Count; m++)
+                            {
+                                if (string.Equals(memStore[m].Name, sel.Name, StringComparison.OrdinalIgnoreCase))
+                                {
+                                    content = memStore[m].Content ?? "";
+                                    loaded = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    if (!loaded)
+                    {
+                        loaded = StorageService.LoadFile(sel.Name, out content, out stat);
+                    }
+
+                    if (loaded)
+                    {
+                        var np = desktop.GetApp("notepad") as NotepadApp;
+                        if (np != null)
+                        {
+                            np.OpenDirect(sel.Name, content);
+                            desktop.SetCurrentApp("notepad");
+                        }
                     }
                 }
             }
@@ -438,17 +530,6 @@ namespace WeatherOS.Apps
             else if (keyEvent.Key == ConsoleKeyEx.Escape)
             {
                 desktop.SetCurrentApp("launcher");
-            }
-        }
-
-        private void OpenFileInNotepad(TuiDesktop desktop, FileExplorerItem sel)
-        {
-            string content = StorageService.ReadFileContent(sel.FullPath);
-            var np = desktop.GetApp("notepad") as NotepadApp;
-            if (np != null)
-            {
-                np.OpenDirect(sel.Name, content);
-                desktop.SetCurrentApp("notepad");
             }
         }
 
@@ -484,15 +565,76 @@ namespace WeatherOS.Apps
         {
             _previewFileName = item.Name;
             _previewScroll = 0;
-            string content = StorageService.ReadFileContent(item.FullPath);
-            if (string.IsNullOrEmpty(content))
+            string content;
+            string status;
+
+            // Direct RAM read when browsing RAM drive
+            if (string.Equals(_currentDrive, "RAM:\\", StringComparison.OrdinalIgnoreCase))
             {
-                _previewLines = new string[] { "[Empty or Unreadable Content]" };
+                var memStore = StorageService.GetMemoryStore();
+                if (memStore != null)
+                {
+                    for (int m = 0; m < memStore.Count; m++)
+                    {
+                        if (string.Equals(memStore[m].Name, item.Name, StringComparison.OrdinalIgnoreCase))
+                        {
+                            _previewLines = (memStore[m].Content ?? "").Split('\n');
+                            _isPreviewActive = true;
+                            _statusMessage = $"Previewing RAM:\\{item.Name} ({memStore[m].Content?.Length ?? 0} bytes)";
+                            return;
+                        }
+                    }
+                }
             }
-            else
+
+            if (StorageService.LoadFile(item.Name, out content, out status))
             {
                 _previewLines = content.Split('\n');
             }
+            else
+            {
+                bool isDriveMounted = false;
+                try
+                {
+                    var vfsDrives = VFSManager.GetLogicalDrives();
+                    if (vfsDrives != null)
+                    {
+                        for (int d = 0; d < vfsDrives.Count; d++)
+                        {
+                            if (string.Equals(vfsDrives[d].TrimEnd('\\'), _currentDrive.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase))
+                            {
+                                isDriveMounted = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+                catch { }
+
+                if (isDriveMounted)
+                {
+                    try
+                    {
+                        if (File.Exists(item.FullPath))
+                        {
+                            _previewLines = File.ReadAllLines(item.FullPath);
+                        }
+                        else
+                        {
+                            _previewLines = new string[] { "[Empty or Unreadable File]" };
+                        }
+                    }
+                    catch
+                    {
+                        _previewLines = new string[] { "[Error reading file]" };
+                    }
+                }
+                else
+                {
+                    _previewLines = new string[] { "[Empty or Unreadable File]" };
+                }
+            }
+
             _isPreviewActive = true;
         }
     }

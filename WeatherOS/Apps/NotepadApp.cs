@@ -20,15 +20,13 @@ namespace WeatherOS.Apps
         private TextEditorState _promptEditor = new TextEditorState { AllowMultiline = false, MaxLength = 40 };
         private int _selectedLocationIndex = 0;
 
-        // Unified File Explorer & Open File Dialog State
-        private string _openDialogPath = "RAM:\\";
-        private int _openDialogSelectedItemIndex = 0;
+        // Windows-like Open File Picker State
+        private int _openDialogLocationIndex = 0;
+        private int _openDialogSelectedFileIndex = 0;
         private int _openDialogScrollOffset = 0;
-        private List<FileExplorerItem> _openDialogItems = new List<FileExplorerItem>();
+        private List<StorageFileInfo> _openDialogFiles = new List<StorageFileInfo>();
+        private List<StorageLocation> _cachedLocations = new List<StorageLocation>();
         private int _openPreviousState = 0; // 0=Menu, 1=Editor
-        private bool _isOpenDialogCreatingDir = false;
-        private string _openDialogNewDirName = "";
-        private bool _isOpenDialogConfirmingDelete = false;
 
         public void Draw(TuiDesktop desktop)
         {
@@ -292,194 +290,78 @@ namespace WeatherOS.Apps
                     }
                 }
             }
-            else if (_notepadState == 2) // Unified File Explorer & Open Dialog
+            else if (_notepadState == 2) // Windows-like Open File Dialog
             {
-                // 1. If creating directory
-                if (_isOpenDialogCreatingDir)
-                {
-                    if (keyEvent.Key == ConsoleKeyEx.Escape)
-                    {
-                        _isOpenDialogCreatingDir = false;
-                        _openDialogNewDirName = "";
-                        _lastStatus = "Folder creation cancelled.";
-                    }
-                    else if (keyEvent.Key == ConsoleKeyEx.Enter)
-                    {
-                        string status;
-                        bool ok = StorageService.CreateDirectory(_openDialogPath, _openDialogNewDirName, out status);
-                        _lastStatus = status;
-                        _isOpenDialogCreatingDir = false;
-                        _openDialogNewDirName = "";
-                        RefreshOpenDialogItems();
-                    }
-                    else if (keyEvent.Key == ConsoleKeyEx.Backspace)
-                    {
-                        if (_openDialogNewDirName.Length > 0)
-                        {
-                            _openDialogNewDirName = _openDialogNewDirName.Substring(0, _openDialogNewDirName.Length - 1);
-                        }
-                    }
-                    else if (keyEvent.KeyChar >= 32 && keyEvent.KeyChar <= 126)
-                    {
-                        char c = keyEvent.KeyChar;
-                        if (c != '/' && c != '\\' && c != ':' && c != '*' && c != '?' && c != '"' && c != '<' && c != '>' && c != '|')
-                        {
-                            if (_openDialogNewDirName.Length < 32)
-                            {
-                                _openDialogNewDirName += c;
-                            }
-                        }
-                    }
-                    return;
-                }
-
-                // 2. If confirming delete
-                if (_isOpenDialogConfirmingDelete)
-                {
-                    if (keyEvent.Key == ConsoleKeyEx.Y)
-                    {
-                        if (_openDialogSelectedItemIndex >= 0 && _openDialogSelectedItemIndex < _openDialogItems.Count)
-                        {
-                            var sel = _openDialogItems[_openDialogSelectedItemIndex];
-                            if (sel.Name == "..")
-                            {
-                                _lastStatus = "Cannot delete parent directory reference.";
-                            }
-                            else
-                            {
-                                string stat;
-                                bool ok = StorageService.DeletePath(sel.FullPath, sel.IsDirectory, out stat);
-                                _lastStatus = stat;
-                                RefreshOpenDialogItems();
-                            }
-                        }
-                        _isOpenDialogConfirmingDelete = false;
-                    }
-                    else if (keyEvent.Key == ConsoleKeyEx.N || keyEvent.Key == ConsoleKeyEx.Escape)
-                    {
-                        _isOpenDialogConfirmingDelete = false;
-                        _lastStatus = "Delete cancelled.";
-                    }
-                    return;
-                }
-
-                // 3. Normal navigation & actions
                 if (keyEvent.Key == ConsoleKeyEx.Escape)
                 {
                     _notepadState = _openPreviousState;
                 }
                 else if (keyEvent.Key == ConsoleKeyEx.UpArrow)
                 {
-                    if (_openDialogItems != null && _openDialogItems.Count > 0)
+                    if (_openDialogFiles != null && _openDialogFiles.Count > 0)
                     {
-                        if (_openDialogSelectedItemIndex > 0)
+                        if (_openDialogSelectedFileIndex > 0)
                         {
-                            _openDialogSelectedItemIndex--;
-                            if (_openDialogSelectedItemIndex < _openDialogScrollOffset)
+                            _openDialogSelectedFileIndex--;
+                            if (_openDialogSelectedFileIndex < _openDialogScrollOffset)
                             {
-                                _openDialogScrollOffset = _openDialogSelectedItemIndex;
+                                _openDialogScrollOffset = _openDialogSelectedFileIndex;
                             }
                         }
                     }
                 }
                 else if (keyEvent.Key == ConsoleKeyEx.DownArrow)
                 {
-                    if (_openDialogItems != null && _openDialogItems.Count > 0)
+                    if (_openDialogFiles != null && _openDialogFiles.Count > 0)
                     {
-                        if (_openDialogSelectedItemIndex < _openDialogItems.Count - 1)
+                        if (_openDialogSelectedFileIndex < _openDialogFiles.Count - 1)
                         {
-                            _openDialogSelectedItemIndex++;
-                            if (_openDialogSelectedItemIndex >= _openDialogScrollOffset + 8)
+                            _openDialogSelectedFileIndex++;
+                            if (_openDialogSelectedFileIndex >= _openDialogScrollOffset + 8)
                             {
-                                _openDialogScrollOffset = _openDialogSelectedItemIndex - 7;
+                                _openDialogScrollOffset = _openDialogSelectedFileIndex - 7;
                             }
                         }
                     }
                 }
-                else if (keyEvent.Key == ConsoleKeyEx.Tab)
+                else if (keyEvent.Key == ConsoleKeyEx.Tab || keyEvent.Key == ConsoleKeyEx.RightArrow)
                 {
-                    // Toggle Drive
-                    string curDrive = StorageService.GetDrivePrefix(_openDialogPath);
-                    if (string.Equals(curDrive, "RAM:\\", StringComparison.OrdinalIgnoreCase))
+                    if (_cachedLocations != null && _cachedLocations.Count > 0)
                     {
-                        _openDialogPath = "0:\\";
-                    }
-                    else
-                    {
-                        _openDialogPath = "RAM:\\";
-                    }
-                    RefreshOpenDialogItems();
-                    _lastStatus = $"Switched to {_openDialogPath}";
-                }
-                else if (keyEvent.KeyChar == 'm' || keyEvent.KeyChar == 'M')
-                {
-                    _isOpenDialogCreatingDir = true;
-                    _openDialogNewDirName = "";
-                    _lastStatus = "";
-                }
-                else if (keyEvent.KeyChar == 'c' || keyEvent.KeyChar == 'C')
-                {
-                    if (_openDialogSelectedItemIndex >= 0 && _openDialogSelectedItemIndex < _openDialogItems.Count)
-                    {
-                        var sel = _openDialogItems[_openDialogSelectedItemIndex];
-                        if (sel.Name == "..")
-                        {
-                            _lastStatus = "Cannot copy parent directory reference.";
-                        }
-                        else
-                        {
-                            StorageClipboard.Copy(sel.FullPath, sel.Name, sel.IsDirectory);
-                            _lastStatus = $"Copied '{sel.Name}' to clipboard.";
-                        }
+                        _openDialogLocationIndex = (_openDialogLocationIndex + 1) % _cachedLocations.Count;
+                        RefreshOpenDialogFiles();
                     }
                 }
-                else if (keyEvent.KeyChar == 'p' || keyEvent.KeyChar == 'P')
+                else if (keyEvent.Key == ConsoleKeyEx.LeftArrow)
                 {
-                    string status;
-                    bool ok = StorageService.PasteFile(_openDialogPath, out status);
-                    _lastStatus = status;
-                    if (ok)
+                    if (_cachedLocations != null && _cachedLocations.Count > 0)
                     {
-                        RefreshOpenDialogItems();
-                    }
-                }
-                else if (keyEvent.KeyChar == 'd' || keyEvent.KeyChar == 'D' || keyEvent.Key == ConsoleKeyEx.Delete)
-                {
-                    if (_openDialogSelectedItemIndex >= 0 && _openDialogSelectedItemIndex < _openDialogItems.Count)
-                    {
-                        var sel = _openDialogItems[_openDialogSelectedItemIndex];
-                        if (sel.Name != "..")
-                        {
-                            _isOpenDialogConfirmingDelete = true;
-                        }
+                        _openDialogLocationIndex = (_openDialogLocationIndex - 1 + _cachedLocations.Count) % _cachedLocations.Count;
+                        RefreshOpenDialogFiles();
                     }
                 }
                 else if (keyEvent.Key == ConsoleKeyEx.Enter)
                 {
-                    if (_openDialogItems != null && _openDialogItems.Count > 0 &&
-                        _openDialogSelectedItemIndex >= 0 && _openDialogSelectedItemIndex < _openDialogItems.Count)
+                    if (_openDialogFiles != null && _openDialogFiles.Count > 0 &&
+                        _openDialogSelectedFileIndex >= 0 && _openDialogSelectedFileIndex < _openDialogFiles.Count)
                     {
-                        var picked = _openDialogItems[_openDialogSelectedItemIndex];
-                        if (picked.IsDirectory)
+                        var picked = _openDialogFiles[_openDialogSelectedFileIndex];
+                        string content;
+                        string status;
+                        bool ok = StorageService.LoadFileFromLocation(picked.Name, picked.LocationId, out content, out status);
+                        _lastStatus = status;
+                        if (ok)
                         {
-                            _openDialogPath = picked.FullPath;
-                            if (!_openDialogPath.EndsWith("\\")) _openDialogPath += "\\";
-                            RefreshOpenDialogItems();
-                        }
-                        else
-                        {
-                            string content = StorageService.ReadFileContent(picked.FullPath);
                             _notepadFilename = picked.Name;
                             _editorState.Text = content ?? "";
                             _editorState.CursorPos = _editorState.Text.Length;
                             _editorState.ClearSelection();
                             _notepadState = 1; // Opens directly in editor!
-                            _lastStatus = $"Opened {_notepadFilename} [OK]";
                         }
                     }
                     else
                     {
-                        _lastStatus = "No file available to open in this directory.";
+                        _lastStatus = "No file available to open on this drive.";
                     }
                 }
             }
@@ -523,31 +405,38 @@ namespace WeatherOS.Apps
 
         private void OpenFileDialogStart()
         {
-            if (string.IsNullOrEmpty(_openDialogPath))
+            _cachedLocations = StorageService.GetStorageLocations();
+            if (_cachedLocations == null || _cachedLocations.Count == 0)
             {
-                _openDialogPath = "RAM:\\";
+                _cachedLocations = new List<StorageLocation>();
             }
-            _isOpenDialogCreatingDir = false;
-            _isOpenDialogConfirmingDelete = false;
-            _openDialogNewDirName = "";
-            RefreshOpenDialogItems();
+            if (_openDialogLocationIndex >= _cachedLocations.Count)
+            {
+                _openDialogLocationIndex = 0;
+            }
+            RefreshOpenDialogFiles();
             _notepadState = 2;
         }
 
-        private void RefreshOpenDialogItems()
+        private void RefreshOpenDialogFiles()
         {
-            _openDialogItems = StorageService.GetDirectoryEntries(_openDialogPath);
-            _openDialogSelectedItemIndex = 0;
+            string locId = "ram";
+            if (_cachedLocations != null && _openDialogLocationIndex >= 0 && _openDialogLocationIndex < _cachedLocations.Count)
+            {
+                locId = _cachedLocations[_openDialogLocationIndex].Id;
+            }
+            _openDialogFiles = StorageService.GetFilesForLocation(locId);
+            _openDialogSelectedFileIndex = 0;
             _openDialogScrollOffset = 0;
 
-            if (_openDialogItems != null && !string.IsNullOrEmpty(_notepadFilename))
+            if (_openDialogFiles != null && !string.IsNullOrEmpty(_notepadFilename))
             {
-                for (int i = 0; i < _openDialogItems.Count; i++)
+                for (int i = 0; i < _openDialogFiles.Count; i++)
                 {
-                    if (string.Equals(_openDialogItems[i].Name, _notepadFilename, StringComparison.OrdinalIgnoreCase))
+                    if (string.Equals(_openDialogFiles[i].Name, _notepadFilename, StringComparison.OrdinalIgnoreCase))
                     {
-                        _openDialogSelectedItemIndex = i;
-                        if (_openDialogSelectedItemIndex >= 8) _openDialogScrollOffset = _openDialogSelectedItemIndex - 7;
+                        _openDialogSelectedFileIndex = i;
+                        if (_openDialogSelectedFileIndex >= 8) _openDialogScrollOffset = _openDialogSelectedFileIndex - 7;
                         break;
                     }
                 }
@@ -556,13 +445,18 @@ namespace WeatherOS.Apps
 
         private void DrawOpenFileDialog(TuiDesktop desktop)
         {
-            var win = desktop.CreateWindow("OPEN FILE  |  STORAGE & FILE EXPLORER", WindowSize.FullScreen);
+            var win = desktop.CreateWindow("OPEN FILE  |  WINDOWS FILE PICKER", WindowSize.FullScreen);
 
             // Header / Look In:
-            string driveBox = $"[ < {_openDialogPath} > ]";
+            string driveName = "RAM Virtual Store";
+            if (_cachedLocations != null && _openDialogLocationIndex >= 0 && _openDialogLocationIndex < _cachedLocations.Count)
+            {
+                driveName = _cachedLocations[_openDialogLocationIndex].GetDescription();
+            }
+            string driveBox = $"[ < {driveName} > ]";
             if (driveBox.Length > 44) driveBox = driveBox.Substring(0, 41) + "... > ]";
 
-            win.WriteRow(1, "Path: " + driveBox + "  [Tab: Switch Drive]", ConsoleColor.Yellow, 2);
+            win.WriteRow(1, "Look in: " + driveBox + "  [Tab: Switch Drive]", ConsoleColor.Yellow, 2);
 
             // File table header
             string th = "  Name                    Size        Type            Location        ";
@@ -571,28 +465,28 @@ namespace WeatherOS.Apps
 
             // File list (8 visible rows: relY = 4 to 11)
             int visibleRows = 8;
-            if (_openDialogItems == null || _openDialogItems.Count == 0)
+            if (_openDialogFiles == null || _openDialogFiles.Count == 0)
             {
-                win.WriteRow(5, "(No files or folders found. Press [M] to create folder, [Tab] for Drive)", ConsoleColor.Yellow, 2);
+                win.WriteRow(5, "(No files found on this drive. Press [Tab] to switch drive)", ConsoleColor.Yellow, 2);
             }
             else
             {
                 for (int r = 0; r < visibleRows; r++)
                 {
-                    int itemIdx = _openDialogScrollOffset + r;
+                    int fileIdx = _openDialogScrollOffset + r;
 
-                    if (itemIdx < _openDialogItems.Count)
+                    if (fileIdx < _openDialogFiles.Count)
                     {
-                        var it = _openDialogItems[itemIdx];
-                        bool isSelected = (itemIdx == _openDialogSelectedItemIndex);
+                        var f = _openDialogFiles[fileIdx];
+                        bool isSelected = (fileIdx == _openDialogSelectedFileIndex);
 
-                        string namePart = it.Name ?? "";
+                        string namePart = f.Name;
                         if (namePart.Length > 20) namePart = namePart.Substring(0, 17) + "...";
 
-                        string sizePart = it.IsDirectory ? "<DIR>" : FormatFileSize(it.Size);
-                        string typePart = it.IsDirectory ? "Folder" : FormatFileType(it.Name);
-                        string locPart = it.FullPath ?? "";
-                        if (locPart.Length > 16) locPart = locPart.Substring(0, 14) + "..";
+                        string sizePart = FormatFileSize(f.Size);
+                        string typePart = FormatFileType(f.Name);
+                        string locPart = f.LocationName;
+                        if (locPart.Length > 14) locPart = locPart.Substring(0, 12) + "..";
 
                         string rowText = namePart.PadRight(22) + sizePart.PadRight(12) + typePart.PadRight(16) + locPart.PadRight(16);
                         win.WriteSelectionRow(4 + r, rowText, isSelected, 1);
@@ -602,29 +496,14 @@ namespace WeatherOS.Apps
 
             win.WriteSeparator(12);
 
-            // Bottom Selected File Box or Modal Prompts
-            if (_isOpenDialogCreatingDir)
+            // Bottom Selected File Box
+            string selectedFileName = "";
+            if (_openDialogFiles != null && _openDialogSelectedFileIndex >= 0 && _openDialogSelectedFileIndex < _openDialogFiles.Count)
             {
-                win.WriteRow(13, $"CREATE FOLDER: [ {_openDialogNewDirName}_ ]", ConsoleColor.Green, 2);
-                win.WriteRow(14, "Type new folder name and press [Enter] to create, or [ESC] to cancel.", ConsoleColor.White, 2);
+                selectedFileName = _openDialogFiles[_openDialogSelectedFileIndex].Name;
             }
-            else if (_isOpenDialogConfirmingDelete && _openDialogSelectedItemIndex >= 0 && _openDialogSelectedItemIndex < _openDialogItems.Count)
-            {
-                var sel = _openDialogItems[_openDialogSelectedItemIndex];
-                win.WriteRow(13, $"CONFIRM DELETE: '{sel.Name}'?", ConsoleColor.Red, 2);
-                win.WriteRow(14, "Press [Y] to permanently delete or [N] to cancel.", ConsoleColor.White, 2);
-            }
-            else
-            {
-                string selectedFileName = "";
-                if (_openDialogItems != null && _openDialogSelectedItemIndex >= 0 && _openDialogSelectedItemIndex < _openDialogItems.Count)
-                {
-                    selectedFileName = _openDialogItems[_openDialogSelectedItemIndex].Name;
-                }
-                win.WriteRow(13, $"File name:     [ {selectedFileName.PadRight(47)} ]", ConsoleColor.Yellow, 2);
-                string clipInfo = StorageClipboard.HasData ? $"Clipboard: {StorageClipboard.CopiedName}" : "Clipboard: empty";
-                win.WriteRow(14, $"Tools: [M] New Folder | [C] Copy | [P] Paste | [D] Delete | {clipInfo}", ConsoleColor.Cyan, 2);
-            }
+            win.WriteRow(13, $"File name:     [ {selectedFileName.PadRight(47)} ]", ConsoleColor.Yellow, 2);
+            win.WriteRow(14, "Files of type: [ All Files (*.*, *.txt, *.ini, *.log)          ]", ConsoleColor.Yellow, 2);
 
             if (!string.IsNullOrEmpty(_lastStatus))
             {
@@ -632,18 +511,7 @@ namespace WeatherOS.Apps
             }
 
             // Status / instructions footer bar
-            if (_isOpenDialogCreatingDir)
-            {
-                win.WriteFooter("[Enter] Confirm Creation  |  [ESC] Cancel", ConsoleColor.Yellow);
-            }
-            else if (_isOpenDialogConfirmingDelete)
-            {
-                win.WriteFooter("[Y] Confirm Delete  |  [N/ESC] Cancel", ConsoleColor.Yellow);
-            }
-            else
-            {
-                win.WriteFooter("[Enter] Open/Browse  |  [M] New Folder  |  [C] Copy  |  [P] Paste  |  [D] Del  |  [ESC] Cancel", ConsoleColor.Yellow);
-            }
+            win.WriteFooter("[Up/Dn] Select  |  [Tab] Drive  |  [Enter] Open  |  [ESC] Cancel", ConsoleColor.Yellow);
         }
 
         private static string FormatFileSize(long bytes)

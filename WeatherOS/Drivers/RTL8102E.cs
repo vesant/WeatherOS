@@ -165,37 +165,39 @@ namespace Cosmos.HAL.Network
             return Phase3DescriptorRings();
         }
 
+        public const int DESC_COUNT = 16;
+
         private bool Phase3DescriptorRings()
         {
             Console.WriteLine("r8102e: initializing dma descriptor rings...");
 
-            // Allocate 4 descriptors for RX and TX (4 * 16 = 64 bytes), aligned to 256
-            rxDescBlock = new ManagedMemoryBlock(64, 256);
-            txDescBlock = new ManagedMemoryBlock(64, 256);
+            // Allocate 16 descriptors for RX and TX (16 * 16 = 256 bytes), aligned to 256
+            rxDescBlock = new ManagedMemoryBlock(DESC_COUNT * 16, 256);
+            txDescBlock = new ManagedMemoryBlock(DESC_COUNT * 16, 256);
 
-            // Allocate RX Buffers (4 buffers of 1536 bytes -> aligned to 8 bytes)
-            rxBuffers = new ManagedMemoryBlock[4];
-            for (int i = 0; i < 4; i++)
+            // Allocate RX Buffers (16 buffers of 1536 bytes -> aligned to 8 bytes)
+            rxBuffers = new ManagedMemoryBlock[DESC_COUNT];
+            for (int i = 0; i < DESC_COUNT; i++)
             {
                 rxBuffers[i] = new ManagedMemoryBlock(1536, 8);
             }
 
-            // Allocate TX Buffers (4 buffers of 1536 bytes -> aligned to 8 bytes)
-            txBuffers = new ManagedMemoryBlock[4];
-            for (int i = 0; i < 4; i++)
+            // Allocate TX Buffers (16 buffers of 1536 bytes -> aligned to 8 bytes)
+            txBuffers = new ManagedMemoryBlock[DESC_COUNT];
+            for (int i = 0; i < DESC_COUNT; i++)
             {
                 txBuffers[i] = new ManagedMemoryBlock(1536, 8);
             }
 
             Console.WriteLine("r8102e: setting up rx ring in ram...");
-            for (int i = 0; i < 4; i++)
+            for (int i = 0; i < DESC_COUNT; i++)
             {
                 uint offset = (uint)(i * 16);
                 
                 // Command/Status: 1536 buffer size (bits 0-13) | OWN bit (bit 31)
                 // If it's the last descriptor, set EOR bit (bit 30)
                 uint cmdStatus = 1536 | 0x80000000;
-                if (i == 3) cmdStatus |= 0x40000000;
+                if (i == DESC_COUNT - 1) cmdStatus |= 0x40000000;
                 
                 Write32(rxDescBlock, offset, cmdStatus);
                 Write32(rxDescBlock, offset + 4, 0); // Vlan
@@ -204,10 +206,10 @@ namespace Cosmos.HAL.Network
             }
 
             Console.WriteLine("r8102e: setting up tx ring in ram...");
-            for (int i = 0; i < 4; i++)
+            for (int i = 0; i < DESC_COUNT; i++)
             {
                 uint offset = (uint)(i * 16);
-                uint txCmd = (i == 3) ? 0x40000000u : 0u;
+                uint txCmd = (i == DESC_COUNT - 1) ? 0x40000000u : 0u;
                 Write32(txDescBlock, offset, txCmd);
                 Write32(txDescBlock, offset + 4, 0); // Vlan
                 Write32(txDescBlock, offset + 8, (uint)txBuffers[i].Offset); // Buffer Address Low
@@ -301,7 +303,7 @@ namespace Cosmos.HAL.Network
             uint descOffset = (uint)(currentTxDesc * 16);
             
             // Wait briefly for descriptor if still owned by NIC
-            int spins = 50;
+            int spins = 500;
             while ((Read32(txDescBlock, descOffset) & 0x80000000) != 0 && spins > 0)
             {
                 mmio.Bytes[0x38] = 0x40; // Kick doorbell in case previous poll was missed
@@ -332,7 +334,7 @@ namespace Cosmos.HAL.Network
 
             // CommandStatus: Length | OWN (bit 31) | FS (bit 29) | LS (bit 28)
             uint newCmdStatus = txLength | 0x80000000 | 0x20000000 | 0x10000000;
-            if (currentTxDesc == 3) newCmdStatus |= 0x40000000; // Preserve EOR bit
+            if (currentTxDesc == DESC_COUNT - 1) newCmdStatus |= 0x40000000; // Preserve EOR bit
             
             Write32(txDescBlock, descOffset, newCmdStatus);
             
@@ -343,7 +345,7 @@ namespace Cosmos.HAL.Network
             mmio.Bytes[0x38] = 0x40;
             mmio.Bytes[0x38] = 0x40; // Double kick (Linux 8168 doorbell hack)
             
-            currentTxDesc = (currentTxDesc + 1) % 4;
+            currentTxDesc = (currentTxDesc + 1) % DESC_COUNT;
             return true;
         }
 
@@ -355,8 +357,8 @@ namespace Cosmos.HAL.Network
         {
             if (rxDescBlock == null || txDescBlock == null || mmio == null) return;
 
-            // 1. Process RX Ring (at most 4 descriptors per poll)
-            for (int d = 0; d < 4; d++)
+            // 1. Process RX Ring (up to DESC_COUNT descriptors per poll)
+            for (int d = 0; d < DESC_COUNT; d++)
             {
                 uint offset = (uint)(currentRxDesc * 16);
                 uint cmdStatus = Read32(rxDescBlock, offset);
@@ -396,15 +398,15 @@ namespace Cosmos.HAL.Network
                 
                 // Give descriptor back to MAC
                 uint newCmdStatus = 1536 | 0x80000000;
-                if (currentRxDesc == 3) newCmdStatus |= 0x40000000; // Preserve EOR bit on last desc
+                if (currentRxDesc == DESC_COUNT - 1) newCmdStatus |= 0x40000000; // Preserve EOR bit on last desc
                 
                 Write32(rxDescBlock, offset, newCmdStatus);
                 
-                currentRxDesc = (currentRxDesc + 1) % 4;
+                currentRxDesc = (currentRxDesc + 1) % DESC_COUNT;
             }
 
             // 2. Transmit Watchdog: check if any TX descriptor is pending and kick TPPOLL
-            for (int t = 0; t < 4; t++)
+            for (int t = 0; t < DESC_COUNT; t++)
             {
                 if ((Read32(txDescBlock, (uint)(t * 16)) & 0x80000000) != 0)
                 {
@@ -422,6 +424,12 @@ namespace Cosmos.HAL.Network
                 
                 // Acknowledge by writing the exact same bits back to ISR
                 mmio.Words[0x3E] = status;
+
+                // If RDU (bit 5: 0x0020) or RXOVW (bit 4: 0x0010) occurred, re-arm the receiver!
+                if ((status & 0x0030) != 0)
+                {
+                    mmio.Bytes[0x37] = 0x0C;
+                }
             }
         }
     }
