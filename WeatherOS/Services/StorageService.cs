@@ -466,34 +466,47 @@ namespace WeatherOS.Services
             filename = NormalizeFilename(filename);
             if (data == null) data = new byte[0];
 
-            PutMemoryBinaryFile(filename, data);
-
             if (string.Equals(locationId, "ram", StringComparison.OrdinalIgnoreCase))
             {
+                PutMemoryBinaryFile(filename, data);
                 status = $"Saved to RAM Storage: {filename} ({data.Length} bytes) [OK]";
                 return true;
             }
 
+            bool vfsSaved = false;
+            try
+            {
+                if (Directory.Exists("0:\\"))
+                {
+                    File.WriteAllBytes("0:\\" + filename, data);
+                    vfsSaved = true;
+                }
+            }
+            catch { }
+
             string diskName;
             var targetDev = GetTargetDisk(locationId, out diskName);
-            if (targetDev == null)
+            string directStatus = "";
+            bool directOk = false;
+            if (targetDev != null)
             {
-                status = $"[ERR] No physical drive detected. Saved to RAM Virtual Store.";
-                return false;
+                directOk = DiskWipeService.WriteBinaryFileDirectToFat32(targetDev, filename, data, out directStatus);
             }
 
-            string directStatus;
-            bool directOk = DiskWipeService.WriteBinaryFileDirectToFat32(targetDev, filename, data, out directStatus);
-            if (directOk)
+            // Only cache in RAM if small (< 2MB) or if physical write failed
+            if (!vfsSaved && !directOk)
             {
-                status = $"Saved to {diskName}: {filename} ({data.Length} bytes) [OK]";
-                return true;
-            }
-            else
-            {
+                PutMemoryBinaryFile(filename, data);
                 status = $"Disk save failed: {directStatus}. File saved in RAM temporary store.";
                 return false;
             }
+            else if (data.Length < 2 * 1024 * 1024)
+            {
+                PutMemoryBinaryFile(filename, data);
+            }
+
+            status = $"Saved to {diskName}: {filename} ({data.Length} bytes) [OK]";
+            return true;
         }
 
         public static bool LoadBinaryFileFromLocation(string filename, string locationId, out byte[] data, out string status)
@@ -650,6 +663,34 @@ namespace WeatherOS.Services
                             if (!alreadyInList)
                             {
                                 files.Add($"{df} [DISK]");
+                            }
+                        }
+                    }
+                }
+            }
+            catch { }
+            try
+            {
+                if (Directory.Exists("0:\\"))
+                {
+                    string[] vFiles = Directory.GetFiles("0:\\");
+                    if (vFiles != null)
+                    {
+                        for (int i = 0; i < vFiles.Length; i++)
+                        {
+                            string fname = Path.GetFileName(vFiles[i]);
+                            bool alreadyInList = false;
+                            for (int j = 0; j < files.Count; j++)
+                            {
+                                if (files[j].StartsWith(fname, StringComparison.OrdinalIgnoreCase))
+                                {
+                                    alreadyInList = true;
+                                    break;
+                                }
+                            }
+                            if (!alreadyInList)
+                            {
+                                files.Add($"{fname} [DISK-VFS]");
                             }
                         }
                     }

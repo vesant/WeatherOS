@@ -762,36 +762,22 @@ namespace WeatherOS.Services
                 var physDrives = DiskWipeService.GetPhysicalDrives();
                 BlockDevice dev = (physDrives != null && physDrives.Count > 0) ? physDrives[0].Device : null;
 
-                // 1. Rollback Backup: Backup existing kernel to WeatherOS.bak
+                // 1. Rollback Backup: Backup existing kernel to WeatherOS.bak safely
                 try
                 {
                     if (File.Exists("0:\\boot\\WeatherOS.bin"))
                     {
-                        byte[] existingKernel = File.ReadAllBytes("0:\\boot\\WeatherOS.bin");
-                        if (existingKernel != null && existingKernel.Length > 0)
-                        {
-                            File.WriteAllBytes("0:\\boot\\WeatherOS.bak", existingKernel);
-                        }
+                        try { File.Copy("0:\\boot\\WeatherOS.bin", "0:\\boot\\WeatherOS.bak", true); }
+                        catch { }
                     }
                 }
                 catch { }
-
-                if (dev != null)
-                {
-                    string existingStr;
-                    string rStat;
-                    if (DiskWipeService.ReadFileDirectFromFat32(dev, "WeatherOS.bin", out existingStr, out rStat))
-                    {
-                        string bStat;
-                        DiskWipeService.WriteFileDirectToFat32(dev, "WeatherOS.bak", existingStr, out bStat);
-                    }
-                }
 
                 // 2. Extract Kernel Binary and deploy to 0:\boot\WeatherOS.bin
                 byte[] kernelToDeploy = packageData;
                 if (isCumulativePackage)
                 {
-                    // Extract embedded kernel payload from package container or generate optimized binary
+                    // Extract embedded kernel payload from package container with zero string allocation
                     kernelToDeploy = ExtractKernelFromPackage(packageData);
                 }
 
@@ -804,12 +790,20 @@ namespace WeatherOS.Services
                 }
                 catch { }
 
+                // Save package file to disk for user records and offline reinstall
+                try
+                {
+                    if (Directory.Exists("0:\\"))
+                    {
+                        File.WriteAllBytes("0:\\" + fileName, packageData);
+                        if (!Directory.Exists("0:\\Updates")) Directory.CreateDirectory("0:\\Updates");
+                        File.WriteAllBytes("0:\\Updates\\" + fileName, packageData);
+                    }
+                }
+                catch { }
+
                 if (dev != null)
                 {
-                    string wStat;
-                    bool directOk = DiskWipeService.WriteBinaryFileDirectToFat32(dev, "WeatherOS.bin", kernelToDeploy, out wStat);
-                    if (directOk) written = true;
-
                     // Safe sector-by-sector deployment to LBA 64 without touching MBR (LBA 0) or Stage 2 (LBA 1..8)
                     if (kernelToDeploy != null && kernelToDeploy.Length >= 512)
                     {
@@ -818,7 +812,7 @@ namespace WeatherOS.Services
                         if (validMb)
                         {
                             ulong totalSec = (ulong)((kernelToDeploy.Length + 511) / 512);
-                            if (totalSec > 16541) totalSec = 16541; // Kernel partition boundary safety
+                            if (totalSec > 32768) totalSec = 32768; // Kernel partition boundary safety (expanded from 16541)
 
                             ulong curSec = 0;
                             byte[] chunk = new byte[64 * 512]; // 32 KB chunk
@@ -847,24 +841,74 @@ namespace WeatherOS.Services
                                     dev.WriteBlock(0, 1, ref mbrCopy);
                                 }
                             }
+                            written = true;
                         }
                     }
                 }
 
-                // In Memory / RAM Mode, deployment to memory store is always guaranteed
-                StorageService.PutMemoryBinaryFile("WeatherOS.bin", kernelToDeploy);
-                StorageService.PutMemoryBinaryFile(fileName, packageData);
+                // In Live / RAM Mode only, deploy to memory store (avoids exhausting RAM when booted from disk)
+                if (!IsBootedFromInstalledDisk() && dev == null)
+                {
+                    StorageService.PutMemoryBinaryFile("WeatherOS.bin", kernelToDeploy);
+                    StorageService.PutMemoryBinaryFile(fileName, packageData);
+                }
                 written = true;
 
-                // 3. Update Component 2: Apps Manifest (Digital Clock v3.0 Network NTP / RTC Hybrid)
-                string appsManifest =
-                    "[WeatherOS_Apps]\n" +
-                    "ClockApp_Version=3.0\n" +
-                    "ClockApp_Engine=Network_NTP_HTTP_RTC_Hybrid\n" +
-                    "ClockApp_Status=Upgraded_NtpSync_HttpDateFallback_ManualCalibration\n" +
-                    "SettingsApp_Version=3.1\n" +
-                    "SystemInfoApp_Version=3.1\n" +
-                    "NetTransferApp_Version=2.0\n";
+                // 3. Extract and Update Apps Manifest
+                string appsManifest = null;
+                string manifestUpdate = null;
+
+                if (isCumulativePackage)
+                {
+                    try
+                    {
+                        byte[] secAppsMarker = new byte[] { (byte)'-', (byte)'-', (byte)'-', (byte)'S', (byte)'E', (byte)'C', (byte)'T', (byte)'I', (byte)'O', (byte)'N', (byte)':', (byte)'A', (byte)'P', (byte)'P', (byte)'S', (byte)'-', (byte)'-', (byte)'-' };
+                        byte[] secManifestMarker = new byte[] { (byte)'-', (byte)'-', (byte)'-', (byte)'S', (byte)'E', (byte)'C', (byte)'T', (byte)'I', (byte)'O', (byte)'N', (byte)':', (byte)'M', (byte)'A', (byte)'N', (byte)'I', (byte)'F', (byte)'E', (byte)'S', (byte)'T', (byte)'-', (byte)'-', (byte)'-' };
+                        byte[] secEndMarker = new byte[] { (byte)'-', (byte)'-', (byte)'-', (byte)'S', (byte)'E', (byte)'C', (byte)'T', (byte)'I', (byte)'O', (byte)'N', (byte)':', (byte)'E', (byte)'N', (byte)'D', (byte)'-', (byte)'-', (byte)'-' };
+
+                        int scanStart = (packageData.Length > 65536) ? (packageData.Length - 65536) : 0;
+                        int aIdx = FindByteSequence(packageData, secAppsMarker, scanStart, packageData.Length - scanStart);
+                        int mIdx = FindByteSequence(packageData, secManifestMarker, scanStart, packageData.Length - scanStart);
+                        int eIdx = FindByteSequence(packageData, secEndMarker, scanStart, packageData.Length - scanStart);
+
+                        if (aIdx >= 0 && mIdx > aIdx)
+                        {
+                            int aStart = aIdx + secAppsMarker.Length;
+                            while (aStart < mIdx && (packageData[aStart] == 0x0D || packageData[aStart] == 0x0A)) aStart++;
+                            int aEnd = mIdx;
+                            while (aEnd > aStart && (packageData[aEnd - 1] == 0x0D || packageData[aEnd - 1] == 0x0A)) aEnd--;
+                            if (aEnd > aStart)
+                            {
+                                appsManifest = Encoding.ASCII.GetString(packageData, aStart, aEnd - aStart);
+                            }
+                        }
+
+                        if (mIdx >= 0 && eIdx > mIdx)
+                        {
+                            int mStart = mIdx + secManifestMarker.Length;
+                            while (mStart < eIdx && (packageData[mStart] == 0x0D || packageData[mStart] == 0x0A)) mStart++;
+                            int mEnd = eIdx;
+                            while (mEnd > mStart && (packageData[mEnd - 1] == 0x0D || packageData[mEnd - 1] == 0x0A)) mEnd--;
+                            if (mEnd > mStart)
+                            {
+                                manifestUpdate = Encoding.ASCII.GetString(packageData, mStart, mEnd - mStart);
+                            }
+                        }
+                    }
+                    catch { }
+                }
+
+                if (string.IsNullOrEmpty(appsManifest))
+                {
+                    appsManifest =
+                        "[WeatherOS_Apps]\n" +
+                        "ClockApp_Version=3.0\n" +
+                        "ClockApp_Engine=Network_NTP_HTTP_RTC_Hybrid\n" +
+                        "ClockApp_Status=Upgraded_NtpSync_HttpDateFallback_ManualCalibration\n" +
+                        "SettingsApp_Version=3.1\n" +
+                        "SystemInfoApp_Version=3.1\n" +
+                        "NetTransferApp_Version=2.0\n";
+                }
 
                 try
                 {
@@ -879,18 +923,21 @@ namespace WeatherOS.Services
                 }
 
                 // 4. Update Component 3: System Version Manifest & Commits Sync
-                string manifestUpdate =
-                    "[WeatherOS]\n" +
-                    "Version=3.1.3-release\n" +
-                    "BuildDate=2026-10-17\n" +
-                    "Branch=32bit\n" +
-                    "LatestCommit=72cd642\n" +
-                    "CommitTitle=Network time synchronization, manual clock calibration, and bootloader safe update\n" +
-                    $"LastUpdateFile={fileName}\n" +
-                    $"LastUpdateChecksum={crcStr}\n" +
-                    "BackupAvailable=true\n" +
-                    "BootTarget=0:\\boot\\WeatherOS.bin\n" +
-                    "Status=Updated_Cumulative_ClockFix\n";
+                if (string.IsNullOrEmpty(manifestUpdate))
+                {
+                    manifestUpdate =
+                        "[WeatherOS]\n" +
+                        "Version=3.1.3-release\n" +
+                        "BuildDate=2026-10-17\n" +
+                        "Branch=32bit\n" +
+                        "LatestCommit=72cd642\n" +
+                        "CommitTitle=Network time synchronization, manual clock calibration, and bootloader safe update\n" +
+                        $"LastUpdateFile={fileName}\n" +
+                        $"LastUpdateChecksum={crcStr}\n" +
+                        "BackupAvailable=true\n" +
+                        "BootTarget=0:\\boot\\WeatherOS.bin\n" +
+                        "Status=Updated_Cumulative\n";
+                }
 
                 try
                 {
@@ -909,8 +956,8 @@ namespace WeatherOS.Services
                 {
                     statusMessage = $"Cumulative System Update Applied ({fileName}, CRC {crcStr})!\n" +
                                     "  [1] Kernel Binary   : Deployed & verified (Safety backup at 0:\\boot\\WeatherOS.bak)\n" +
-                                    "  [2] Digital Clock   : Upgraded v3.0 (Network NTP / HTTP sync + manual calibration)\n" +
-                                    "  [3] Control Panel   : Settings updated with 12h/24h toggle & timezone persistence\n" +
+                                    "  [2] System Apps     : Upgraded manifest deployed to 0:\\system\\apps.ini\n" +
+                                    "  [3] Offline Storage : Package saved to 0:\\ and 0:\\Updates\\\n" +
                                     "  [OK] Bootloader, MBR, and Stage 2 fully protected. User settings preserved.";
                 }
                 else
@@ -926,21 +973,68 @@ namespace WeatherOS.Services
             }
         }
 
+        private static int FindByteSequence(byte[] data, byte[] pattern, int startIdx, int maxScan)
+        {
+            if (data == null || pattern == null || pattern.Length == 0 || data.Length < pattern.Length) return -1;
+            int limit = startIdx + maxScan;
+            if (limit > data.Length) limit = data.Length;
+            int patLen = pattern.Length;
+            for (int i = startIdx; i <= limit - patLen; i++)
+            {
+                bool match = true;
+                for (int j = 0; j < patLen; j++)
+                {
+                    if (data[i + j] != pattern[j])
+                    {
+                        match = false;
+                        break;
+                    }
+                }
+                if (match) return i;
+            }
+            return -1;
+        }
+
         private static byte[] ExtractKernelFromPackage(byte[] pkgData)
         {
+            if (pkgData == null || pkgData.Length < 512) return GenerateKernelBootImage();
             try
             {
-                string text = Encoding.ASCII.GetString(pkgData);
-                int secStart = text.IndexOf("---SECTION:KERNEL---");
-                int secEnd = text.IndexOf("---SECTION:APPS---");
-                if (secStart >= 0 && secEnd > secStart)
+                byte[] secKernel = new byte[] { (byte)'-', (byte)'-', (byte)'-', (byte)'S', (byte)'E', (byte)'C', (byte)'T', (byte)'I', (byte)'O', (byte)'N', (byte)':', (byte)'K', (byte)'E', (byte)'R', (byte)'N', (byte)'E', (byte)'L', (byte)'-', (byte)'-', (byte)'-' };
+                byte[] secApps = new byte[] { (byte)'-', (byte)'-', (byte)'-', (byte)'S', (byte)'E', (byte)'C', (byte)'T', (byte)'I', (byte)'O', (byte)'N', (byte)':', (byte)'A', (byte)'P', (byte)'P', (byte)'S', (byte)'-', (byte)'-', (byte)'-' };
+
+                int kIdx = FindByteSequence(pkgData, secKernel, 0, 4096);
+                if (kIdx >= 0)
                 {
-                    int bodyStart = secStart + 21;
-                    if (bodyStart < secEnd)
+                    int bodyStart = kIdx + secKernel.Length;
+                    while (bodyStart < pkgData.Length && (pkgData[bodyStart] == 0x0D || pkgData[bodyStart] == 0x0A))
                     {
-                        byte[] extracted = new byte[secEnd - bodyStart];
-                        Array.Copy(pkgData, bodyStart, extracted, 0, extracted.Length);
-                        if (extracted.Length > 16) return extracted;
+                        bodyStart++;
+                    }
+
+                    // Search for ---SECTION:APPS--- starting from near the end (last 65536 bytes)
+                    int scanStart = (pkgData.Length > 65536) ? (pkgData.Length - 65536) : bodyStart;
+                    int aIdx = FindByteSequence(pkgData, secApps, scanStart, pkgData.Length - scanStart);
+                    if (aIdx < 0)
+                    {
+                        aIdx = FindByteSequence(pkgData, secApps, bodyStart, pkgData.Length - bodyStart);
+                    }
+
+                    if (aIdx > bodyStart)
+                    {
+                        int bodyEnd = aIdx;
+                        while (bodyEnd > bodyStart && (pkgData[bodyEnd - 1] == 0x0D || pkgData[bodyEnd - 1] == 0x0A))
+                        {
+                            bodyEnd--;
+                        }
+
+                        int kLen = bodyEnd - bodyStart;
+                        if (kLen >= 512)
+                        {
+                            byte[] extracted = new byte[kLen];
+                            Array.Copy(pkgData, bodyStart, extracted, 0, kLen);
+                            return extracted;
+                        }
                     }
                 }
             }

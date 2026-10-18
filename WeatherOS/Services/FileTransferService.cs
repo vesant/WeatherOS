@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Text;
 using Cosmos.HAL;
 using Cosmos.HAL.Network;
@@ -393,9 +394,29 @@ namespace WeatherOS.Services
                     byte[] fileData = new byte[saveLen];
                     Array.Copy(_rxBuffer, 0, fileData, 0, saveLen);
 
-                    string saveStatus;
-                    bool saved = StorageService.SaveBinaryFileToLocation(CurrentFileName, fileData, "disk0", out saveStatus);
+                    string saveStatus = "";
+                    bool saved = false;
 
+                    // 1. Direct write to VFS 0:\ root and 0:\Updates\ if available
+                    try
+                    {
+                        if (Directory.Exists("0:\\"))
+                        {
+                            File.WriteAllBytes("0:\\" + CurrentFileName, fileData);
+                            if (!Directory.Exists("0:\\Updates")) Directory.CreateDirectory("0:\\Updates");
+                            File.WriteAllBytes("0:\\Updates\\" + CurrentFileName, fileData);
+                            saved = true;
+                        }
+                    }
+                    catch { }
+
+                    // 2. StorageService fallback & RAM store sync
+                    string stgStatus;
+                    bool stgSaved = StorageService.SaveBinaryFileToLocation(CurrentFileName, fileData, "disk0", out stgStatus);
+                    if (stgSaved) saved = true;
+                    saveStatus = saved ? "File successfully written to disk storage" : stgStatus;
+
+                    // 3. Process OTA system updates (.pkg)
                     if (CurrentFileName.ToLower().EndsWith(".pkg"))
                     {
                         string updStatus;
@@ -416,9 +437,12 @@ namespace WeatherOS.Services
                         ? $"[SUCCESS] Received '{CurrentFileName}' ({saveLen} B) and saved to storage!"
                         : $"[ERROR] File received but storage save failed: {saveStatus}";
 
-                    // Reply FINISH_ACK using pre-allocated frame
+                    // Reply FINISH_ACK using pre-allocated frame (send 3 times to ensure delivery over UDP)
                     _finishAckPayload[5] = (byte)(saved ? 0x00 : 0x01);
-                    SendUdp(_srcMac, _srcIp, PORT, srcPort, _finishAckPayload);
+                    for (int ackTry = 0; ackTry < 3; ackTry++)
+                    {
+                        SendUdp(_srcMac, _srcIp, PORT, srcPort, _finishAckPayload);
+                    }
                 }
                 return;
             }
