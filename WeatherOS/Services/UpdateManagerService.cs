@@ -19,6 +19,63 @@ namespace WeatherOS.Services
         private static BootSource _bootSource = BootSource.LiveRam;
         private static bool _forceInstalledFlag = false;
 
+        public static bool SafeWriteSectors(BlockDevice dev, ulong startSector, ulong count, byte[] data, int offset = 0)
+        {
+            if (dev == null || data == null || count == 0) return false;
+            byte[] singleSector = new byte[512];
+            for (ulong s = 0; s < count; s++)
+            {
+                int srcOff = offset + (int)(s * 512);
+                int toCopy = Math.Min(512, Math.Max(0, data.Length - srcOff));
+                if (toCopy > 0)
+                {
+                    Array.Copy(data, srcOff, singleSector, 0, toCopy);
+                    if (toCopy < 512)
+                    {
+                        Array.Clear(singleSector, toCopy, 512 - toCopy);
+                    }
+                }
+                else
+                {
+                    Array.Clear(singleSector, 0, 512);
+                }
+
+                try
+                {
+                    dev.WriteBlock(startSector + s, 1, ref singleSector);
+                }
+                catch
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        public static bool SafeReadSectors(BlockDevice dev, ulong startSector, ulong count, byte[] buffer, int offset = 0)
+        {
+            if (dev == null || buffer == null || count == 0) return false;
+            byte[] singleSector = new byte[512];
+            for (ulong s = 0; s < count; s++)
+            {
+                try
+                {
+                    dev.ReadBlock(startSector + s, 1, ref singleSector);
+                    int dstOff = offset + (int)(s * 512);
+                    int toCopy = Math.Min(512, Math.Max(0, buffer.Length - dstOff));
+                    if (toCopy > 0)
+                    {
+                        Array.Copy(singleSector, 0, buffer, dstOff, toCopy);
+                    }
+                }
+                catch
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
         public static readonly byte[] GrubMbrSector = new byte[]
         {
             0xFA, 0x31, 0xC0, 0x8E, 0xD8, 0x8E, 0xC0, 0x8E, 0xD0, 0xBC, 0x00, 0x7C, 0xFB, 0x88, 0x16, 0x7D,
@@ -490,7 +547,7 @@ namespace WeatherOS.Services
                     bootMgrBlock[NativeBootloaderPayload.Stage2RemSectorsOffset + 2] = (byte)((kernelSectors >> 16) & 0xFF);
                     bootMgrBlock[NativeBootloaderPayload.Stage2RemSectorsOffset + 3] = (byte)((kernelSectors >> 24) & 0xFF);
                 }
-                dev.WriteBlock(1, 8, ref bootMgrBlock);
+                SafeWriteSectors(dev, 1, 8, bootMgrBlock, 0);
 
                 // 4. Write WeatherOS Installation Marker Sector at LBA 9, and zero-fill Sectors 10..63
                 byte[] markerSector = new byte[512];
@@ -612,7 +669,7 @@ namespace WeatherOS.Services
                         }
                     }
 
-                    dev.WriteBlock(targetSector, count, ref chunk);
+                    SafeWriteSectors(dev, targetSector, count, chunk, 0);
                     copied += count;
 
                     int pct = 15 + (int)((copied * 75UL) / totalKernelSectors); // 15% to 90%
@@ -849,7 +906,6 @@ namespace WeatherOS.Services
                     // Save package file to disk for user records and offline reinstall
                     try
                     {
-                        File.WriteAllBytes("0:\\" + fileName, packageData);
                         if (!Directory.Exists("0:\\Updates")) Directory.CreateDirectory("0:\\Updates");
                         File.WriteAllBytes("0:\\Updates\\" + fileName, packageData);
                     }
@@ -865,20 +921,7 @@ namespace WeatherOS.Services
                         ulong totalSec = (ulong)((kernelToDeploy.Length + 511) / 512);
                         if (totalSec > 32768) totalSec = 32768; // Kernel partition boundary safety
 
-                        ulong curSec = 0;
-                        byte[] chunk = new byte[64 * 512]; // 32 KB chunk
-                        while (curSec < totalSec)
-                        {
-                            ulong rem = totalSec - curSec;
-                            ulong count = rem > 64 ? 64 : rem;
-                            for (uint b = 0; b < count * 512; b++)
-                            {
-                                ulong srcIdx = curSec * 512UL + b;
-                                chunk[b] = (srcIdx < (ulong)kernelToDeploy.Length) ? kernelToDeploy[srcIdx] : (byte)0;
-                            }
-                            dev.WriteBlock(64UL + curSec, count, ref chunk);
-                            curSec += count;
-                        }
+                        SafeWriteSectors(dev, 64UL, totalSec, kernelToDeploy, 0);
 
                         // Dynamically locate entry point in kernelToDeploy (mov esp, 0x02050040; cli)
                         byte[] epSig = new byte[] { 0xBC, 0x40, 0x00, 0x05, 0x02, 0xFA };
@@ -891,7 +934,7 @@ namespace WeatherOS.Services
                             try
                             {
                                 byte[] s2Block = new byte[8 * 512];
-                                dev.ReadBlock(1, 8, ref s2Block);
+                                SafeReadSectors(dev, 1, 8, s2Block, 0);
                                 if (NativeBootloaderPayload.Stage2RemSectorsOffset > 0 &&
                                     NativeBootloaderPayload.Stage2RemSectorsOffset + 4 <= (uint)s2Block.Length)
                                 {
@@ -908,7 +951,7 @@ namespace WeatherOS.Services
                                     s2Block[NativeBootloaderPayload.Stage2EntryPointOffset + 2] = (byte)((newEntryPoint >> 16) & 0xFF);
                                     s2Block[NativeBootloaderPayload.Stage2EntryPointOffset + 3] = (byte)((newEntryPoint >> 24) & 0xFF);
                                 }
-                                dev.WriteBlock(1, 8, ref s2Block);
+                                SafeWriteSectors(dev, 1, 8, s2Block, 0);
                             }
                             catch { }
                         }
@@ -990,7 +1033,7 @@ namespace WeatherOS.Services
                     }
                     catch { }
                 }
-                if (dev != null)
+                else if (dev != null)
                 {
                     string aStat;
                     DiskWipeService.WriteFileDirectToFat32(dev, "apps.ini", appsManifest, out aStat);
@@ -1021,7 +1064,7 @@ namespace WeatherOS.Services
                     }
                     catch { }
                 }
-                if (dev != null)
+                else if (dev != null)
                 {
                     string mStat;
                     DiskWipeService.WriteFileDirectToFat32(dev, "version.ini", manifestUpdate, out mStat);

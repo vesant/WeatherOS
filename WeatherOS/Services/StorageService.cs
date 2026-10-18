@@ -206,11 +206,11 @@ namespace WeatherOS.Services
                 if (string.Equals(_memoryFiles[i].Name, filename, StringComparison.OrdinalIgnoreCase))
                 {
                     _memoryFiles[i].RawBytes = data;
-                    _memoryFiles[i].Content = data != null ? System.Text.Encoding.ASCII.GetString(data) : "";
+                    _memoryFiles[i].Content = (data != null && data.Length < 65536) ? System.Text.Encoding.ASCII.GetString(data) : "";
                     return;
                 }
             }
-            _memoryFiles.Add(new StoredFile { Name = filename, RawBytes = data, Content = data != null ? System.Text.Encoding.ASCII.GetString(data) : "" });
+            _memoryFiles.Add(new StoredFile { Name = filename, RawBytes = data, Content = (data != null && data.Length < 65536) ? System.Text.Encoding.ASCII.GetString(data) : "" });
         }
 
         public static bool TryGetMemoryBinaryFile(string filename, out byte[] data)
@@ -456,15 +456,27 @@ namespace WeatherOS.Services
 
             string diskName;
             var targetDev = GetTargetDisk(locationId, out diskName);
-            if (targetDev == null)
+            if (targetDev == null && !IsVfsAvailable())
             {
                 PutMemoryFile(filename, content);
                 status = $"[ERR] No physical drives detected. Saved to RAM Virtual Store.";
                 return false;
             }
 
-            string directStatus;
-            bool directOk = DiskWipeService.WriteFileDirectToFat32(targetDev, filename, content, out directStatus);
+            if (IsVfsAvailable())
+            {
+                try
+                {
+                    File.WriteAllText("0:\\" + filename, content);
+                    PutMemoryFile(filename, content);
+                    status = $"Saved to {diskName}: {filename} ({content.Length} chars) [OK]";
+                    return true;
+                }
+                catch { }
+            }
+
+            string directStatus = "No target disk available";
+            bool directOk = (targetDev != null) && DiskWipeService.WriteFileDirectToFat32(targetDev, filename, content, out directStatus);
 
             // Always store in RAM so the session is never lost and preview works immediately
             PutMemoryFile(filename, content);
@@ -508,7 +520,7 @@ namespace WeatherOS.Services
             var targetDev = GetTargetDisk(locationId, out diskName);
             string directStatus = "";
             bool directOk = false;
-            if (targetDev != null)
+            if (!vfsSaved && targetDev != null)
             {
                 directOk = DiskWipeService.WriteBinaryFileDirectToFat32(targetDev, filename, data, out directStatus);
             }

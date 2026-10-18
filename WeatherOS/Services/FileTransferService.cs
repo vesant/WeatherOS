@@ -389,6 +389,13 @@ namespace WeatherOS.Services
             {
                 if (Status == TransferStatus.Receiving)
                 {
+                    // Immediate FINISH_ACK to sender so Windows companion never times out
+                    _finishAckPayload[5] = 0x00; // Transfer OK
+                    for (int ackTry = 0; ackTry < 3; ackTry++)
+                    {
+                        SendUdp(_srcMac, _srcIp, PORT, srcPort, _finishAckPayload);
+                    }
+
                     int saveLen = (int)TotalFileSize;
                     if (saveLen > _rxBufferLength) saveLen = _rxBufferLength;
                     byte[] fileData = new byte[saveLen];
@@ -397,26 +404,7 @@ namespace WeatherOS.Services
                     string saveStatus = "";
                     bool saved = false;
 
-                    // 1. Direct write to VFS 0:\ root and 0:\Updates\ ONLY if VFS drive 0: is mounted
-                    if (StorageService.IsVfsAvailable())
-                    {
-                        try
-                        {
-                            File.WriteAllBytes("0:\\" + CurrentFileName, fileData);
-                            if (!Directory.Exists("0:\\Updates")) Directory.CreateDirectory("0:\\Updates");
-                            File.WriteAllBytes("0:\\Updates\\" + CurrentFileName, fileData);
-                            saved = true;
-                        }
-                        catch { }
-                    }
-
-                    // 2. StorageService fallback & RAM store sync
-                    string stgStatus;
-                    bool stgSaved = StorageService.SaveBinaryFileToLocation(CurrentFileName, fileData, "disk0", out stgStatus);
-                    if (stgSaved) saved = true;
-                    saveStatus = saved ? "File successfully written to disk storage" : stgStatus;
-
-                    // 3. Process OTA system updates (.pkg)
+                    // 1. Process OTA system updates (.pkg) directly through UpdateManagerService
                     if (CurrentFileName.ToLower().EndsWith(".pkg"))
                     {
                         string updStatus;
@@ -428,7 +416,28 @@ namespace WeatherOS.Services
                         }
                         else
                         {
-                            saveStatus = "Package saved, but update apply failed: " + updStatus;
+                            saveStatus = "Package received, but update apply failed: " + updStatus;
+                        }
+                    }
+                    else
+                    {
+                        // 2. Normal file: write once to 0:\CurrentFileName if VFS is available
+                        if (StorageService.IsVfsAvailable())
+                        {
+                            try
+                            {
+                                File.WriteAllBytes("0:\\" + CurrentFileName, fileData);
+                                saved = true;
+                                saveStatus = "File written to 0:\\" + CurrentFileName;
+                            }
+                            catch { }
+                        }
+
+                        if (!saved)
+                        {
+                            string stgStatus;
+                            saved = StorageService.SaveBinaryFileToLocation(CurrentFileName, fileData, "disk0", out stgStatus);
+                            saveStatus = saved ? "File successfully written to disk storage" : stgStatus;
                         }
                     }
 
@@ -436,13 +445,6 @@ namespace WeatherOS.Services
                     StatusMessage = saved
                         ? $"[SUCCESS] Received '{CurrentFileName}' ({saveLen} B) and saved to storage!"
                         : $"[ERROR] File received but storage save failed: {saveStatus}";
-
-                    // Reply FINISH_ACK using pre-allocated frame (send 3 times to ensure delivery over UDP)
-                    _finishAckPayload[5] = (byte)(saved ? 0x00 : 0x01);
-                    for (int ackTry = 0; ackTry < 3; ackTry++)
-                    {
-                        SendUdp(_srcMac, _srcIp, PORT, srcPort, _finishAckPayload);
-                    }
                 }
                 return;
             }
