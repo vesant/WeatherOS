@@ -319,20 +319,33 @@ prot_start:
     cmp dword [0x02000000], 0xE85250D6
     jne bad_kernel_signature
 
-    ; Verify Entry Point code: mov esp, 0x02050040 (0xBC 0x40 0x00 0x05 -> 0x050040BC)
+    ; Verify Entry Point code: mov esp, 0x02050040; cli; mov [mb], ebx
     mov edx, [entry_point]
     cmp dword [edx], 0x050040BC
+    jne .scan_fallback
+    cmp byte [edx + 4], 0x02
+    jne .scan_fallback
+    cmp byte [edx + 5], 0xFA
+    jne .scan_fallback
+    cmp byte [edx + 6], 0x89
+    jne .scan_fallback
+    cmp byte [edx + 7], 0x1D
     je .entry_ok
 
-    ; Auto-scan fallback: search 0x02000000 .. 0x02500000 for Kernel_Start (mov esp, 0x02050040; cli)
-    mov edi, 0x02000000
-    mov ecx, 0x00500000
+.scan_fallback:
+    ; Auto-scan fallback: search 0x02300000 .. 0x02600000 for authentic Kernel_Start
+    mov edi, 0x02300000
+    mov ecx, 0x00300000
 .scan_ep:
     cmp dword [edi], 0x050040BC
     jne .next_ep
     cmp byte [edi + 4], 0x02
     jne .next_ep
     cmp byte [edi + 5], 0xFA
+    jne .next_ep
+    cmp byte [edi + 6], 0x89
+    jne .next_ep
+    cmp byte [edi + 7], 0x1D
     je .found_ep
 .next_ep:
     inc edi
@@ -846,11 +859,11 @@ chunk_index dw 0
 ; Patchable variables (updated by make_isohybrid.py)
 align 4
 rem_sec_sig db "RSEC"
-rem_sectors dd 16777
+rem_sectors dd 16779
 
 align 4
 entry_point_sig db "EPNT"
-entry_point dd 0x241a160
+entry_point dd 0x241a270
 
 align 4
 dap_read:

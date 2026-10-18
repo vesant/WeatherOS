@@ -138,41 +138,41 @@ namespace WeatherOS.Services
             bool isGui = WeatherOS.Graphics.TuiDesktop.IsGuiActive;
 
             // Allow settling time for PHY transceiver
-            for (int initWait = 0; initWait < 20; initWait++)
+            for (int initWait = 0; initWait < 10; initWait++)
             {
                 WeatherOS.Kernel.CustomNIC?.HackPoll();
-                HardwareDelayMs(20);
+                HardwareDelayMs(10);
             }
 
-            // 1. DHCP Discover with periodic retransmissions (up to 3.5 seconds)
+            // 1. DHCP Discover with fast local LAN retransmissions (max 1.5 seconds)
             if (!isGui) System.Console.Write("[net] raw_tcp: broadcasting DHCP Discover");
             _dhcpOfferReceived = false;
             _dhcpAckReceived = false;
             byte[] dhcp = BuildDhcpPacket(1, null, null); // Discover
             nic.QueueBytes(dhcp);
 
-            for (int i = 0; i < 140 && !_dhcpOfferReceived; i++)
+            for (int i = 0; i < 60 && !_dhcpOfferReceived; i++)
             {
                 WeatherOS.Kernel.CustomNIC?.HackPoll();
                 HardwareDelayMs(25);
-                if (i == 20 || i == 50 || i == 80)
+                if (i == 8 || i == 20 || i == 35)
                 {
-                    nic.QueueBytes(dhcp); // Retransmit Discover at 500ms, 1250ms, 2000ms
+                    nic.QueueBytes(dhcp); // Retransmit Discover at 200ms, 500ms, 875ms
                 }
-                if (!isGui && (i % 10 == 0)) System.Console.Write(".");
+                if (!isGui && (i % 5 == 0)) System.Console.Write(".");
             }
             if (!isGui) System.Console.WriteLine();
             
             if (_dhcpOfferReceived)
             {
-                // 1b. DHCP Request (up to 1200ms)
+                // 1b. DHCP Request (up to 800ms)
                 byte[] dhcpReq = BuildDhcpPacket(3, _ipSource, _dhcpServerIp);
                 nic.QueueBytes(dhcpReq);
-                for (int i = 0; i < 48 && !_dhcpAckReceived; i++)
+                for (int i = 0; i < 32 && !_dhcpAckReceived; i++)
                 {
                     WeatherOS.Kernel.CustomNIC?.HackPoll();
                     HardwareDelayMs(25);
-                    if (i == 20) nic.QueueBytes(dhcpReq);
+                    if (i == 12) nic.QueueBytes(dhcpReq);
                 }
 
                 if (!isGui)

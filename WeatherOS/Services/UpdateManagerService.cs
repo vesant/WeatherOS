@@ -1054,9 +1054,14 @@ namespace WeatherOS.Services
                             }
                         }
 
-                        // Dynamically locate entry point in kernel payload (mov esp, 0x02050040; cli)
-                        byte[] epSig = new byte[] { 0xBC, 0x40, 0x00, 0x05, 0x02, 0xFA };
-                        int epOff = FindByteSequence(packageData, epSig, kernelStart, kernelLen);
+                        // Dynamically locate entry point in kernel payload (mov esp, 0x02050040; cli; mov [mb], ebx)
+                        byte[] epSig = new byte[] { 0xBC, 0x40, 0x00, 0x05, 0x02, 0xFA, 0x89, 0x1D };
+                        int startScan = (kernelLen > 0x300000) ? (kernelStart + 0x300000) : kernelStart;
+                        int epOff = FindByteSequence(packageData, epSig, startScan, (kernelStart + kernelLen) - startScan);
+                        if (epOff < 0)
+                        {
+                            epOff = FindByteSequence(packageData, epSig, kernelStart, kernelLen);
+                        }
                         uint newEntryPoint = (epOff >= 0) ? (0x02000000u + (uint)(epOff - kernelStart)) : 0;
 
                         // Patch Stage 2 at LBA 1..8 with new kernel sector count and entry point

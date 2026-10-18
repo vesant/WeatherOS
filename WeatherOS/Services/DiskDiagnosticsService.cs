@@ -529,6 +529,13 @@ namespace WeatherOS.Services
                 byte status = pCmd.Byte;
                 if (status == 0xFF) return info; // Floating bus
 
+                // Floating bus register test:
+                // Writing 0x55/0xAA to SecCount/LbaLow detects unpopulated ports in 2 microseconds
+                pSecCount.Byte = 0x55;
+                pLbaLow.Byte = 0xAA;
+                for (int i = 0; i < 2; i++) { byte dummy = pCmd.Byte; }
+                if (pSecCount.Byte != 0x55 || pLbaLow.Byte != 0xAA) return info;
+
                 // Wait for drive not busy before issuing command
                 int preWait = 200000;
                 while (preWait-- > 0)

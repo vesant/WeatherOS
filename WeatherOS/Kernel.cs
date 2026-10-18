@@ -76,11 +76,14 @@ namespace WeatherOS
 
             try
             {
+                System.Console.WriteLine("[sys] Initializing storage subsystems...");
                 AhciDriverService.Initialize();
                 CustomPciAtaDriverService.Initialize();
+                System.Console.WriteLine("[sys] Mounting virtual file system (CosmosVFS)...");
                 _vfs = new Cosmos.System.FileSystem.CosmosVFS();
                 Cosmos.System.FileSystem.VFS.VFSManager.RegisterVFS(_vfs);
                 _isVfsMounted = true; 
+                System.Console.WriteLine("[sys] Storage ready.");
             }
             catch (Exception ex)
             {
