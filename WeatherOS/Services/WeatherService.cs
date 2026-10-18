@@ -139,11 +139,11 @@ namespace WeatherOS.Services
             string cleanCity = "";
             try
             {
-                if (WeatherOS.Kernel.CustomNIC != null && !WeatherOS.Kernel.CustomNIC.IsPhyLinkUp())
+                if (RawTcpHttp.GetAssignedIp() == "0.0.0.0")
                 {
                     if (!WeatherOS.Graphics.TuiDesktop.IsGuiActive)
-                        System.Console.WriteLine("[net] Ethernet cable disconnected (PHY link down).");
-                    _cachedReading.Condition = "Cable Disconnected";
+                        System.Console.WriteLine("[net] Network offline. No IP assigned.");
+                    _cachedReading.Condition = "Network Offline";
                     _cachedReading.Location = (!string.IsNullOrWhiteSpace(city) ? city.ToUpper() : "OFFLINE") + " [OFFLINE]";
                     return;
                 }

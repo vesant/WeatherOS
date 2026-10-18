@@ -52,18 +52,13 @@ namespace WeatherOS
             {
                 if (Cosmos.HAL.NetworkDevice.Devices.Count > 0)
                 {
-                    System.Console.WriteLine("Configuring Static IP (Bypassing DHCP Freeze)...");
-                    
-                    var ip = new Cosmos.System.Network.IPv4.Address(192, 168, 1, 155);
-                    var subnet = new Cosmos.System.Network.IPv4.Address(255, 255, 255, 0);
-                    var gateway = new Cosmos.System.Network.IPv4.Address(192, 168, 1, 1);
-                    
-                    var config = new Cosmos.System.Network.Config.IPConfig(ip, subnet, gateway);
-                    Cosmos.System.Network.NetworkStack.ConfigIP(Cosmos.HAL.NetworkDevice.Devices[0], config);
-                    _isNetworkConfigured = true;
-                    System.Console.WriteLine("[net] Starting Bare-Metal AutoConfig...");
+                    System.Console.WriteLine("[net] Initializing Realtek Ethernet NIC...");
                     WeatherOS.Services.RawTcpHttp.DoAutoConfig(Cosmos.HAL.NetworkDevice.Devices[0]);
-                    if (WeatherOS.Services.RawTcpHttp.GetAssignedIp() == "0.0.0.0")
+                    if (WeatherOS.Services.RawTcpHttp.GetAssignedIp() != "0.0.0.0")
+                    {
+                        _isNetworkConfigured = true;
+                    }
+                    else
                     {
                         _isNetworkConfigured = false;
                     }
