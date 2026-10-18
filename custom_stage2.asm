@@ -850,7 +850,7 @@ rem_sectors dd 16772
 
 align 4
 entry_point_sig db "EPNT"
-entry_point dd 0x241a140
+entry_point dd 0x241a110
 
 align 4
 dap_read:

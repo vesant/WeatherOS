@@ -215,11 +215,12 @@ namespace WeatherOS.Apps
                                     win.WriteRow(13, "Flashing in progress... Please wait...", ConsoleColor.DarkGray, 2, fillRemaining: true);
 
                                     string updStatus;
-                                    byte[] pkgBytes;
-                                    if (StorageService.TryGetMemoryBinaryFile(FileTransferService.CurrentFileName, out pkgBytes) && pkgBytes != null)
+                                    byte[] pkgBytes = FileTransferService.GetRxBuffer();
+                                    int pkgLen = FileTransferService.GetRxBufferLength();
+                                    if (pkgBytes != null && pkgLen > 0)
                                     {
                                         int lastPctDrawn = -1;
-                                        bool updated = UpdateManagerService.ApplyUpdateDirect(pkgBytes, 0, pkgBytes.Length, FileTransferService.CurrentFileName, (pct, mbDone, mbTotal) =>
+                                        bool updated = UpdateManagerService.ApplyUpdateDirect(pkgBytes, 0, pkgLen, FileTransferService.CurrentFileName, (pct, mbDone, mbTotal) =>
                                         {
                                             if (pct != lastPctDrawn)
                                             {

@@ -114,6 +114,9 @@ namespace WeatherOS.Services
             }
         }
 
+        public static byte[] GetRxBuffer() => _rxBuffer;
+        public static int GetRxBufferLength() => _rxBufferLength;
+
         /// <summary>
         /// Sends raw Ethernet + IPv4 + UDP packet directly to NIC queue with zero GC heap allocations.
         /// </summary>
@@ -403,23 +406,29 @@ namespace WeatherOS.Services
                     int saveLen = (int)TotalFileSize;
                     if (saveLen > _rxBufferLength) saveLen = _rxBufferLength;
 
-                    // Copy received payload and register in StorageService (RAM Store) so it is immediately accessible
-                    byte[] fileData = new byte[saveLen];
-                    Array.Copy(_rxBuffer, 0, fileData, 0, saveLen);
-                    StorageService.PutMemoryBinaryFile(CurrentFileName, fileData);
+                    // For .pkg firmware packages, DO NOT allocate a duplicate 8.5MB array in the GC heap!
+                    // The raw bytes remain safe in the static 16MB _rxBuffer.
+                    bool isPkg = !string.IsNullOrEmpty(CurrentFileName) &&
+                                 CurrentFileName.ToLower().EndsWith(".pkg");
 
-                    // If physical VFS is available, also persist to disk
-                    if (StorageService.IsVfsAvailable())
+                    if (!isPkg)
                     {
-                        try
+                        byte[] fileData = new byte[saveLen];
+                        Array.Copy(_rxBuffer, 0, fileData, 0, saveLen);
+                        StorageService.PutMemoryBinaryFile(CurrentFileName, fileData);
+
+                        if (StorageService.IsVfsAvailable())
                         {
-                            File.WriteAllBytes("0:\\" + CurrentFileName, fileData);
+                            try
+                            {
+                                File.WriteAllBytes("0:\\" + CurrentFileName, fileData);
+                            }
+                            catch { }
                         }
-                        catch { }
                     }
 
                     Status = TransferStatus.Success;
-                    StatusMessage = $"File '{CurrentFileName}' ({saveLen} bytes) successfully received and staged in storage.";
+                    StatusMessage = $"File '{CurrentFileName}' ({saveLen} bytes) successfully received.";
                 }
                 return;
             }
