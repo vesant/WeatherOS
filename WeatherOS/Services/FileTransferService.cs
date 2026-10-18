@@ -267,11 +267,15 @@ namespace WeatherOS.Services
                 }
             }
 
-            LastPeerIp = $"{_srcIp[0]}.{_srcIp[1]}.{_srcIp[2]}.{_srcIp[3]}";
             for (int i = 0; i < 6; i++) RemoteMac[i] = _srcMac[i];
             for (int i = 0; i < 4; i++) RemoteIp[i] = _srcIp[i];
 
             byte msgType = packet[payloadOff + 4];
+
+            if (msgType == MSG_PING || msgType == MSG_PONG || msgType == MSG_START_SEND)
+            {
+                LastPeerIp = $"{_srcIp[0]}.{_srcIp[1]}.{_srcIp[2]}.{_srcIp[3]}";
+            }
 
             // 1. PING -> reply PONG
             if (msgType == MSG_PING)
@@ -398,18 +402,16 @@ namespace WeatherOS.Services
 
                     int saveLen = (int)TotalFileSize;
                     if (saveLen > _rxBufferLength) saveLen = _rxBufferLength;
-                    byte[] fileData = new byte[saveLen];
-                    Array.Copy(_rxBuffer, 0, fileData, 0, saveLen);
 
                     string saveStatus = "";
                     bool saved = false;
 
-                    // 1. Process OTA system updates (.pkg) directly through UpdateManagerService
+                    // 1. Process OTA system updates (.pkg) directly through UpdateManagerService with zero heap duplication
                     if (CurrentFileName.ToLower().EndsWith(".pkg"))
                     {
                         StatusMessage = "Processing and installing system update...";
                         string updStatus;
-                        bool updated = UpdateManagerService.ApplyUpdate(fileData, CurrentFileName, out updStatus);
+                        bool updated = UpdateManagerService.ApplyUpdateDirect(_rxBuffer, 0, saveLen, CurrentFileName, out updStatus);
                         if (updated)
                         {
                             saved = true;
@@ -423,6 +425,8 @@ namespace WeatherOS.Services
                     else
                     {
                         // 2. Normal file: write once to 0:\CurrentFileName if VFS is available
+                        byte[] fileData = new byte[saveLen];
+                        Array.Copy(_rxBuffer, 0, fileData, 0, saveLen);
                         if (StorageService.IsVfsAvailable())
                         {
                             try

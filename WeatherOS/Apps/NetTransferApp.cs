@@ -152,6 +152,7 @@ namespace WeatherOS.Apps
 
             int lastDrawnChunk = -1;
             int lastDrawnPct = -1;
+            string lastDrawnStatusMsg = "";
             TransferStatus lastDrawnStatus = FileTransferService.Status;
 
             while (_mode == NetTransferMode.Receive)
@@ -173,6 +174,7 @@ namespace WeatherOS.Apps
                         FileTransferService.StartListening();
                         lastDrawnChunk = -1;
                         lastDrawnPct = -1;
+                        lastDrawnStatusMsg = "";
                         lastDrawnStatus = TransferStatus.Idle;
                         win.WriteRow(6, "Waiting for transmission from companion Windows app...", ConsoleColor.White, 2, fillRemaining: true);
                         win.WriteRow(7, "On Windows, choose option [1] Send File in 'run-transfer.bat'.", ConsoleColor.Cyan, 2, fillRemaining: true);
@@ -200,21 +202,20 @@ namespace WeatherOS.Apps
                         win.WriteRow(7, $"From Remote PC: {FileTransferService.RemoteIpStr}", ConsoleColor.Cyan, 2, fillRemaining: true);
                     }
 
-                    if (pct != lastDrawnPct || curChunk == totalChunks)
+                    if (pct != lastDrawnPct || (curChunk - lastDrawnChunk >= 50) || curChunk == totalChunks)
                     {
                         lastDrawnPct = pct;
                         lastDrawnChunk = curChunk;
 
-                        win.WriteRow(8, $"Chunk: {curChunk} / {totalChunks} ({FileTransferService.TransferredBytes} / {FileTransferService.TotalFileSize} B)", ConsoleColor.White, 2, fillRemaining: true);
-                        if (!string.IsNullOrEmpty(FileTransferService.StatusMessage))
-                        {
-                            win.WriteRow(9, FileTransferService.StatusMessage, ConsoleColor.Yellow, 2, fillRemaining: true);
-                        }
+                        win.WriteRow(8, $"Chunk: {curChunk} / {totalChunks} ({FileTransferService.TransferredBytes / 1024} KB / {FileTransferService.TotalFileSize / 1024} KB)", ConsoleColor.White, 2, fillRemaining: true);
                         win.DrawBar(2, 10, "Transfer", pct, ConsoleColor.Green);
                     }
-                    else if (!string.IsNullOrEmpty(FileTransferService.StatusMessage))
+
+                    string curMsg = FileTransferService.StatusMessage;
+                    if (curMsg != null && curMsg != lastDrawnStatusMsg)
                     {
-                        win.WriteRow(9, FileTransferService.StatusMessage, ConsoleColor.Yellow, 2, fillRemaining: true);
+                        lastDrawnStatusMsg = curMsg;
+                        win.WriteRow(9, curMsg, ConsoleColor.Yellow, 2, fillRemaining: true);
                     }
                 }
                 else if (curStatus != lastDrawnStatus)

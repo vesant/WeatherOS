@@ -923,13 +923,23 @@ namespace WeatherOS.Services
                 statusMessage = "Error: Update package buffer is empty.";
                 return false;
             }
+            return ApplyUpdateDirect(packageData, 0, packageData.Length, fileName, out statusMessage);
+        }
 
-            uint crc = ComputeCrc32(packageData);
+        public static bool ApplyUpdateDirect(byte[] packageData, int pkgOffset, int pkgLength, string fileName, out string statusMessage)
+        {
+            if (packageData == null || pkgLength <= 0 || pkgOffset + pkgLength > packageData.Length)
+            {
+                statusMessage = "Error: Update package buffer is empty or invalid.";
+                return false;
+            }
+
+            uint crc = ComputeCrc32(packageData, pkgOffset, pkgLength);
             string crcStr = "0x" + crc.ToString("X8");
 
             bool isCumulativePackage = fileName.ToLower().EndsWith(".pkg") ||
                                        fileName.ToLower().EndsWith(".wos") ||
-                                       (packageData.Length > 8 && packageData[0] == (byte)'W' && packageData[1] == (byte)'O' && packageData[2] == (byte)'S');
+                                       (pkgLength > 8 && packageData[pkgOffset] == (byte)'W' && packageData[pkgOffset + 1] == (byte)'O' && packageData[pkgOffset + 2] == (byte)'S');
 
             try
             {
@@ -987,59 +997,26 @@ namespace WeatherOS.Services
                 }
                 catch { }
 
-                // 1. Rollback Backup: Backup existing kernel to WeatherOS.bak safely
-                if (StorageService.IsVfsAvailable())
-                {
-                    try
-                    {
-                        if (File.Exists("0:\\boot\\WeatherOS.bin"))
-                        {
-                            try { File.Copy("0:\\boot\\WeatherOS.bin", "0:\\boot\\WeatherOS.bak", true); }
-                            catch { }
-                        }
-                    }
-                    catch { }
-                }
-
-                // 2. Extract Kernel Binary and deploy to 0:\boot\WeatherOS.bin
-                byte[] kernelToDeploy = packageData;
+                // Locate Kernel Payload inside package with zero memory allocations
+                int kernelStart = pkgOffset;
+                int kernelLen = pkgLength;
                 if (isCumulativePackage)
                 {
-                    // Extract embedded kernel payload from package container with zero string allocation
-                    kernelToDeploy = ExtractKernelFromPackage(packageData);
+                    LocateKernelInPackage(packageData, pkgOffset, pkgLength, out kernelStart, out kernelLen);
                 }
 
-                bool written = false;
-                if (StorageService.IsVfsAvailable())
+                if (dev != null && kernelLen >= 512)
                 {
-                    try
-                    {
-                        if (!Directory.Exists("0:\\boot")) Directory.CreateDirectory("0:\\boot");
-                        File.WriteAllBytes("0:\\boot\\WeatherOS.bin", kernelToDeploy);
-                        written = true;
-                    }
-                    catch { }
+                    bool validMb = (packageData[kernelStart] == 0xD6 && packageData[kernelStart + 1] == 0x50 && packageData[kernelStart + 2] == 0x52 && packageData[kernelStart + 3] == 0xE8) ||
+                                   (packageData[kernelStart] == 0x02 && packageData[kernelStart + 1] == 0xB0 && packageData[kernelStart + 2] == 0xAD && packageData[kernelStart + 3] == 0x1B);
 
-                    // Save package file to disk for user records and offline reinstall
-                    try
-                    {
-                        if (!Directory.Exists("0:\\Updates")) Directory.CreateDirectory("0:\\Updates");
-                        File.WriteAllBytes("0:\\Updates\\" + fileName, packageData);
-                    }
-                    catch { }
-                }
-
-                if (dev != null && kernelToDeploy != null && kernelToDeploy.Length >= 512)
-                {
-                    bool validMb = (kernelToDeploy[0] == 0xD6 && kernelToDeploy[1] == 0x50 && kernelToDeploy[2] == 0x52 && kernelToDeploy[3] == 0xE8) ||
-                                   (kernelToDeploy[0] == 0x02 && kernelToDeploy[1] == 0xB0 && kernelToDeploy[2] == 0xAD && kernelToDeploy[3] == 0x1B);
                     if (validMb)
                     {
-                        ulong totalSec = (ulong)((kernelToDeploy.Length + 511) / 512);
+                        ulong totalSec = (ulong)((kernelLen + 511) / 512);
                         if (totalSec > 32768) totalSec = 32768; // Kernel partition boundary safety
 
                         FileTransferService.StatusMessage = "Flashing kernel to physical storage (LBA 64)...";
-                        bool writeOk = SafeWriteSectors(dev, 64UL, totalSec, kernelToDeploy, 0, (writtenSec, totalSecs) =>
+                        bool writeOk = SafeWriteSectors(dev, 64UL, totalSec, packageData, kernelStart, (writtenSec, totalSecs) =>
                         {
                             int pct = (int)((writtenSec * 100UL) / totalSecs);
                             ulong mbDone = (writtenSec * 512UL) / (1024UL * 1024UL);
@@ -1057,20 +1034,20 @@ namespace WeatherOS.Services
                         byte[] vfySec = new byte[512];
                         if (SafeReadSectors(dev, 64UL, 1, vfySec, 0))
                         {
-                            if (vfySec[0] != kernelToDeploy[0] || vfySec[1] != kernelToDeploy[1] ||
-                                vfySec[2] != kernelToDeploy[2] || vfySec[3] != kernelToDeploy[3])
+                            if (vfySec[0] != packageData[kernelStart] || vfySec[1] != packageData[kernelStart + 1] ||
+                                vfySec[2] != packageData[kernelStart + 2] || vfySec[3] != packageData[kernelStart + 3])
                             {
                                 statusMessage = "Flash verification failed: Kernel header mismatch at LBA 64.";
                                 return false;
                             }
                         }
 
-                        // Dynamically locate entry point in kernelToDeploy (mov esp, 0x02050040; cli)
+                        // Dynamically locate entry point in kernel payload (mov esp, 0x02050040; cli)
                         byte[] epSig = new byte[] { 0xBC, 0x40, 0x00, 0x05, 0x02, 0xFA };
-                        int epOff = FindByteSequence(kernelToDeploy, epSig, 0, kernelToDeploy.Length);
-                        uint newEntryPoint = (epOff >= 0) ? (0x02000000u + (uint)epOff) : 0;
+                        int epOff = FindByteSequence(packageData, epSig, kernelStart, kernelLen);
+                        uint newEntryPoint = (epOff >= 0) ? (0x02000000u + (uint)(epOff - kernelStart)) : 0;
 
-                        // Patch Stage 2 at LBA 1..8 with new kernel sector count and entry point (MBR at LBA 0 is 100% protected)
+                        // Patch Stage 2 at LBA 1..8 with new kernel sector count and entry point
                         if (newEntryPoint != 0)
                         {
                             try
@@ -1097,18 +1074,8 @@ namespace WeatherOS.Services
                             }
                             catch { }
                         }
-
-                        written = true;
                     }
                 }
-
-                // In Live / RAM Mode only, deploy to memory store (avoids exhausting RAM when booted from disk)
-                if (!IsBootedFromInstalledDisk() && dev == null)
-                {
-                    StorageService.PutMemoryBinaryFile("WeatherOS.bin", kernelToDeploy);
-                    StorageService.PutMemoryBinaryFile(fileName, packageData);
-                }
-                written = true;
 
                 // 3. Extract and Update Apps Manifest
                 string appsManifest = null;
@@ -1122,10 +1089,10 @@ namespace WeatherOS.Services
                         byte[] secManifestMarker = new byte[] { (byte)'-', (byte)'-', (byte)'-', (byte)'S', (byte)'E', (byte)'C', (byte)'T', (byte)'I', (byte)'O', (byte)'N', (byte)':', (byte)'M', (byte)'A', (byte)'N', (byte)'I', (byte)'F', (byte)'E', (byte)'S', (byte)'T', (byte)'-', (byte)'-', (byte)'-' };
                         byte[] secEndMarker = new byte[] { (byte)'-', (byte)'-', (byte)'-', (byte)'S', (byte)'E', (byte)'C', (byte)'T', (byte)'I', (byte)'O', (byte)'N', (byte)':', (byte)'E', (byte)'N', (byte)'D', (byte)'-', (byte)'-', (byte)'-' };
 
-                        int scanStart = (packageData.Length > 65536) ? (packageData.Length - 65536) : 0;
-                        int aIdx = FindByteSequence(packageData, secAppsMarker, scanStart, packageData.Length - scanStart);
-                        int mIdx = FindByteSequence(packageData, secManifestMarker, scanStart, packageData.Length - scanStart);
-                        int eIdx = FindByteSequence(packageData, secEndMarker, scanStart, packageData.Length - scanStart);
+                        int scanStart = (pkgLength > 65536) ? (pkgOffset + pkgLength - 65536) : pkgOffset;
+                        int aIdx = FindByteSequence(packageData, secAppsMarker, scanStart, (pkgOffset + pkgLength) - scanStart);
+                        int mIdx = FindByteSequence(packageData, secManifestMarker, scanStart, (pkgOffset + pkgLength) - scanStart);
+                        int eIdx = FindByteSequence(packageData, secEndMarker, scanStart, (pkgOffset + pkgLength) - scanStart);
 
                         if (aIdx >= 0 && mIdx > aIdx)
                         {
@@ -1181,20 +1148,19 @@ namespace WeatherOS.Services
                     DiskWipeService.WriteFileDirectToFat32(dev, "apps.ini", appsManifest, out aStat);
                 }
 
-                // 4. Update Component 3: System Version Manifest & Commits Sync
+                // 4. Update Component: System Version Manifest
                 if (string.IsNullOrEmpty(manifestUpdate))
                 {
                     manifestUpdate =
                         "[WeatherOS]\n" +
                         "Version=3.1.3-release\n" +
-                        "BuildDate=2026-10-17\n" +
+                        "BuildDate=2026-10-18\n" +
                         "Branch=32bit\n" +
-                        "LatestCommit=72cd642\n" +
-                        "CommitTitle=Network time synchronization, manual clock calibration, and bootloader safe update\n" +
+                        "LatestCommit=1e24606\n" +
                         $"LastUpdateFile={fileName}\n" +
                         $"LastUpdateChecksum={crcStr}\n" +
                         "BackupAvailable=true\n" +
-                        "BootTarget=0:\\boot\\WeatherOS.bin\n" +
+                        "BootTarget=LBA64:MonolithicKernel\n" +
                         "Status=Updated_Cumulative\n";
                 }
 
@@ -1217,14 +1183,13 @@ namespace WeatherOS.Services
                 if (isCumulativePackage)
                 {
                     statusMessage = $"Cumulative System Update Applied ({fileName}, CRC {crcStr})!\n" +
-                                    "  [1] Kernel Binary   : Deployed & verified (Safety backup at 0:\\boot\\WeatherOS.bak)\n" +
+                                    "  [1] Kernel Binary   : Deployed & verified at LBA 64\n" +
                                     "  [2] System Apps     : Upgraded manifest deployed to 0:\\system\\apps.ini\n" +
-                                    "  [3] Offline Storage : Package saved to disk / RAM\n" +
-                                    "  [OK] Bootloader, MBR, and Stage 2 fully protected. User settings preserved.";
+                                    "  [OK] Bootloader, MBR, and Stage 2 fully protected. System ready.";
                 }
                 else
                 {
-                    statusMessage = $"Kernel update applied ({fileName}, {packageData.Length} bytes, CRC {crcStr})! All user files preserved.";
+                    statusMessage = $"Kernel update applied ({fileName}, {pkgLength} bytes, CRC {crcStr})! System ready.";
                 }
                 return true;
             }
@@ -1257,52 +1222,50 @@ namespace WeatherOS.Services
             return -1;
         }
 
-        private static byte[] ExtractKernelFromPackage(byte[] pkgData)
+        private static void LocateKernelInPackage(byte[] pkgData, int pkgOffset, int pkgLen, out int bodyStart, out int bodyLen)
         {
-            if (pkgData == null || pkgData.Length < 512) return GenerateKernelBootImage();
+            bodyStart = pkgOffset;
+            bodyLen = pkgLen;
+            if (pkgData == null || pkgLen < 512) return;
             try
             {
                 byte[] secKernel = new byte[] { (byte)'-', (byte)'-', (byte)'-', (byte)'S', (byte)'E', (byte)'C', (byte)'T', (byte)'I', (byte)'O', (byte)'N', (byte)':', (byte)'K', (byte)'E', (byte)'R', (byte)'N', (byte)'E', (byte)'L', (byte)'-', (byte)'-', (byte)'-' };
                 byte[] secApps = new byte[] { (byte)'-', (byte)'-', (byte)'-', (byte)'S', (byte)'E', (byte)'C', (byte)'T', (byte)'I', (byte)'O', (byte)'N', (byte)':', (byte)'A', (byte)'P', (byte)'P', (byte)'S', (byte)'-', (byte)'-', (byte)'-' };
 
-                int kIdx = FindByteSequence(pkgData, secKernel, 0, 4096);
+                int kIdx = FindByteSequence(pkgData, secKernel, pkgOffset, Math.Min(4096, pkgLen));
                 if (kIdx >= 0)
                 {
-                    int bodyStart = kIdx + secKernel.Length;
-                    while (bodyStart < pkgData.Length && (pkgData[bodyStart] == 0x0D || pkgData[bodyStart] == 0x0A))
+                    int start = kIdx + secKernel.Length;
+                    while (start < (pkgOffset + pkgLen) && (pkgData[start] == 0x0D || pkgData[start] == 0x0A))
                     {
-                        bodyStart++;
+                        start++;
                     }
 
-                    // Search for ---SECTION:APPS--- starting from near the end (last 65536 bytes)
-                    int scanStart = (pkgData.Length > 65536) ? (pkgData.Length - 65536) : bodyStart;
-                    int aIdx = FindByteSequence(pkgData, secApps, scanStart, pkgData.Length - scanStart);
+                    int scanStart = (pkgLen > 65536) ? (pkgOffset + pkgLen - 65536) : start;
+                    int aIdx = FindByteSequence(pkgData, secApps, scanStart, (pkgOffset + pkgLen) - scanStart);
                     if (aIdx < 0)
                     {
-                        aIdx = FindByteSequence(pkgData, secApps, bodyStart, pkgData.Length - bodyStart);
+                        aIdx = FindByteSequence(pkgData, secApps, start, (pkgOffset + pkgLen) - start);
                     }
 
-                    if (aIdx > bodyStart)
+                    if (aIdx > start)
                     {
-                        int bodyEnd = aIdx;
-                        while (bodyEnd > bodyStart && (pkgData[bodyEnd - 1] == 0x0D || pkgData[bodyEnd - 1] == 0x0A))
+                        int end = aIdx;
+                        while (end > start && (pkgData[end - 1] == 0x0D || pkgData[end - 1] == 0x0A))
                         {
-                            bodyEnd--;
+                            end--;
                         }
 
-                        int kLen = bodyEnd - bodyStart;
+                        int kLen = end - start;
                         if (kLen >= 512)
                         {
-                            byte[] extracted = new byte[kLen];
-                            Array.Copy(pkgData, bodyStart, extracted, 0, kLen);
-                            return extracted;
+                            bodyStart = start;
+                            bodyLen = kLen;
                         }
                     }
                 }
             }
             catch { }
-
-            return GenerateKernelBootImage();
         }
 
         public static byte[] CreateSampleCumulativePackage()
@@ -1427,11 +1390,15 @@ namespace WeatherOS.Services
             return header;
         }
 
-        public static uint ComputeCrc32(byte[] data)
+        public static uint ComputeCrc32(byte[] data, int offset = 0, int length = -1)
         {
-            if (data == null) return 0;
+            if (data == null || data.Length == 0) return 0;
+            int len = (length >= 0) ? length : (data.Length - offset);
+            int limit = offset + len;
+            if (limit > data.Length) limit = data.Length;
+
             uint crc = 0xFFFFFFFF;
-            for (int i = 0; i < data.Length; i++)
+            for (int i = offset; i < limit; i++)
             {
                 crc ^= data[i];
                 for (int b = 0; b < 8; b++)
