@@ -111,4 +111,4 @@ WeatherOS includes an interactive command interpreter accessible alongside the T
 
 ## License
 
-This project is licensed under the MIT License. See `LICENSE` for details.
+This project is licensed under the BSD 3-Clause License. See `LICENSE` for details.
