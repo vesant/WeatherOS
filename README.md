@@ -103,6 +103,12 @@ WeatherOS includes an interactive command interpreter accessible alongside the T
 
 ---
 
+## Diagram
+
+![alt text](https://github.com/vesant/WeatherOS/blob/32bit/diagram_WeatherOS.png)
+
+---
+
 ## License
 
 This project is licensed under the MIT License. See `LICENSE` for details.
