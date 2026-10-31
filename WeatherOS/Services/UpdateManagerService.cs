@@ -608,8 +608,30 @@ namespace WeatherOS.Services
 
                 unsafe
                 {
+                    // 0. Direct Multiboot2 header inspection at 0x02000000 (+0x20 = load_end_addr, +0x30 = entry_addr)
+                    uint mbLoadEnd = *(uint*)0x02000020u;
+                    if (mbLoadEnd > 0x02100000u && mbLoadEnd < 0x05000000u)
+                    {
+                        uint mbSectors = (mbLoadEnd - 0x02000000u + 511u) / 512u;
+                        if (mbSectors >= 1000 && mbSectors <= 100000)
+                        {
+                            kernelSectors = mbSectors;
+                        }
+                    }
+
+                    uint mbEntry = *(uint*)0x02000030u;
+                    if (mbEntry >= 0x02000000u && mbEntry < 0x04000000u)
+                    {
+                        byte* pMb = (byte*)mbEntry;
+                        if (pMb[0] == 0xBC && pMb[1] == 0x40 && pMb[2] == 0x00 &&
+                            pMb[3] == 0x05 && pMb[4] == 0x02)
+                        {
+                            entryPoint = mbEntry;
+                        }
+                    }
+
                     // 1. Fast path: check if compiled entry point in RAM matches Kernel_Start signature
-                    if (defaultEntryPoint >= 0x02000000u && defaultEntryPoint < 0x04000000u)
+                    if (entryPoint == 0 && defaultEntryPoint >= 0x02000000u && defaultEntryPoint < 0x04000000u)
                     {
                         byte* pTarget = (byte*)defaultEntryPoint;
                         if (pTarget[0] == 0xBC && pTarget[1] == 0x40 && pTarget[2] == 0x00 &&
@@ -619,16 +641,17 @@ namespace WeatherOS.Services
                         }
                     }
 
-                    // 2. Scan path: search wide 256 KB window (0x02400000 .. 0x02440000)
+                    // 2. Scan path: search wide 4 MB window (0x02200000 .. 0x02600000)
                     if (entryPoint == 0)
                     {
-                        byte* pRam = (byte*)0x02400000u;
-                        for (uint i = 0; i < 0x40000u; i++)
+                        byte* pRam = (byte*)0x02200000u;
+                        for (uint i = 0; i < 0x400000u; i++)
                         {
                             if (pRam[i] == 0xBC && pRam[i + 1] == 0x40 && pRam[i + 2] == 0x00 &&
-                                pRam[i + 3] == 0x05 && pRam[i + 4] == 0x02 && pRam[i + 5] == 0xFA)
+                                pRam[i + 3] == 0x05 && pRam[i + 4] == 0x02 && pRam[i + 5] == 0xFA &&
+                                pRam[i + 6] == 0x89 && pRam[i + 7] == 0x1D)
                             {
-                                entryPoint = 0x02400000u + i;
+                                entryPoint = 0x02200000u + i;
                                 break;
                             }
                         }
