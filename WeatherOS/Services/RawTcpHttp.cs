@@ -168,35 +168,35 @@ namespace WeatherOS.Services
                 return;
             }
 
-            // 1. DHCP Discover with fast local LAN retransmissions (max 150ms)
+            // 1. DHCP Discover with local LAN retransmissions (up to ~1.2s so home routers & switches respond reliably)
             if (!isGui) System.Console.Write("[net] raw_tcp: DHCP Discover");
             _dhcpOfferReceived = false;
             _dhcpAckReceived = false;
             byte[] dhcp = BuildDhcpPacket(1, null, null); // Discover
             nic.QueueBytes(dhcp);
 
-            for (int i = 0; i < 6 && !_dhcpOfferReceived; i++)
+            for (int i = 0; i < 40 && !_dhcpOfferReceived; i++)
             {
                 WeatherOS.Kernel.CustomNIC?.HackPoll();
                 HardwareDelayMs(25);
-                if (i == 2)
+                if (i == 10 || i == 24)
                 {
-                    nic.QueueBytes(dhcp); // Retransmit Discover once at 50ms
+                    nic.QueueBytes(dhcp); // Retransmit Discover at 250ms and 600ms
                 }
-                if (!isGui && (i % 2 == 0)) System.Console.Write(".");
+                if (!isGui && (i % 8 == 0)) System.Console.Write(".");
             }
             if (!isGui) System.Console.WriteLine();
             
             if (_dhcpOfferReceived)
             {
-                // 1b. DHCP Request (max 150ms)
+                // 1b. DHCP Request (up to ~600ms)
                 byte[] dhcpReq = BuildDhcpPacket(3, _ipSource, _dhcpServerIp);
                 nic.QueueBytes(dhcpReq);
-                for (int i = 0; i < 6 && !_dhcpAckReceived; i++)
+                for (int i = 0; i < 24 && !_dhcpAckReceived; i++)
                 {
                     WeatherOS.Kernel.CustomNIC?.HackPoll();
                     HardwareDelayMs(25);
-                    if (i == 2) nic.QueueBytes(dhcpReq);
+                    if (i == 8) nic.QueueBytes(dhcpReq);
                 }
 
                 if (!isGui)
@@ -324,7 +324,7 @@ namespace WeatherOS.Services
                 }
             }
 
-            // 2. Perform active ARP Request
+            // 2. Perform active ARP Request (with retransmission if first broadcast frame was missed)
             SendArpRequest(targetIp);
 
             int elapsed = 0;
@@ -333,6 +333,10 @@ namespace WeatherOS.Services
                 WeatherOS.Kernel.CustomNIC?.HackPoll();
                 HardwareDelayMs(5);
                 elapsed += 5;
+                if (elapsed == 150 || elapsed == 350)
+                {
+                    SendArpRequest(targetIp);
+                }
             }
 
             if (_arpReplyReceived)
@@ -713,11 +717,25 @@ namespace WeatherOS.Services
 
                 // Extract HTTP body
                 int bodyIdx = CustomIndexOf(responseStr, "\r\n\r\n");
-                if (bodyIdx != -1)
+                string bodyStr = (bodyIdx != -1) ? responseStr.Substring(bodyIdx + 4) : responseStr;
+
+                // De-chunk HTTP/1.1 Transfer-Encoding: chunked if present so JSON arrays aren't corrupted by hex chunk sizes
+                if (CustomIndexOf(responseStr, "Transfer-Encoding: chunked") != -1 ||
+                    CustomIndexOf(responseStr, "transfer-encoding: chunked") != -1)
                 {
-                    return responseStr.Substring(bodyIdx + 4);
+                    bodyStr = DecodeChunkedBody(bodyStr);
                 }
-                return responseStr;
+                else
+                {
+                    // Strip any leading hex chunk size before the root JSON object '{'
+                    int firstBrace = CustomIndexOf(bodyStr, "{");
+                    if (firstBrace > 0 && firstBrace < 16)
+                    {
+                        bodyStr = bodyStr.Substring(firstBrace);
+                    }
+                }
+
+                return bodyStr;
             }
             catch
             {
@@ -730,6 +748,64 @@ namespace WeatherOS.Services
                 _sourcePort++;
                 if (_sourcePort > 65000) _sourcePort = 50000;
             }
+        }
+
+        private static string DecodeChunkedBody(string body)
+        {
+            if (string.IsNullOrEmpty(body)) return "";
+            int firstBrace = CustomIndexOf(body, "{");
+            if (firstBrace == 0) return body; // Not chunked
+
+            char[] outChars = new char[body.Length];
+            int outLen = 0;
+            int pos = 0;
+            int len = body.Length;
+
+            while (pos < len)
+            {
+                while (pos < len && (body[pos] == '\r' || body[pos] == '\n' || body[pos] == ' ')) pos++;
+                if (pos >= len) break;
+
+                int lineEnd = CustomIndexOf(body, "\r\n", pos);
+                if (lineEnd == -1)
+                {
+                    while (pos < len) outChars[outLen++] = body[pos++];
+                    break;
+                }
+
+                int chunkSize = 0;
+                bool validHex = false;
+                for (int i = pos; i < lineEnd; i++)
+                {
+                    char c = body[i];
+                    if (c == ';') break;
+                    int val = -1;
+                    if (c >= '0' && c <= '9') val = c - '0';
+                    else if (c >= 'a' && c <= 'f') val = 10 + (c - 'a');
+                    else if (c >= 'A' && c <= 'F') val = 10 + (c - 'A');
+                    else { validHex = false; break; }
+                    chunkSize = (chunkSize << 4) | val;
+                    validHex = true;
+                }
+
+                if (!validHex)
+                {
+                    while (pos < len) outChars[outLen++] = body[pos++];
+                    break;
+                }
+
+                pos = lineEnd + 2;
+                if (chunkSize == 0) break;
+
+                int count = Math.Min(chunkSize, len - pos);
+                for (int i = 0; i < count; i++)
+                {
+                    outChars[outLen++] = body[pos++];
+                }
+                if (pos + 2 <= len && body[pos] == '\r' && body[pos + 1] == '\n') pos += 2;
+            }
+
+            return outLen > 0 ? new string(outChars, 0, outLen) : body;
         }
 
         private static string DecodeUtf8ToAscii(byte[] data, int length)
