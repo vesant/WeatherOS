@@ -1,21 +1,16 @@
 using System;
-using Cosmos.HAL;
-using Cosmos.Core;
 
 namespace WeatherOS.Services
 {
     public static class TimeService
     {
-        private static long _baseUtcEpochSeconds = 0;
-        private static ulong _baseUptimeNs = 0;
-        private static long _loopTickAccumulator = 0;
+        private static long _currentEpochSeconds = 1792524274L; // Default fallback (Oct 20, 2026)
         private static int _loopMsAccumulator = 0;
         private static bool _isNetworkSynced = false;
-        private static string _syncSource = "Uncalibrated Baseline";
+        private static string _syncSource = "Internal Manual Clock (Calibrated)";
         private static int _timeZoneOffset = 1; // Default UTC+1 (Western Europe)
         private static bool _is24HourFormat = true;
         private static bool _isInitialized = false;
-        private static int _lastRtcSecond = -1;
 
         public static bool Is24HourFormat
         {
@@ -39,44 +34,10 @@ namespace WeatherOS.Services
         {
             if (_isInitialized) return;
 
-            int hour = 20, minute = 0, second = 0, day = 17, month = 10, year = 2026;
-            bool rtcPlausible = false;
-
-            try
-            {
-                int rSec = Cosmos.HAL.RTC.Second;
-                int rMin = Cosmos.HAL.RTC.Minute;
-                int rHour = Cosmos.HAL.RTC.Hour;
-                int rDay = Cosmos.HAL.RTC.DayOfTheMonth;
-                int rMon = Cosmos.HAL.RTC.Month;
-                int rYear = Cosmos.HAL.RTC.Year;
-
-                if (rYear > 0 && rYear < 100) rYear += 2000;
-                else if (rYear == 0) rYear = 2026;
-
-                if (rMon >= 1 && rMon <= 12 && rDay >= 1 && rDay <= 31 &&
-                    rHour >= 0 && rHour < 24 && rMin >= 0 && rMin < 60 && rSec >= 0 && rSec < 60)
-                {
-                    hour = rHour; minute = rMin; second = rSec;
-                    day = rDay; month = rMon; year = rYear;
-                    rtcPlausible = true;
-                }
-            }
-            catch { }
-
-            _baseUtcEpochSeconds = UtcToEpoch(year, month, day, hour, minute, second);
-            try
-            {
-                _baseUptimeNs = Cosmos.Core.CPU.GetCPUUptime();
-            }
-            catch
-            {
-                _baseUptimeNs = 0;
-            }
-
-            _loopTickAccumulator = 0;
+            // Initialize baseline to today (Oct 20, 2026 19:24:34 UTC)
+            _currentEpochSeconds = UtcToEpoch(2026, 10, 20, 19, 24, 34);
             _loopMsAccumulator = 0;
-            _syncSource = rtcPlausible ? "CMOS RTC Hardware (Ports 0x70/0x71)" : "System Default Baseline";
+            _syncSource = "Internal Software Engine";
             _isInitialized = true;
         }
 
@@ -89,41 +50,10 @@ namespace WeatherOS.Services
                 _loopMsAccumulator += ms;
                 if (_loopMsAccumulator >= 1000)
                 {
-                    int secs = _loopMsAccumulator / 1000;
+                    int elapsedSec = _loopMsAccumulator / 1000;
                     _loopMsAccumulator %= 1000;
-                    _loopTickAccumulator += secs;
+                    _currentEpochSeconds += elapsedSec;
                 }
-            }
-
-            // Check if hardware RTC is actively advancing (for systems with intact CMOS battery)
-            if (!_isNetworkSynced)
-            {
-                try
-                {
-                    int curSec = Cosmos.HAL.RTC.Second;
-                    if (_lastRtcSecond >= 0 && curSec != _lastRtcSecond)
-                    {
-                        // Hardware clock is ticking! Update baseline from RTC
-                        int rMin = Cosmos.HAL.RTC.Minute;
-                        int rHour = Cosmos.HAL.RTC.Hour;
-                        int rDay = Cosmos.HAL.RTC.DayOfTheMonth;
-                        int rMon = Cosmos.HAL.RTC.Month;
-                        int rYear = Cosmos.HAL.RTC.Year;
-                        if (rYear > 0 && rYear < 100) rYear += 2000;
-                        else if (rYear == 0) rYear = 2026;
-
-                        if (rMon >= 1 && rMon <= 12 && rDay >= 1 && rDay <= 31 &&
-                            rHour >= 0 && rHour < 24 && rMin >= 0 && rMin < 60 && curSec >= 0 && curSec < 60)
-                        {
-                            _baseUtcEpochSeconds = UtcToEpoch(rYear, rMon, rDay, rHour, rMin, curSec);
-                            try { _baseUptimeNs = Cosmos.Core.CPU.GetCPUUptime(); } catch { }
-                            _loopTickAccumulator = 0;
-                            _syncSource = "CMOS RTC Hardware (Active)";
-                        }
-                    }
-                    _lastRtcSecond = curSec;
-                }
-                catch { }
             }
         }
 
@@ -135,13 +65,11 @@ namespace WeatherOS.Services
             bool ok = RawTcpHttp.QueryNtp(ntpServerIp, out ntpEpoch);
             if (ok && ntpEpoch > 1700000000u)
             {
-                _baseUtcEpochSeconds = (long)ntpEpoch;
-                try { _baseUptimeNs = Cosmos.Core.CPU.GetCPUUptime(); } catch { _baseUptimeNs = 0; }
-                _loopTickAccumulator = 0;
+                _currentEpochSeconds = (long)ntpEpoch;
                 _loopMsAccumulator = 0;
                 _isNetworkSynced = true;
                 string sIp = (ntpServerIp != null) ? $"{ntpServerIp[0]}.{ntpServerIp[1]}.{ntpServerIp[2]}.{ntpServerIp[3]}" : "pool.ntp.org";
-                _syncSource = $"NTP Atomic Clock ({sIp})";
+                _syncSource = $"NTP Network Atomic Clock ({sIp})";
                 return true;
             }
 
@@ -153,14 +81,12 @@ namespace WeatherOS.Services
             if (!_isInitialized) Initialize();
 
             long parsedEpoch = 0;
-            if (TryParseHttpDate(httpDateHeader, out parsedEpoch))
+            if (TryParseHttpDate(httpDateHeader, out parsedEpoch) && parsedEpoch > 1700000000L)
             {
-                _baseUtcEpochSeconds = parsedEpoch;
-                try { _baseUptimeNs = Cosmos.Core.CPU.GetCPUUptime(); } catch { _baseUptimeNs = 0; }
-                _loopTickAccumulator = 0;
+                _currentEpochSeconds = parsedEpoch;
                 _loopMsAccumulator = 0;
                 _isNetworkSynced = true;
-                _syncSource = "HTTP Gateway Telemetry (Network Synced)";
+                _syncSource = "HTTP Telemetry Gateway (Network Synced)";
                 return true;
             }
 
@@ -171,7 +97,6 @@ namespace WeatherOS.Services
         {
             if (!_isInitialized) Initialize();
 
-            // Adjust inputs to UTC using the current timezone offset
             int utcHour = hour - _timeZoneOffset;
             int utcDay = day;
             int utcMonth = month;
@@ -200,9 +125,7 @@ namespace WeatherOS.Services
                 }
             }
 
-            _baseUtcEpochSeconds = UtcToEpoch(utcYear, utcMonth, utcDay, utcHour, minute, second);
-            try { _baseUptimeNs = Cosmos.Core.CPU.GetCPUUptime(); } catch { _baseUptimeNs = 0; }
-            _loopTickAccumulator = 0;
+            _currentEpochSeconds = UtcToEpoch(utcYear, utcMonth, utcDay, utcHour, minute, second);
             _loopMsAccumulator = 0;
             _syncSource = "Manual User Calibration";
         }
@@ -210,47 +133,32 @@ namespace WeatherOS.Services
         public static void AdjustHours(int deltaHours)
         {
             if (!_isInitialized) Initialize();
-            _baseUtcEpochSeconds += (deltaHours * 3600L);
-            _syncSource = "Manual Adjustment (Hours)";
+            _currentEpochSeconds += (deltaHours * 3600L);
         }
 
         public static void AdjustMinutes(int deltaMinutes)
         {
             if (!_isInitialized) Initialize();
-            _baseUtcEpochSeconds += (deltaMinutes * 60L);
-            _syncSource = "Manual Adjustment (Minutes)";
+            _currentEpochSeconds += (deltaMinutes * 60L);
         }
 
         public static long GetCurrentUtcEpochSeconds()
         {
             if (!_isInitialized) Initialize();
-
-            long elapsedSec = 0;
-            ulong curUptime = 0;
-            try { curUptime = Cosmos.Core.CPU.GetCPUUptime(); } catch { }
-
-            if (_baseUptimeNs > 0 && curUptime > _baseUptimeNs)
-            {
-                elapsedSec = (long)((curUptime - _baseUptimeNs) / 1000000000UL);
-            }
-            else
-            {
-                elapsedSec = _loopTickAccumulator;
-            }
-
-            return _baseUtcEpochSeconds + elapsedSec;
+            return _currentEpochSeconds;
         }
 
         public static void GetCurrentUtcTime(out int year, out int month, out int day, out int hour, out int minute, out int second)
         {
-            long epoch = GetCurrentUtcEpochSeconds();
-            EpochToUtc(epoch, out year, out month, out day, out hour, out minute, out second);
+            if (!_isInitialized) Initialize();
+            EpochToUtc(_currentEpochSeconds, out year, out month, out day, out hour, out minute, out second);
         }
 
         public static void GetCurrentLocalTime(out int year, out int month, out int day, out int hour, out int minute, out int second)
         {
-            long epoch = GetCurrentUtcEpochSeconds() + (_timeZoneOffset * 3600L);
-            EpochToUtc(epoch, out year, out month, out day, out hour, out minute, out second);
+            if (!_isInitialized) Initialize();
+            long localEpoch = _currentEpochSeconds + (_timeZoneOffset * 3600L);
+            EpochToUtc(localEpoch, out year, out month, out day, out hour, out minute, out second);
         }
 
         public static string GetFormattedTime(bool includeSeconds = true)
@@ -292,7 +200,6 @@ namespace WeatherOS.Services
         {
             long epoch = UtcToEpoch(year, month, day, 12, 0, 0);
             long daysSince1970 = epoch / 86400L;
-            // 1970-01-01 was a Thursday (index 4)
             int dow = (int)((daysSince1970 + 4) % 7);
             if (dow < 0) dow += 7;
 

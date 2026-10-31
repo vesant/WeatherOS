@@ -201,6 +201,30 @@ namespace WeatherOS.Apps
                             {
                                 if (_pkgAlreadyFlashed)
                                 {
+                                    win.WriteRow(6, "[REBOOTING] COMMITTING STORAGE TO DISK...", ConsoleColor.Yellow, 2, fillRemaining: true);
+                                    win.WriteRow(7, "Flushing hardware drive cache and parking disk heads...", ConsoleColor.White, 2, fillRemaining: true);
+                                    win.WriteRow(8, "Please do not turn off your computer.", ConsoleColor.Cyan, 2, fillRemaining: true);
+                                    win.WriteRow(13, "Rebooting safely...", ConsoleColor.DarkYellow, 2, fillRemaining: true);
+                                    
+                                    try
+                                    {
+                                        var pciDrives = CustomPciAtaDriverService.GetDevices();
+                                        if (pciDrives != null)
+                                        {
+                                            for (int pd = 0; pd < pciDrives.Count; pd++)
+                                            {
+                                                CustomPciAtaBlockDevice.FlushPio(pciDrives[pd].CmdBase, pciDrives[pd].DriveSelect, pciDrives[pd].IsLba48);
+                                            }
+                                        }
+                                    }
+                                    catch { }
+
+                                    for (int s = 3; s >= 1; s--)
+                                    {
+                                        win.WriteRow(9, $"System will restart automatically in {s} seconds...", ConsoleColor.Yellow, 2, fillRemaining: true);
+                                        Cosmos.HAL.Global.PIT.Wait(1000);
+                                    }
+
                                     Cosmos.System.Power.Reboot();
                                     return;
                                 }
@@ -225,8 +249,10 @@ namespace WeatherOS.Apps
                                             if (pct - lastPctDrawn >= 2 || pct == 100)
                                             {
                                                 lastPctDrawn = pct;
-                                                win.WriteRow(9, $"Writing sectors to disk: {pct}% ({mbDone}MB / {mbTotal}MB)...", ConsoleColor.White, 2, fillRemaining: true);
-                                                win.DrawBar(2, 10, "Flashing", pct, ConsoleColor.Green);
+                                                string action = FileTransferService.StatusMessage;
+                                                if (string.IsNullOrEmpty(action)) action = "Flashing sectors";
+                                                win.WriteRow(9, $"{action}: {pct}% ({mbDone}MB / {mbTotal}MB)...", ConsoleColor.White, 2, fillRemaining: true);
+                                                win.DrawBar(2, 10, "Firmware Flash", pct, ConsoleColor.Green);
                                             }
                                         }, out updStatus);
 

@@ -106,6 +106,24 @@ namespace WeatherOS.Services
                 var ex = existingList[i];
                 if (ex.Device == newDev) return true;
 
+                // Sector 0 / MBR Signature & Partition Table Match
+                if (ex.Sector0Cache != null && sec0 != null && ex.Sector0Cache.Length == 512 && sec0.Length == 512)
+                {
+                    if (sec0[510] == 0x55 && sec0[511] == 0xAA && ex.Sector0Cache[510] == 0x55 && ex.Sector0Cache[511] == 0xAA)
+                    {
+                        uint sig1 = (uint)(sec0[440] | (sec0[441] << 8) | (sec0[442] << 16) | (sec0[443] << 24));
+                        uint sig2 = (uint)(ex.Sector0Cache[440] | (ex.Sector0Cache[441] << 8) | (ex.Sector0Cache[442] << 16) | (ex.Sector0Cache[443] << 24));
+                        if (sig1 != 0 && sig1 == sig2) return true;
+
+                        bool part1Match = true;
+                        for (int b = 446; b < 462; b++)
+                        {
+                            if (sec0[b] != ex.Sector0Cache[b]) { part1Match = false; break; }
+                        }
+                        if (part1Match && sec0[450] != 0) return true;
+                    }
+                }
+
                 // Match Custom PCI ATA device duplicates
                 if (ex.Device is CustomPciAtaBlockDevice cpEx && newDev is CustomPciAtaBlockDevice cpNew)
                 {
@@ -113,59 +131,37 @@ namespace WeatherOS.Services
                 }
 
                 // Match between Cosmos ATA driver and Custom PCI ATA driver on the same port
-                if (ex.Device is Cosmos.HAL.BlockDevice.Ata ataEx && newDev is CustomPciAtaBlockDevice cpNew2)
+                if (ex.Device is CustomPciAtaBlockDevice cpEx2)
                 {
-                    ushort exBase = (ataEx.ControllerID == Cosmos.HAL.BlockDevice.Ata.ControllerIdEnum.Primary) ? (ushort)0x1F0 : (ushort)0x170;
-                    byte exSel = (ataEx.BusPosition == Cosmos.HAL.BlockDevice.Ata.BusPositionEnum.Master) ? (byte)0xA0 : (byte)0xB0;
-                    if (exBase == cpNew2.CmdBase && exSel == cpNew2.DriveSelect) return true;
-                }
-                if (ex.Device is CustomPciAtaBlockDevice cpEx2 && newDev is Cosmos.HAL.BlockDevice.Ata ataNew)
-                {
-                    ushort newBase = (ataNew.ControllerID == Cosmos.HAL.BlockDevice.Ata.ControllerIdEnum.Primary) ? (ushort)0x1F0 : (ushort)0x170;
-                    byte newSel = (ataNew.BusPosition == Cosmos.HAL.BlockDevice.Ata.BusPositionEnum.Master) ? (byte)0xA0 : (byte)0xB0;
-                    if (cpEx2.CmdBase == newBase && cpEx2.DriveSelect == newSel) return true;
+                    if (newDev is Cosmos.HAL.BlockDevice.Ata ataNew)
+                    {
+                        ushort newBase = (ataNew.ControllerID == Cosmos.HAL.BlockDevice.Ata.ControllerIdEnum.Primary) ? (ushort)0x1F0 : (ushort)0x170;
+                        byte newSel = (ataNew.BusPosition == Cosmos.HAL.BlockDevice.Ata.BusPositionEnum.Master) ? (byte)0xA0 : (byte)0xB0;
+                        if (cpEx2.CmdBase == newBase && cpEx2.DriveSelect == newSel) return true;
+                    }
+                    if (cpEx2.CmdBase == 0x1F0 && cpEx2.DriveSelect == 0xA0 && i == 0) return true;
                 }
             }
             return false;
         }
 
-        public static List<DiskDriveInfo> GetPhysicalDrives()
+        private static List<DiskDriveInfo> _cachedPhysicalDrives = null;
+
+        public static void ClearDriveCache()
         {
+            _cachedPhysicalDrives = null;
+        }
+
+        public static List<DiskDriveInfo> GetPhysicalDrives(bool forceRefresh = false)
+        {
+            if (!forceRefresh && _cachedPhysicalDrives != null && _cachedPhysicalDrives.Count > 0)
+            {
+                return _cachedPhysicalDrives;
+            }
+
             var list = new List<DiskDriveInfo>();
 
-            // 1. Probe Bare-Metal SATA AHCI driver first
-            try
-            {
-                var ahciDrives = AhciDriverService.GetDrives();
-                if (ahciDrives != null && ahciDrives.Count > 0)
-                {
-                    for (int a = 0; a < ahciDrives.Count; a++)
-                    {
-                        var ad = ahciDrives[a];
-                        if (ad == null) continue;
-                        if (ad.BlockCount == 0 || ad.BlockCount > 20000000000UL) continue;
-
-                        byte[] testSec = new byte[512];
-                        try { ad.ReadBlock(0, 1, ref testSec); } catch { continue; }
-                        if (IsDuplicateOfExisting(list, ad, testSec)) continue;
-
-                        var info = new DiskDriveInfo
-                        {
-                            Index = list.Count,
-                            Device = ad,
-                            Name = $"Disk {list.Count} (SATA AHCI: {ad.Model})",
-                            SectorCount = ad.BlockCount,
-                            Sector0Cache = testSec
-                        };
-
-                        ProbeDriveFilesystems(ad, list.Count, info);
-                        list.Add(info);
-                    }
-                }
-            }
-            catch { }
-
-            // 1.5. Probe Bare-Metal PCI ATA/IDE driver (Standard & Native PCI ports on Intel ICH7-M)
+            // 1. Probe Bare-Metal PCI ATA/IDE driver FIRST (Standard & Native PCI ports on Intel ICH7-M)
             try
             {
                 var pciAtaDrives = CustomPciAtaDriverService.GetDevices();
@@ -203,6 +199,38 @@ namespace WeatherOS.Services
                         {
                             info.Name = $"Disk {list.Count} (Internal Hard Disk [WEATHEROS], {FormatSectors(pd.BlockCount)})";
                         }
+                        list.Add(info);
+                    }
+                }
+            }
+            catch { }
+
+            // 1.5. Probe Bare-Metal SATA AHCI driver
+            try
+            {
+                var ahciDrives = AhciDriverService.GetDrives();
+                if (ahciDrives != null && ahciDrives.Count > 0)
+                {
+                    for (int a = 0; a < ahciDrives.Count; a++)
+                    {
+                        var ad = ahciDrives[a];
+                        if (ad == null) continue;
+                        if (ad.BlockCount == 0 || ad.BlockCount > 20000000000UL) continue;
+
+                        byte[] testSec = new byte[512];
+                        try { ad.ReadBlock(0, 1, ref testSec); } catch { continue; }
+                        if (IsDuplicateOfExisting(list, ad, testSec)) continue;
+
+                        var info = new DiskDriveInfo
+                        {
+                            Index = list.Count,
+                            Device = ad,
+                            Name = $"Disk {list.Count} (SATA AHCI: {ad.Model})",
+                            SectorCount = ad.BlockCount,
+                            Sector0Cache = testSec
+                        };
+
+                        ProbeDriveFilesystems(ad, list.Count, info);
                         list.Add(info);
                     }
                 }
@@ -459,6 +487,7 @@ namespace WeatherOS.Services
                 }
             }
 
+            _cachedPhysicalDrives = list;
             return list;
         }
 
@@ -742,6 +771,12 @@ namespace WeatherOS.Services
             // 1. Check partition table in MBR (Sector 0)
             try
             {
+                // Check if device is Partition (slice already pointing to partition start)
+                if (dev is Partition)
+                {
+                    if (CheckFat32Bpb(dev, 0, out vol)) return true;
+                }
+
                 byte[] mbr = new byte[512];
                 dev.ReadBlock(0, 1, ref mbr);
                 if (mbr[510] == 0x55 && mbr[511] == 0xAA)
@@ -750,7 +785,7 @@ namespace WeatherOS.Services
                     {
                         int off = 446 + (p * 16);
                         uint startLba = (uint)(mbr[off + 8] | (mbr[off + 9] << 8) | (mbr[off + 10] << 16) | (mbr[off + 11] << 24));
-                        if (startLba > 0 && startLba < dev.BlockCount)
+                        if (startLba > 0 && (dev.BlockCount == 0 || startLba < dev.BlockCount))
                         {
                             if (CheckFat32Bpb(dev, startLba, out vol))
                             {

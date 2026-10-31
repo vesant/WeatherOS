@@ -58,7 +58,7 @@ namespace WeatherOS.Apps
             }
 
             // Essential shortcut bar
-            win.WriteFooter("[R] Refresh  |  [C] Change City  |  [F] 7-Day Forecast  |  [ESC] Exit", ConsoleColor.Yellow);
+            win.WriteFooter("[R] Refresh | [M] World Map | [C] City | [F] 7-Day Forecast | [ESC] Exit", ConsoleColor.Yellow);
         }
 
         public void HandleInput(TuiDesktop desktop, KeyEvent keyEvent)
@@ -66,6 +66,10 @@ namespace WeatherOS.Apps
             if (keyEvent.Key == ConsoleKeyEx.Escape)
             {
                 desktop.SetCurrentApp("launcher");
+            }
+            else if (keyEvent.Key == ConsoleKeyEx.M || keyEvent.KeyChar == 'm' || keyEvent.KeyChar == 'M')
+            {
+                desktop.SetCurrentApp("world_map");
             }
             else if (keyEvent.Key == ConsoleKeyEx.F || keyEvent.Key == ConsoleKeyEx.D7 || keyEvent.Key == ConsoleKeyEx.Num7)
             {

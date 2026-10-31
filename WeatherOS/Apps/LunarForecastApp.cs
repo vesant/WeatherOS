@@ -22,7 +22,9 @@ namespace WeatherOS.Apps
 
             string moonPhase = "Waxing Crescent";
             string moonIllum = "15%";
-            string dateStr = DateTime.UtcNow.ToString("yyyy-MM-dd");
+            int nowY, nowM, nowD, nowH, nowMin, nowSec;
+            TimeService.GetCurrentUtcTime(out nowY, out nowM, out nowD, out nowH, out nowMin, out nowSec);
+            string dateStr = nowY + "-" + (nowM < 10 ? "0" : "") + nowM + "-" + (nowD < 10 ? "0" : "") + nowD;
             string dayHeader = "TODAY";
 
             if (days != null && _selectedDay >= 0 && _selectedDay < days.Length)

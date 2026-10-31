@@ -681,7 +681,7 @@ namespace WeatherOS.Services
 
                 if (encTotal > 5)
                 {
-                    var fullPlain = new StringBuilder();
+                    string fullPlain = "";
                     int recOffset = 0;
 
                     while (recOffset + 5 < encTotal)
@@ -717,7 +717,7 @@ namespace WeatherOS.Services
                                 }
                                 if (plainLen > 0)
                                 {
-                                    fullPlain.Append(Encoding.ASCII.GetString(decrypted, 0, plainLen));
+                                    fullPlain += Encoding.ASCII.GetString(decrypted, 0, plainLen);
                                 }
                             }
                         }
@@ -725,9 +725,27 @@ namespace WeatherOS.Services
                         recOffset += 5 + appLen;
                     }
 
-                    string plainHttp = fullPlain.ToString();
+                    string plainHttp = fullPlain;
                     if (!string.IsNullOrEmpty(plainHttp))
                     {
+                        try
+                        {
+                            int dIdx = plainHttp.IndexOf("\r\nDate: ", StringComparison.OrdinalIgnoreCase);
+                            if (dIdx == -1) dIdx = plainHttp.IndexOf("\nDate: ", StringComparison.OrdinalIgnoreCase);
+                            if (dIdx != -1)
+                            {
+                                int valStart = plainHttp.IndexOf(':', dIdx) + 1;
+                                int lineEnd = plainHttp.IndexOf("\r\n", valStart);
+                                if (lineEnd == -1) lineEnd = plainHttp.IndexOf('\n', valStart);
+                                if (lineEnd > valStart)
+                                {
+                                    string dateLine = plainHttp.Substring(valStart, lineEnd - valStart).Trim();
+                                    TimeService.SyncFromHttpDate(dateLine);
+                                }
+                            }
+                        }
+                        catch { }
+
                         int bodyIdx = plainHttp.IndexOf("\r\n\r\n");
                         if (bodyIdx >= 0)
                         {

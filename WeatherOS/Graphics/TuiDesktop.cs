@@ -18,6 +18,12 @@ namespace WeatherOS.Graphics
     public class TuiDesktop
     {
         public static bool IsGuiActive = false;
+
+        public static int RealCpuUsagePct = 2;
+
+        private static ulong _activeTimeAccumulator = 0;
+
+        private static ulong _idleTimeAccumulator = 0;
         private bool _isActive;
         private string _currentApp = "launcher";
         private WeatherService _weatherService;
@@ -31,8 +37,8 @@ namespace WeatherOS.Graphics
         private int _launcherColumn = 0; // 0=Left, 1=Right
         private int _launcherLeftIndex = 0;
         private int _launcherRightIndex = 0;
-        private string[] _apps = { "Weather Dashboard", "7-Day Weather Forecast", "Lunar Observatory", "Change City", "Digital Clock", "Calculator", "Notepad", "File & Storage Explorer", "System Information", "Network Config", "Settings", "Reboot System", "Poweroff System" };
-        private string[] _appIds = { "weather", "forecast_7d", "lunar_forecast", "change_city", "clock", "calculator", "notepad", "diskmgr", "about", "ipconfig", "settings", "reboot", "poweroff" };
+        private string[] _apps = { "Weather Dashboard", "World Weather Map", "7-Day Weather Forecast", "Lunar Observatory", "Change City", "Digital Clock", "Calculator", "Notepad", "File & Storage Explorer", "System Information", "Network Config", "Settings", "Reboot System", "Poweroff System" };
+        private string[] _appIds = { "weather", "world_map", "forecast_7d", "lunar_forecast", "change_city", "clock", "calculator", "notepad", "diskmgr", "about", "ipconfig", "settings", "reboot", "poweroff" };
 
         // Configuration State
         private bool _isDarkMode = false;
@@ -60,6 +66,7 @@ namespace WeatherOS.Graphics
         private void RegisterApps()
         {
             RegisterApp(new WeatherDashboardApp());
+            RegisterApp(new WorldWeatherMapApp());
             RegisterApp(new WeatherForecastApp());
             RegisterApp(new LunarForecastApp());
             RegisterApp(new ChangeCityApp());
@@ -77,7 +84,6 @@ namespace WeatherOS.Graphics
 
             RegisterApp(new SystemResourcesApp());
             RegisterApp(new DebugMenuApp());
-            RegisterApp(new DiskDiagnosticsApp());
             RegisterApp(new BatteryDiagnosticsApp());
             RegisterApp(new InstallerApp());
         }
@@ -166,6 +172,8 @@ namespace WeatherOS.Graphics
                          $"Timezone={TimeService.TimezoneOffset}\n";
             string status;
             StorageService.SaveFile("settings.ini", cfg, out status);
+
+            // Saved instantly to RAM store and VFS without blocking hardware bus
         }
 
         public string GetDefaultApiKey()
@@ -183,13 +191,13 @@ namespace WeatherOS.Graphics
             if (_showDebugLogs)
             {
                 return new string[] {
-                    "Weather Dashboard", "7-Day Weather Forecast", "Lunar Observatory", "Change City", "Digital Clock", "Calculator",
+                    "Weather Dashboard", "World Weather Map", "7-Day Weather Forecast", "Lunar Observatory", "Change City", "Digital Clock", "Calculator",
                     "Notepad", "File & Storage Explorer", "System Information", "Network Config",
                     "Debug Menu [Diagnostics]", "Settings", "Reboot System", "Poweroff System"
                 };
             }
             return new string[] {
-                "Weather Dashboard", "7-Day Weather Forecast", "Lunar Observatory", "Change City", "Digital Clock", "Calculator",
+                "Weather Dashboard", "World Weather Map", "7-Day Weather Forecast", "Lunar Observatory", "Change City", "Digital Clock", "Calculator",
                 "Notepad", "File & Storage Explorer", "System Information", "Network Config",
                 "Settings", "Reboot System", "Poweroff System"
             };
@@ -200,13 +208,13 @@ namespace WeatherOS.Graphics
             if (_showDebugLogs)
             {
                 return new string[] {
-                    "weather", "forecast_7d", "lunar_forecast", "change_city", "clock", "calculator",
+                    "weather", "world_map", "forecast_7d", "lunar_forecast", "change_city", "clock", "calculator",
                     "notepad", "diskmgr", "about", "ipconfig",
                     "debug_menu", "settings", "reboot", "poweroff"
                 };
             }
             return new string[] {
-                "weather", "forecast_7d", "lunar_forecast", "change_city", "clock", "calculator",
+                "weather", "world_map", "forecast_7d", "lunar_forecast", "change_city", "clock", "calculator",
                 "notepad", "diskmgr", "about", "ipconfig",
                 "settings", "reboot", "poweroff"
             };
@@ -214,11 +222,25 @@ namespace WeatherOS.Graphics
 
         public void SetCurrentApp(string appId)
         {
+            if (appId != "world_map")
+            {
+                WeatherOS.Apps.WorldWeatherMapApp.ExitFullScreenBroadcastMode();
+            }
             _currentApp = appId;
             if (appId == "diskmgr")
             {
                 var dm = GetApp("diskmgr") as WeatherOS.Apps.DiskManagerApp;
                 dm?.Refresh();
+            }
+            else if (appId == "settings")
+            {
+                var st = GetApp("settings") as WeatherOS.Apps.SettingsApp;
+                st?.RefreshBuffers(this);
+            }
+            else if (appId == "world_map")
+            {
+                var wm = GetApp("world_map") as WeatherOS.Apps.WorldWeatherMapApp;
+                wm?.SyncRegionFromSettings(this);
             }
         }
 
@@ -247,6 +269,9 @@ namespace WeatherOS.Graphics
         private void RunLoop()
         {
             IsGuiActive = true;
+            DrainKeyboardBuffer();
+            HardwareDelayMs(100);
+            DrainKeyboardBuffer();
             System.Console.Clear();
             try
             {
@@ -275,6 +300,7 @@ namespace WeatherOS.Graphics
                             }
                             HardwareDelayMs(100);
                             TimeService.Tick(100);
+                            if (_currentApp != "world_map") DrawMiniClock(force: false);
                         }
                     }
                     else
@@ -292,6 +318,7 @@ namespace WeatherOS.Graphics
                             }
                             HardwareDelayMs(15);
                             TimeService.Tick(15);
+                            if (_currentApp != "world_map") DrawMiniClock(force: false);
                         }
 
                         if (_isActive && hasKey)
@@ -303,7 +330,11 @@ namespace WeatherOS.Graphics
             }
             finally
             {
+                WeatherOS.Apps.WorldWeatherMapApp.ExitFullScreenBroadcastMode();
                 IsGuiActive = false;
+                DrainKeyboardBuffer();
+                HardwareDelayMs(100);
+                DrainKeyboardBuffer();
             }
 
             System.Console.Clear();
@@ -314,11 +345,21 @@ namespace WeatherOS.Graphics
 
         private void ProcessKeyEvent(KeyEvent keyEvent)
         {
+            if (keyEvent.Key == ConsoleKeyEx.LWin || keyEvent.Key == ConsoleKeyEx.RWin)
+            {
+                if (_currentApp == "settings") SaveSettings();
+                _isActive = false;
+                DrainKeyboardBuffer();
+                HardwareDelayMs(150);
+                DrainKeyboardBuffer();
+                return;
+            }
+
             if (keyEvent.Key == ConsoleKeyEx.Escape)
             {
                 if (_currentApp == "settings") SaveSettings();
                 
-                if (_currentApp == "notepad" || _currentApp == "transfer" || _currentApp == "about" || _currentApp == "installer")
+                if (_currentApp == "notepad" || _currentApp == "transfer" || _currentApp == "about" || _currentApp == "installer" || _currentApp == "world_map")
                 {
                     IApp curApp = GetApp(_currentApp);
                     curApp?.HandleInput(this, keyEvent);
@@ -348,21 +389,21 @@ namespace WeatherOS.Graphics
         public List<LauncherAppEntry> GetLeftLauncherItems()
         {
             var list = new List<LauncherAppEntry>();
-            // Category: Meteorology & Forecast
+            // Category: Meteorology & Forecast (5 items)
             list.Add(new LauncherAppEntry { Id = "weather", Name = "Weather Dashboard", Description = "Real-time weather station telemetry, temp & humidity.", Category = "METEOROLOGY" });
+            list.Add(new LauncherAppEntry { Id = "world_map", Name = "World Weather Map", Description = "Visual continental weather map showing regional telemetry & icons.", Category = "METEOROLOGY" });
             list.Add(new LauncherAppEntry { Id = "forecast_7d", Name = "7-Day Forecast", Description = "Multi-day meteorological forecast and climate trends.", Category = "METEOROLOGY" });
             list.Add(new LauncherAppEntry { Id = "lunar_forecast", Name = "Lunar Observatory", Description = "Astronomical calculations, lunar phases and illumination.", Category = "METEOROLOGY" });
             list.Add(new LauncherAppEntry { Id = "change_city", Name = "Change Location", Description = "Configure target city and station coordinates.", Category = "METEOROLOGY" });
 
-            // Category: Dedicated Networking & File Sync
+            // Category: Dedicated Networking & File Sync (2 items)
             list.Add(new LauncherAppEntry { Id = "transfer", Name = "File Transfer & OTA", Description = "Send/Receive files and OS updates over network (UDP 7331).", Category = "NETWORKING" });
             list.Add(new LauncherAppEntry { Id = "ipconfig", Name = "Network Config", Description = "Ethernet NIC configuration, IP, gateway and DNS info.", Category = "NETWORKING" });
 
-            // Category: Utilities & Tools
+            // Category: Utilities & Tools (3 items)
             list.Add(new LauncherAppEntry { Id = "notepad", Name = "Notepad (Editor)", Description = "Text editor with direct FAT32 disk & RAM store support.", Category = "UTILITIES" });
             list.Add(new LauncherAppEntry { Id = "calculator", Name = "Calculator", Description = "Arithmetic calculations, trigonometry & scientific math.", Category = "UTILITIES" });
-            list.Add(new LauncherAppEntry { Id = "clock", Name = "Digital Clock", Description = "Live hardware RTC real-time clock and calendar display.", Category = "UTILITIES" });
-            list.Add(new LauncherAppEntry { Id = "settings", Name = "System Settings", Description = "Configure dark mode theme, default station and options.", Category = "UTILITIES" });
+            list.Add(new LauncherAppEntry { Id = "clock", Name = "Digital Clock", Description = "Live calibrated digital clock and calendar display.", Category = "UTILITIES" });
 
             return list;
         }
@@ -371,12 +412,15 @@ namespace WeatherOS.Graphics
         {
             var list = new List<LauncherAppEntry>();
             // Category: Storage & System
+            list.Add(new LauncherAppEntry { Id = "settings", Name = "System Settings", Description = "Configure dark mode theme, default station, clock and options.", Category = "STORAGE & SYSTEM" });
             list.Add(new LauncherAppEntry { Id = "diskmgr", Name = "File Explorer", Description = "Browse FAT32 disk partitions, files & RAM virtual store.", Category = "STORAGE & SYSTEM" });
-            list.Add(new LauncherAppEntry { Id = "diskdiag", Name = "Storage Diagnostics", Description = "Hardware ATA/AHCI scan, automated self-test & partition info.", Category = "STORAGE & SYSTEM" });
             list.Add(new LauncherAppEntry { Id = "resources", Name = "System Resources", Description = "Real-time CPU telemetry, memory heap and system load.", Category = "STORAGE & SYSTEM" });
             list.Add(new LauncherAppEntry { Id = "battery", Name = "Battery & Power", Description = "AC adapter status, battery percentage & power health.", Category = "STORAGE & SYSTEM" });
-            list.Add(new LauncherAppEntry { Id = "about", Name = "System Information", Description = "Kernel specs, changelog release notes & OTA update manager.", Category = "STORAGE & SYSTEM" });
-            list.Add(new LauncherAppEntry { Id = "installer", Name = "Install to Disk", Description = "Permanent setup wizard: partition FAT32 & install boot files.", Category = "STORAGE & SYSTEM" });
+            list.Add(new LauncherAppEntry { Id = "about", Name = "System Information", Description = "Kernel specs, changelog release notes & system details.", Category = "STORAGE & SYSTEM" });
+            if (!UpdateManagerService.IsInstalledOnDisk())
+            {
+                list.Add(new LauncherAppEntry { Id = "installer", Name = "Install to Disk", Description = "Permanent setup wizard: partition FAT32 & install boot files.", Category = "STORAGE & SYSTEM" });
+            }
 
             // Category: System Power
             list.Add(new LauncherAppEntry { Id = "reboot", Name = "Reboot System", Description = "Safely restart the computer and reload WeatherOS.", Category = "POWER & SYSTEM" });
@@ -466,6 +510,17 @@ namespace WeatherOS.Graphics
         {
             System.Console.CursorVisible = false;
 
+            if (_currentApp == "world_map")
+            {
+                IApp mapApp = GetApp("world_map");
+                if (mapApp != null)
+                {
+                    mapApp.Draw(this);
+                    return;
+                }
+            }
+            WeatherOS.Apps.WorldWeatherMapApp.ExitFullScreenBroadcastMode();
+
             ConsoleColor bgDesktop = _isDarkMode ? ConsoleColor.Black : ConsoleColor.DarkBlue;
             System.Console.BackgroundColor = bgDesktop;
             
@@ -473,7 +528,7 @@ namespace WeatherOS.Graphics
             string topText;
             if (_currentApp == "launcher")
             {
-                topText = " WeatherOS Desktop  |  Categorized Meteorological System";
+                topText = " WeatherOS Desktop  |  Meteorological System";
             }
             else if (_currentApp == "notepad")
             {
@@ -493,6 +548,13 @@ namespace WeatherOS.Graphics
                 Screen.ClearLine(y, bgDesktop);
             }
 
+            // Clean any hardware diagnostic exception banner written to VGA row 1 (0x000B80A0)
+            try
+            {
+                Screen.ClearLine(1, bgDesktop);
+            }
+            catch { }
+
             if (_currentApp == "launcher")
             {
                 DrawLauncher();
@@ -510,18 +572,21 @@ namespace WeatherOS.Graphics
                 }
             }
 
-            // Bottom Bar (Row 24)
+            // Bottom Bar (Row 24) - clipped to column 68 so mini digital clock stays in bottom right corner
             string btmText;
             if (_currentApp == "launcher")
             {
-                btmText = " [Arrows/Tab] Navigate Categories  |  [Enter] Open Application  |  [ESC] Exit";
+                btmText = " [Arrows/Tab] Navigate  |  [Enter] Open  |  [ESC] Exit";
             }
             else
             {
                 btmText = " WeatherOS v3.0  |  Cosmos x86 Dedicated Meteorological Kernel";
             }
-            Screen.WriteClipped(0, Screen.Height - 1, btmText, Screen.Width - 1, ConsoleColor.Black, ConsoleColor.Gray, true);
+            Screen.WriteClipped(0, Screen.Height - 1, btmText, 68, ConsoleColor.Black, ConsoleColor.Gray, true);
             System.Console.ResetColor();
+
+            // Overlay Mini Digital Clock in Bottom Right Corner (Rows 23 & 24, Cols 69..79)
+            DrawMiniClock(force: true);
         }
 
         private void DrawLauncher()
@@ -553,32 +618,32 @@ namespace WeatherOS.Graphics
             }
 
             // --- LEFT COLUMN ---
-            // Category 1: Meteorology & Forecast (items 0 to 3)
+            // Category 1: Meteorology & Forecast (items 0 to 4)
             WriteInsideWindow(left, 36, top + 2, 1, "[ METEOROLOGY & FORECAST ]", ConsoleColor.Yellow, winBg);
 
-            for (int i = 0; i < 4 && i < leftItems.Count; i++)
+            for (int i = 0; i < 5 && i < leftItems.Count; i++)
             {
                 int rowY = top + 3 + i;
                 bool isSel = (_launcherColumn == 0 && _launcherLeftIndex == i);
                 DrawLauncherItemRow(left + 2, rowY, leftItems[i].Name, isSel, 33, winBg);
             }
 
-            // Category 2: Networking & File Sync (items 4 to 5)
-            WriteInsideWindow(left, 36, top + 7, 1, "[ NETWORKING & FILE SYNC ]", ConsoleColor.Yellow, winBg);
+            // Category 2: Networking & File Sync (items 5 to 6)
+            WriteInsideWindow(left, 36, top + 8, 1, "[ NETWORKING & FILE SYNC ]", ConsoleColor.Yellow, winBg);
 
-            for (int i = 4; i < 6 && i < leftItems.Count; i++)
+            for (int i = 5; i < 7 && i < leftItems.Count; i++)
             {
-                int rowY = top + 8 + (i - 4);
+                int rowY = top + 9 + (i - 5);
                 bool isSel = (_launcherColumn == 0 && _launcherLeftIndex == i);
                 DrawLauncherItemRow(left + 2, rowY, leftItems[i].Name, isSel, 33, winBg);
             }
 
-            // Category 3: Utilities & Tools (items 6 to end)
-            WriteInsideWindow(left, 36, top + 10, 1, "[ UTILITIES & TOOLS ]", ConsoleColor.Yellow, winBg);
+            // Category 3: Utilities & Tools (items 7 to end)
+            WriteInsideWindow(left, 36, top + 11, 1, "[ UTILITIES & TOOLS ]", ConsoleColor.Yellow, winBg);
 
-            for (int i = 6; i < leftItems.Count; i++)
+            for (int i = 7; i < leftItems.Count; i++)
             {
-                int rowY = top + 11 + (i - 6);
+                int rowY = top + 12 + (i - 7);
                 if (rowY <= top + 14)
                 {
                     bool isSel = (_launcherColumn == 0 && _launcherLeftIndex == i);
@@ -587,26 +652,35 @@ namespace WeatherOS.Graphics
             }
 
             // --- RIGHT COLUMN ---
-            // Category 4: Storage & System (items 0 to 4)
+            // Category 4: Storage & System
             WriteClipped(40, top + 2, "[ STORAGE & SYSTEM ]", 34, ConsoleColor.Yellow, winBg);
+            int storageY = top + 3;
+            int powerY = top + 9;
+            bool powerHeaderDrawn = false;
 
-            for (int i = 0; i < 5 && i < rightItems.Count; i++)
+            for (int i = 0; i < rightItems.Count; i++)
             {
-                int rowY = top + 3 + i;
                 bool isSel = (_launcherColumn == 1 && _launcherRightIndex == i);
-                DrawLauncherItemRow(40, rowY, rightItems[i].Name, isSel, 33, winBg);
-            }
-
-            // Category 5: System Power (items 5 to end)
-            WriteClipped(40, top + 8, "[ SYSTEM POWER ]", 34, ConsoleColor.Yellow, winBg);
-
-            for (int i = 5; i < rightItems.Count; i++)
-            {
-                int rowY = top + 9 + (i - 5);
-                if (rowY <= top + 14)
+                if (rightItems[i].Category == "STORAGE & SYSTEM")
                 {
-                    bool isSel = (_launcherColumn == 1 && _launcherRightIndex == i);
-                    DrawLauncherItemRow(40, rowY, rightItems[i].Name, isSel, 33, winBg);
+                    if (storageY <= top + 8)
+                    {
+                        DrawLauncherItemRow(40, storageY, rightItems[i].Name, isSel, 33, winBg);
+                        storageY++;
+                    }
+                }
+                else
+                {
+                    if (!powerHeaderDrawn)
+                    {
+                        WriteClipped(40, powerY, "[ SYSTEM POWER ]", 34, ConsoleColor.Yellow, winBg);
+                        powerHeaderDrawn = true;
+                    }
+                    powerY++;
+                    if (powerY <= top + 14)
+                    {
+                        DrawLauncherItemRow(40, powerY, rightItems[i].Name, isSel, 33, winBg);
+                    }
                 }
             }
 
@@ -617,15 +691,24 @@ namespace WeatherOS.Graphics
             System.Console.Write(new string('-', width - 2));
 
             // Selected App Details Box
-            LauncherAppEntry currentSelected = _launcherColumn == 0
-                ? leftItems[_launcherLeftIndex]
-                : rightItems[_launcherRightIndex];
+            LauncherAppEntry currentSelected = null;
+            if (_launcherColumn == 0 && leftItems.Count > 0 && _launcherLeftIndex < leftItems.Count)
+            {
+                currentSelected = leftItems[_launcherLeftIndex];
+            }
+            else if (_launcherColumn == 1 && rightItems.Count > 0 && _launcherRightIndex < rightItems.Count)
+            {
+                currentSelected = rightItems[_launcherRightIndex];
+            }
 
-            string selHeader = $"Selected: {currentSelected.Name}  [{currentSelected.Category}]";
-            WriteInsideWindow(left, width, top + 16, 1, selHeader, ConsoleColor.Yellow, winBg);
+            if (currentSelected != null)
+            {
+                string selHeader = $"Selected: {currentSelected.Name}  [{currentSelected.Category}]";
+                WriteInsideWindow(left, width, top + 16, 1, selHeader, ConsoleColor.Yellow, winBg);
 
-            string desc = currentSelected.Description;
-            WriteInsideWindow(left, width, top + 17, 1, desc, ConsoleColor.Gray, winBg);
+                string desc = currentSelected.Description;
+                WriteInsideWindow(left, width, top + 17, 1, desc, ConsoleColor.Gray, winBg);
+            }
 
             // Horizontal Divider before controls
             System.Console.SetCursorPosition(left + 1, top + 18);
@@ -911,13 +994,61 @@ namespace WeatherOS.Graphics
             System.Console.Write(msg);
         }
 
+        private static int _lastMiniClockMin = -1;
+        private static int _lastMiniClockDay = -1;
+
+        public static void DrainKeyboardBuffer()
+        {
+            try
+            {
+                while (KeyboardManager.TryReadKey(out _)) { }
+                var pStatus = new Cosmos.Core.IOPort(0x64);
+                var pData = new Cosmos.Core.IOPort(0x60);
+                for (int i = 0; i < 20; i++)
+                {
+                    if ((pStatus.Byte & 0x01) != 0)
+                    {
+                        byte _ = pData.Byte;
+                    }
+                    else break;
+                }
+                _ps2Extended = false;
+            }
+            catch { }
+        }
+
+        public static void DrawMiniClock(bool force = false)
+        {
+            try
+            {
+                int year, month, day, hour, minute, second;
+                WeatherOS.Services.TimeService.GetCurrentLocalTime(out year, out month, out day, out hour, out minute, out second);
+
+                if (!force && minute == _lastMiniClockMin && day == _lastMiniClockDay)
+                {
+                    return;
+                }
+
+                _lastMiniClockMin = minute;
+                _lastMiniClockDay = day;
+
+                string timeStr = $"   {hour:D2}:{minute:D2}  ";
+                string dateStr = $"{day:D2}/{month:D2}/{year:D4} ";
+
+                Screen.WriteClipped(69, 23, timeStr, 11, ConsoleColor.White, ConsoleColor.Black, true);
+                Screen.WriteClipped(69, 24, dateStr, 11, ConsoleColor.White, ConsoleColor.Black, true);
+            }
+            catch { }
+        }
+
+
         public static void HardwareDelayMs(int ms)
         {
             if (ms <= 0) return;
             try
             {
                 var port = new Cosmos.Core.IOPort(0x80);
-                int count = ms * 200;
+                int count = ms * 1000;
                 for (int i = 0; i < count; i++)
                 {
                     port.Byte = 0;
@@ -988,7 +1119,9 @@ namespace WeatherOS.Graphics
                                     case 0x51: key = ConsoleKeyEx.PageDown; break;
                                     case 0x53: key = ConsoleKeyEx.Delete; break;
                                     case 0x1C: key = ConsoleKeyEx.Enter; keyChar = '\r'; break;
-                                }
+                                    case 0x5B: key = ConsoleKeyEx.LWin; break;
+                                    case 0x5C: key = ConsoleKeyEx.RWin; break;
+                                                                    }
                             }
                             else
                             {
@@ -1039,6 +1172,8 @@ namespace WeatherOS.Graphics
                                     case 0x4B: key = ConsoleKeyEx.LeftArrow; break;
                                     case 0x4D: key = ConsoleKeyEx.RightArrow; break;
                                     case 0x50: key = ConsoleKeyEx.DownArrow; break;
+                                    case 0x5B: key = ConsoleKeyEx.LWin; break;
+                                    case 0x5C: key = ConsoleKeyEx.RWin; break;
                                 }
                             }
 

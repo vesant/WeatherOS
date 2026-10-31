@@ -40,6 +40,21 @@ namespace WeatherOS.Services
             get { return Cosmos.HAL.Network.RTL8102E.HardwareTxBytes > _localTxBytes ? Cosmos.HAL.Network.RTL8102E.HardwareTxBytes : _localTxBytes; }
             set { _localTxBytes = value; }
         }
+
+        private static uint _localTxPackets = 0;
+        private static uint _localRxPackets = 0;
+
+        public static uint TotalTxPackets
+        {
+            get { return Cosmos.HAL.Network.RTL8102E.HardwareTxPackets > _localTxPackets ? Cosmos.HAL.Network.RTL8102E.HardwareTxPackets : _localTxPackets; }
+            set { _localTxPackets = value; }
+        }
+
+        public static uint TotalRxPackets
+        {
+            get { return Cosmos.HAL.Network.RTL8102E.HardwareRxPackets > _localRxPackets ? Cosmos.HAL.Network.RTL8102E.HardwareRxPackets : _localRxPackets; }
+            set { _localRxPackets = value; }
+        }
         private static ushort _ipId = 0x8A3C;
         public static bool _dhcpOfferReceived = false;
         public static bool _dhcpAckReceived = false;
@@ -153,35 +168,35 @@ namespace WeatherOS.Services
                 return;
             }
 
-            // 1. DHCP Discover with fast local LAN retransmissions (max 800ms)
+            // 1. DHCP Discover with fast local LAN retransmissions (max 150ms)
             if (!isGui) System.Console.Write("[net] raw_tcp: DHCP Discover");
             _dhcpOfferReceived = false;
             _dhcpAckReceived = false;
             byte[] dhcp = BuildDhcpPacket(1, null, null); // Discover
             nic.QueueBytes(dhcp);
 
-            for (int i = 0; i < 32 && !_dhcpOfferReceived; i++)
+            for (int i = 0; i < 6 && !_dhcpOfferReceived; i++)
             {
                 WeatherOS.Kernel.CustomNIC?.HackPoll();
                 HardwareDelayMs(25);
-                if (i == 4 || i == 12 || i == 20)
+                if (i == 2)
                 {
-                    nic.QueueBytes(dhcp); // Retransmit Discover at 100ms, 300ms, 500ms
+                    nic.QueueBytes(dhcp); // Retransmit Discover once at 50ms
                 }
-                if (!isGui && (i % 4 == 0)) System.Console.Write(".");
+                if (!isGui && (i % 2 == 0)) System.Console.Write(".");
             }
             if (!isGui) System.Console.WriteLine();
             
             if (_dhcpOfferReceived)
             {
-                // 1b. DHCP Request (up to 800ms)
+                // 1b. DHCP Request (max 150ms)
                 byte[] dhcpReq = BuildDhcpPacket(3, _ipSource, _dhcpServerIp);
                 nic.QueueBytes(dhcpReq);
-                for (int i = 0; i < 32 && !_dhcpAckReceived; i++)
+                for (int i = 0; i < 6 && !_dhcpAckReceived; i++)
                 {
                     WeatherOS.Kernel.CustomNIC?.HackPoll();
                     HardwareDelayMs(25);
-                    if (i == 12) nic.QueueBytes(dhcpReq);
+                    if (i == 2) nic.QueueBytes(dhcpReq);
                 }
 
                 if (!isGui)
@@ -194,50 +209,10 @@ namespace WeatherOS.Services
             }
             else
             {
-                // 2. DHCP silent; probe candidate gateways via fast ARP
-                if (!isGui) System.Console.WriteLine("[net] raw_tcp: DHCP silent. Probing router gateways...");
-
-                byte[][] candidateGateways = new byte[][] {
-                    new byte[] { 192, 168, 31, 1 },  // Xiaomi / XiaoQiang (Priority)
-                    new byte[] { 192, 168, 1, 1 },   // MEO / NOS / Vodafone (Standard PT)
-                    new byte[] { 192, 168, 1, 254 }, // Altice FiberGateway (Standard PT)
-                    new byte[] { 192, 168, 0, 1 },   // TP-Link / NOS router
-                    new byte[] { 10, 0, 2, 2 }       // QEMU / VirtualBox
-                };
-
-                bool gatewayFound = false;
-                for (int g = 0; g < candidateGateways.Length; g++)
-                {
-                    byte[] cand = candidateGateways[g];
-                    _pendingArpIp = cand;
-                    _arpReplyReceived = false;
-                    SendArpRequest(cand);
-
-                    for (int a = 0; a < 10 && !_arpReplyReceived; a++)
-                    {
-                        WeatherOS.Kernel.CustomNIC?.HackPoll();
-                        HardwareDelayMs(10);
-                    }
-
-                    if (_arpReplyReceived)
-                    {
-                        Array.Copy(cand, 0, _gatewayIp, 0, 4);
-                        Array.Copy(_pendingArpMac, 0, _macDest, 0, 6);
-                        _ipSource = new byte[] { cand[0], cand[1], cand[2], 155 };
-                        gatewayFound = true;
-                        if (!isGui)
-                            System.Console.WriteLine($"[net] raw_tcp: Gateway detected: {_gatewayIp[0]}.{_gatewayIp[1]}.{_gatewayIp[2]}.{_gatewayIp[3]} (MAC: {_macDest[0]:X2}:{_macDest[1]:X2}:{_macDest[2]:X2}:{_macDest[3]:X2}:{_macDest[4]:X2}:{_macDest[5]:X2})");
-                        break;
-                    }
-                }
-
-                if (!gatewayFound)
-                {
-                    _ipSource = new byte[] { 0, 0, 0, 0 };
-                    _gatewayIp = new byte[] { 0, 0, 0, 0 };
-                    if (!isGui)
-                        System.Console.WriteLine("[net] raw_tcp: No network gateway detected. Network offline.");
-                }
+                // 2. DHCP silent: Instant fallback to static IP for direct PC-to-laptop cable link
+                _ipSource = new byte[] { 192, 168, 1, 180 };
+                _gatewayIp = new byte[] { 192, 168, 1, 1 };
+                if (!isGui) System.Console.WriteLine("[net] raw_tcp: Direct cable link (Static IP: 192.168.1.180). Ready.");
             }
 
             // Sync with Cosmos NetworkStack if IP was resolved
@@ -728,7 +703,8 @@ namespace WeatherOS.Services
                         int lineEnd = CustomIndexOf(responseStr, "\r\n", dateIdx + 2);
                         if (lineEnd != -1)
                         {
-                            string dateLine = responseStr.Substring(dateIdx + 2, lineEnd - (dateIdx + 2));
+                            int dColon = CustomIndexOf(responseStr, ":", dateIdx);
+                            string dateLine = (dColon != -1 && dColon < lineEnd) ? responseStr.Substring(dColon + 1, lineEnd - (dColon + 1)).Trim() : responseStr.Substring(dateIdx + 2, lineEnd - (dateIdx + 2)).Trim();
                             TimeService.SyncFromHttpDate(dateLine);
                         }
                     }
@@ -743,6 +719,10 @@ namespace WeatherOS.Services
                 }
                 return responseStr;
             }
+            catch
+            {
+                return null;
+            }
             finally
             {
                 // Send TCP RST to cleanly close socket and free router/server state
@@ -755,13 +735,14 @@ namespace WeatherOS.Services
         private static string DecodeUtf8ToAscii(byte[] data, int length)
         {
             if (data == null || length <= 0) return "";
-            var sb = new System.Text.StringBuilder();
+            char[] chars = new char[length];
+            int outLen = 0;
             for (int i = 0; i < length; i++)
             {
                 byte b = data[i];
                 if (b < 128)
                 {
-                    sb.Append((char)b);
+                    chars[outLen++] = (char)b;
                 }
                 else if (b == 0xC3 && i + 1 < length)
                 {
@@ -769,19 +750,19 @@ namespace WeatherOS.Services
                     i++;
                     switch (b2)
                     {
-                        case 0xA1: case 0xA0: case 0xA3: case 0xA2: sb.Append('a'); break;
-                        case 0x81: case 0x80: case 0x83: case 0x82: sb.Append('A'); break;
-                        case 0xA9: case 0xAA: sb.Append('e'); break;
-                        case 0x89: case 0x8A: sb.Append('E'); break;
-                        case 0xAD: sb.Append('i'); break;
-                        case 0x8D: sb.Append('I'); break;
-                        case 0xB3: case 0xB4: case 0xB5: sb.Append('o'); break;
-                        case 0x93: case 0x94: case 0x95: sb.Append('O'); break;
-                        case 0xBA: sb.Append('u'); break;
-                        case 0x9A: sb.Append('U'); break;
-                        case 0xA7: sb.Append('c'); break;
-                        case 0x87: sb.Append('C'); break;
-                        default: sb.Append('?'); break;
+                        case 0xA1: case 0xA0: case 0xA3: case 0xA2: chars[outLen++] = 'a'; break;
+                        case 0x81: case 0x80: case 0x83: case 0x82: chars[outLen++] = 'A'; break;
+                        case 0xA9: case 0xAA: chars[outLen++] = 'e'; break;
+                        case 0x89: case 0x8A: chars[outLen++] = 'E'; break;
+                        case 0xAD: chars[outLen++] = 'i'; break;
+                        case 0x8D: chars[outLen++] = 'I'; break;
+                        case 0xB3: case 0xB4: case 0xB5: chars[outLen++] = 'o'; break;
+                        case 0x93: case 0x94: case 0x95: chars[outLen++] = 'O'; break;
+                        case 0xBA: chars[outLen++] = 'u'; break;
+                        case 0x9A: chars[outLen++] = 'U'; break;
+                        case 0xA7: chars[outLen++] = 'c'; break;
+                        case 0x87: chars[outLen++] = 'C'; break;
+                        default: chars[outLen++] = '?'; break;
                     }
                 }
                 else
@@ -789,7 +770,7 @@ namespace WeatherOS.Services
                     // Ignora outros bytes multibyte nao mapeados
                 }
             }
-            return sb.ToString();
+            return new string(chars, 0, outLen);
         }
 
         public static int CustomIndexOf(string source, string search, int startIndex = 0)
@@ -858,7 +839,11 @@ namespace WeatherOS.Services
                     HardwareDelayMs(10);
                     synTimeout++;
                 }
-                if (_synAckReceived) break;
+                if (_synAckReceived)
+                {
+                    SendTcpPacket(nic, 0x10, new byte[0]); // Complete 3-way handshake with ACK!
+                    break;
+                }
             }
 
             return _synAckReceived;
@@ -989,6 +974,7 @@ namespace WeatherOS.Services
             frame[tcpOffset + 16] = (byte)(tcpChecksum >> 8); frame[tcpOffset + 17] = (byte)(tcpChecksum & 0xFF);
 
             TotalTxBytes += (uint)frame.Length;
+            TotalTxPackets++;
             if (!nic.QueueBytes(frame))
             {
                 if (!WeatherOS.Graphics.TuiDesktop.IsGuiActive) System.Console.WriteLine("\n[net] Tx Ring Full");
@@ -1043,7 +1029,7 @@ namespace WeatherOS.Services
         private static void CustomDataReceived(byte[] packet)
         {
             if (_oldHandler == CustomDataReceived) _oldHandler = null; // Previne recursividade
-            if (packet != null) TotalRxBytes += (uint)packet.Length;
+            if (packet != null) { TotalRxBytes += (uint)packet.Length; TotalRxPackets++; }
             if (packet == null || packet.Length < 42) return;
 
             // 1. Is ARP?

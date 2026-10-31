@@ -27,6 +27,14 @@ namespace WeatherOS.Services
                     WeatherOS.Graphics.TuiDesktop.HardwareDelayMs(10);
                 }
 
+                if (keyEvent.Key == ConsoleKeyEx.LWin || keyEvent.Key == ConsoleKeyEx.RWin)
+                {
+                    WeatherOS.Graphics.TuiDesktop.DrainKeyboardBuffer();
+                    WeatherOS.Graphics.TuiDesktop.HardwareDelayMs(150);
+                    WeatherOS.Graphics.TuiDesktop.DrainKeyboardBuffer();
+                    return "__SWITCH_TO_GUI__";
+                }
+
                 if (keyEvent.Key == ConsoleKeyEx.Enter)
                 {
                     System.Console.WriteLine();

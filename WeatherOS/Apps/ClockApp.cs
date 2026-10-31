@@ -11,15 +11,9 @@ namespace WeatherOS.Apps
         public string Name => "Digital Clock";
         public bool IsRealTime => true;
 
-        private int _tickCounter = 0;
-        private string _statusNotification = "";
-
         public void Draw(TuiDesktop desktop)
         {
-            var win = desktop.CreateWindow("WEATHEROS REAL-TIME DIGITAL CLOCK  |  NETWORK & RTC ENGINE", WindowSize.Medium);
-
-            // Tick internal timer
-            TimeService.Tick(100);
+            var win = desktop.CreateWindow("WEATHEROS REAL-TIME DIGITAL CLOCK", WindowSize.Medium);
 
             // Read current local time from TimeService
             int year, month, day, hour, minute, second;
@@ -38,8 +32,6 @@ namespace WeatherOS.Apps
             string mStr = minute.ToString().PadLeft(2, '0');
             string sStr = second.ToString().PadLeft(2, '0');
 
-            _tickCounter++;
-
             // Header info
             int tz = TimeService.TimezoneOffset;
             string tzLabel = tz >= 0 ? $"+{tz}" : $"{tz}";
@@ -52,8 +44,8 @@ namespace WeatherOS.Apps
             string[] bigM = GetBigDigits(mStr);
             string[] bigS = GetBigDigits(sStr);
 
-            string colonTop = (_tickCounter % 2 == 0) ? "  *  " : "     ";
-            string colonMid = (_tickCounter % 2 == 0) ? "  *  " : "     ";
+            string colonTop = (second % 2 == 0) ? "  *  " : "     ";
+            string colonMid = (second % 2 == 0) ? "  *  " : "     ";
             string colonBtm = "     ";
 
             win.WriteRow(3, $"       {bigH[0]}{colonTop}{bigM[0]}{colonTop}{bigS[0]} {amPm}", ConsoleColor.Yellow, 1);
@@ -74,118 +66,17 @@ namespace WeatherOS.Apps
 
             win.WriteSeparator(10);
 
-            string syncStatusText = TimeService.IsNetworkSynced ? "[Network Synced: OK]" : "[Hardware RTC / Manual Base]";
-            if (!string.IsNullOrEmpty(_statusNotification))
-            {
-                syncStatusText = _statusNotification;
-            }
-            win.WriteRow(11, $"  Timezone: UTC{tzLabel} [+/-]  |  Format: {formatLabel} [Tab]  |  Sync: {syncStatusText}", ConsoleColor.DarkCyan, 2, fillRemaining: true);
+            string syncStatusText = TimeService.IsNetworkSynced ? "[Network Synced: OK]" : "[Hardware RTC Active]";
+            win.WriteRow(11, $"  Timezone: UTC{tzLabel}  |  Format: {formatLabel}  |  Status: {syncStatusText}", ConsoleColor.DarkCyan, 2, fillRemaining: true);
 
-            win.WriteFooter("[Tab] 12h/24h  |  [+/-] Timezone  |  [H/J/M/K] Adjust Time  |  [N] NTP Sync  |  [ESC] Exit", ConsoleColor.Yellow);
+            win.WriteFooter("[ESC] Return to Desktop", ConsoleColor.Yellow);
         }
 
         public void HandleInput(TuiDesktop desktop, KeyEvent keyEvent)
         {
             if (keyEvent.Key == ConsoleKeyEx.Escape)
             {
-                _statusNotification = "";
                 desktop.SetCurrentApp("launcher");
-                return;
-            }
-
-            if (keyEvent.Key == ConsoleKeyEx.Tab || keyEvent.Key == ConsoleKeyEx.Spacebar)
-            {
-                TimeService.Is24HourFormat = !TimeService.Is24HourFormat;
-                desktop.SaveSettings();
-                _statusNotification = $"Format: {(TimeService.Is24HourFormat ? "24-Hour" : "12-Hour")}";
-                return;
-            }
-
-            if (keyEvent.KeyChar == '+' || keyEvent.KeyChar == '=' || keyEvent.Key == ConsoleKeyEx.RightArrow || keyEvent.Key == ConsoleKeyEx.UpArrow)
-            {
-                if (TimeService.TimezoneOffset < 14)
-                {
-                    TimeService.TimezoneOffset++;
-                    desktop.SaveSettings();
-                    int tz = TimeService.TimezoneOffset;
-                    _statusNotification = $"Timezone: UTC{(tz >= 0 ? "+" + tz : tz.ToString())}";
-                }
-                return;
-            }
-
-            if (keyEvent.KeyChar == '-' || keyEvent.KeyChar == '_' || keyEvent.Key == ConsoleKeyEx.LeftArrow || keyEvent.Key == ConsoleKeyEx.DownArrow)
-            {
-                if (TimeService.TimezoneOffset > -12)
-                {
-                    TimeService.TimezoneOffset--;
-                    desktop.SaveSettings();
-                    int tz = TimeService.TimezoneOffset;
-                    _statusNotification = $"Timezone: UTC{(tz >= 0 ? "+" + tz : tz.ToString())}";
-                }
-                return;
-            }
-
-            // Manual time calibration hotkeys (useful when RTC battery is depleted and network is unavailable)
-            if (keyEvent.KeyChar == 'h' || keyEvent.KeyChar == 'H')
-            {
-                TimeService.AdjustHours(1);
-                _statusNotification = "Time adjusted: +1 Hour";
-                return;
-            }
-
-            if (keyEvent.KeyChar == 'j' || keyEvent.KeyChar == 'J')
-            {
-                TimeService.AdjustHours(-1);
-                _statusNotification = "Time adjusted: -1 Hour";
-                return;
-            }
-
-            if (keyEvent.KeyChar == 'm' || keyEvent.KeyChar == 'M')
-            {
-                TimeService.AdjustMinutes(1);
-                _statusNotification = "Time adjusted: +1 Minute";
-                return;
-            }
-
-            if (keyEvent.KeyChar == 'k' || keyEvent.KeyChar == 'K')
-            {
-                TimeService.AdjustMinutes(-1);
-                _statusNotification = "Time adjusted: -1 Minute";
-                return;
-            }
-
-            // Network Time Sync on demand
-            if (keyEvent.KeyChar == 'n' || keyEvent.KeyChar == 'N')
-            {
-                _statusNotification = "Contacting NTP server (UDP 123)...";
-                desktop.DrawStatusMessage("Contacting NTP Atomic Server...");
-                bool ok = TimeService.SyncFromNtp();
-                if (ok)
-                {
-                    _statusNotification = "NTP Sync Success! Clock synchronized.";
-                    desktop.DrawStatusMessage("NTP Sync Success: Clock is now atomic accurate.");
-                }
-                else
-                {
-                    _statusNotification = "NTP UDP blocked. Trying HTTP Date header...";
-                    desktop.DrawStatusMessage("Querying HTTP gateway for Date header...");
-                    desktop.WeatherService.FetchOpenWeather(desktop.DefaultCity, desktop.ApiKey);
-                    if (TimeService.IsNetworkSynced)
-                    {
-                        _statusNotification = "HTTP Sync Success! Clock synchronized.";
-                    }
-                    else
-                    {
-                        _statusNotification = "Network Sync Timeout. Using Manual Calibration.";
-                    }
-                }
-                return;
-            }
-
-            if (keyEvent.KeyChar == 's' || keyEvent.KeyChar == 'S')
-            {
-                desktop.SetCurrentApp("settings");
-                return;
             }
         }
 

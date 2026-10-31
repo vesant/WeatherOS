@@ -236,10 +236,10 @@ def build_native_bootable_image():
             f.write(full_image)
         print(f"Wrote image: {t} ({os.path.getsize(t)} bytes)")
 
-    # 8. Export OTA update package (.pkg) with patched loadable kernel
+    # 8. Export new OTA update package (.pkg) with patched loadable kernel (preserving existing .pkg files)
     pkg_targets = [
-        os.path.join(root_dir, "final", "Updates", "WeatherOS-Update-FileManager-v3.2.0.pkg"),
-        os.path.join(script_dir, "final", "Updates", "WeatherOS-Update-FileManager-v3.2.0.pkg"),
+        os.path.join(root_dir, "final", "Updates", "WeatherOS-Update-WorldMap-v3.3.0.pkg"),
+        os.path.join(script_dir, "final", "Updates", "WeatherOS-Update-WorldMap-v3.3.0.pkg"),
     ]
     for p in pkg_targets:
         p_dir = os.path.dirname(p)

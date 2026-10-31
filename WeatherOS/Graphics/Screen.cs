@@ -105,25 +105,31 @@ namespace WeatherOS.Graphics
         {
             if (string.IsNullOrEmpty(text)) return "";
 
-            bool hasNonAscii = false;
-            for (int i = 0; i < text.Length; i++)
-            {
-                if (text[i] > 127) { hasNonAscii = true; break; }
-            }
-            if (!hasNonAscii) return text;
+            char[] chars = text.ToCharArray();
+            bool modified = false;
 
-            return text
-                .Replace("▲", "^")
-                .Replace("▼", "v")
-                .Replace("◄", "<")
-                .Replace("►", ">")
-                .Replace("█", "#")
-                .Replace("─", "-")
-                .Replace("│", "|")
-                .Replace("┌", "+")
-                .Replace("┐", "+")
-                .Replace("└", "+")
-                .Replace("┘", "+");
+            for (int i = 0; i < chars.Length; i++)
+            {
+                char c = chars[i];
+                if (c == '\u00B0' || c == '\u00BA') continue; // Preserve valid CP437 degree symbols
+
+                switch (c)
+                {
+                    case '▲': chars[i] = '^'; modified = true; break;
+                    case '▼': chars[i] = 'v'; modified = true; break;
+                    case '◄': chars[i] = '<'; modified = true; break;
+                    case '►': chars[i] = '>'; modified = true; break;
+                    case '█': chars[i] = '#'; modified = true; break;
+                    case '─': chars[i] = '-'; modified = true; break;
+                    case '│': chars[i] = '|'; modified = true; break;
+                    case '┌': case '┐': case '└': case '┘': case '┼': chars[i] = '+'; modified = true; break;
+                    default:
+                        if (c > 127) { chars[i] = ' '; modified = true; }
+                        break;
+                }
+            }
+
+            return modified ? new string(chars) : text;
         }
 
         /// <summary>
@@ -157,6 +163,33 @@ namespace WeatherOS.Graphics
 
             System.Console.SetCursorPosition(x, y);
             System.Console.Write(safe);
+
+            // Write authentic CP437 hardware degree byte (0xF8 = '°') directly to VGA text buffer
+            // so degrees never render as '?' in Cosmos
+            for (int i = 0; i < safe.Length; i++)
+            {
+                char ch = safe[i];
+                if (ch == '\u00B0' || ch == '\u00BA' || ch == (char)248)
+                {
+                    int curX = x + i;
+                    if (curX < Width && y < Height)
+                    {
+                        try
+                        {
+                            unsafe
+                            {
+                                byte* vga = (byte*)0xB8000;
+                                int offset = (y * 80 + curX) * 2;
+                                vga[offset] = 0xF8;
+                                byte fCol = (byte)(fg.HasValue ? fg.Value : System.Console.ForegroundColor);
+                                byte bCol = (byte)(bg.HasValue ? bg.Value : System.Console.BackgroundColor);
+                                vga[offset + 1] = (byte)(((bCol & 0x0F) << 4) | (fCol & 0x0F));
+                            }
+                        }
+                        catch { }
+                    }
+                }
+            }
         }
 
         /// <summary>

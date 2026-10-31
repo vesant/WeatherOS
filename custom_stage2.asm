@@ -58,9 +58,9 @@ load_loop:
     jbe load_done
 
     mov eax, [rem_sectors]
-    cmp eax, 64                    ; 64 sectors = 32 KB per chunk
+    cmp eax, 32                    ; 32 sectors = 16 KB per chunk (guaranteed safe track boundary)
     jbe .set_chunk
-    mov eax, 64
+    mov eax, 32
 .set_chunk:
     mov [chunk_count], ax
     mov [dap_count], ax
@@ -70,7 +70,7 @@ load_loop:
     mov dword [dap_lba + 4], 0
 
     ; Step A: Read chunk into conventional RAM buffer at 0x1000:0x0000 (0x00010000)
-    ; Real Mode BIOS INT 13h (never leaves Real Mode!)
+    ; Real Mode BIOS INT 13h
     xor ax, ax
     mov ds, ax
     mov si, dap_read
@@ -94,6 +94,10 @@ load_loop:
     mov ax, 0x10
     mov ds, ax
     mov es, ax
+    mov fs, ax
+    mov gs, ax
+    mov ss, ax
+    mov esp, 0x0007C000
 
     ; 1. Copy chunk to running kernel destination at 0x02000000+
     mov esi, 0x00010000            ; Low RAM source buffer
@@ -102,11 +106,8 @@ load_loop:
     shl ecx, 7                     ; count * 128 dwords (512 bytes per sector)
     cld
     rep movsd                      ; Hardware 32-bit memory copy!
-    push edi                       ; Save new dest_phys
 
     ; 2. Also clone chunk to pristine kernel golden copy at 0x01000000+ (16 MB)
-    ; This backup is NEVER executed or touched by Cosmos GC/drivers,
-    ; preserving an authentic, unmutated kernel in physical RAM for hard disk installer!
     mov esi, 0x00010000            ; Low RAM source buffer
     mov edi, [dest_phys]           ; Chunk start in 0x02000000+
     sub edi, 0x01000000            ; Convert to 0x01000000+ (16 MB)
@@ -114,8 +115,10 @@ load_loop:
     shl ecx, 7                     ; count * 128 dwords
     rep movsd                      ; Hardware 32-bit memory copy!
 
-    pop edi
-    mov [dest_phys], edi
+    ; 3. Advance dest_phys cleanly
+    movzx eax, word [chunk_count]
+    shl eax, 9                     ; count * 512 bytes
+    add [dest_phys], eax
 
     ; Return to 16-bit Real Mode cleanly
     jmp dword 0x18:.pm16_leave
@@ -128,6 +131,7 @@ load_loop:
     mov fs, ax
     mov gs, ax
     mov ss, ax
+    mov sp, 0x8000
     mov eax, cr0
     and al, 0xFE
     mov cr0, eax
@@ -149,7 +153,7 @@ load_loop:
     sub [rem_sectors], eax
 
     inc word [chunk_index]
-    test word [chunk_index], 0x0F  ; Dot every 512 KB
+    test word [chunk_index], 0x1F  ; Dot every 512 KB (32 chunks * 16KB)
     jnz .no_dot
     mov al, '.'
     mov ah, 0x0E
@@ -253,6 +257,15 @@ load_done:
     movzx eax, di
     mov [es:0], eax
     mov dword [es:4], 0
+
+    ; Ensure A20 line is locked ON (protect against BIOS INT 15h E820 toggling A20)
+    in al, 0x92
+    or al, 0x02
+    and al, 0xFE
+    out 0x92, al
+
+    ; Flush and invalidate CPU caches
+    wbinvd
 
     ; 9. Switch to 32-bit Protected Mode PERMANENTLY and launch Kernel
     cli
@@ -358,11 +371,11 @@ prot_start:
 
 .entry_ok:
 
-    ; Zero-initialize BSS / heap padding (32 MB immediately following kernel load)
+    ; Clean padding immediately following kernel load (64 KB)
     mov edi, [dest_phys]
     add edi, 3
     and edi, ~3                        ; Ensure 4-byte alignment
-    mov ecx, 8388608                   ; 8,388,608 dwords = 32 MB
+    mov ecx, 16384                     ; 16,384 dwords = 64 KB padding
     xor eax, eax
     cld
     rep stosd
@@ -404,10 +417,19 @@ bad_kernel_signature:
 .bks_loop:
     lodsb
     or al, al
-    jz .bks_halt
+    jz .bks_show_val
     mov ah, 0x4F                       ; White text on red background
     stosw
     jmp .bks_loop
+.bks_show_val:
+    mov edi, 0x000B80A0
+    mov dword [edi], 0x4F474F20        ; ' ', 'G'
+    mov dword [edi + 4], 0x4F544F4F    ; 'O', 'T'
+    mov word  [edi + 8], 0x4F3A        ; ':'
+    mov word  [edi + 10], 0x4F20       ; ' '
+    add edi, 12
+    mov edx, [0x02000000]
+    call print_hex_dword
 .bks_halt:
     cli
     hlt
@@ -859,11 +881,11 @@ chunk_index dw 0
 ; Patchable variables (updated by make_isohybrid.py)
 align 4
 rem_sec_sig db "RSEC"
-rem_sectors dd 16787
+rem_sectors dd 16191
 
 align 4
 entry_point_sig db "EPNT"
-entry_point dd 0x241a400
+entry_point dd 0x23f3100
 
 align 4
 dap_read:

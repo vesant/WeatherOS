@@ -26,6 +26,27 @@ namespace WeatherOS.Services
             BlockDevice rootDev = dev;
             while (rootDev is Cosmos.HAL.BlockDevice.Partition part) rootDev = part.Host;
 
+            // If rootDev is a Cosmos HAL ATA_PIO device, resolve to CustomPciAtaBlockDevice or direct bare-metal PIO
+            // because Cosmos HAL ATA_PIO.WriteBlock throws exceptions on multi-sector batches!
+            if (rootDev is Cosmos.HAL.BlockDevice.Ata halAta)
+            {
+                ushort ioBase = (halAta.ControllerID == Cosmos.HAL.BlockDevice.Ata.ControllerIdEnum.Primary) ? (ushort)0x1F0 : (ushort)0x170;
+                byte drvSel = (halAta.BusPosition == Cosmos.HAL.BlockDevice.Ata.BusPositionEnum.Master) ? (byte)0xA0 : (byte)0xB0;
+
+                var pciList = CustomPciAtaDriverService.GetDevices();
+                if (pciList != null)
+                {
+                    for (int p = 0; p < pciList.Count; p++)
+                    {
+                        if (pciList[p] != null && pciList[p].CmdBase == ioBase && pciList[p].DriveSelect == drvSel)
+                        {
+                            rootDev = pciList[p];
+                            break;
+                        }
+                    }
+                }
+            }
+
             if (rootDev is CustomPciAtaBlockDevice ata)
             {
                 byte[] pad = new byte[512];
@@ -59,21 +80,25 @@ namespace WeatherOS.Services
                     bool ok = CustomPciAtaBlockDevice.WriteSectorPio(ata.CmdBase, ata.CtrlBase, ata.DriveSelect, ata.IsLba48, startSector + s, bufToWrite, bufOff);
                     if (!ok)
                     {
-                        // Give drive controller time to clear error / flush track buffer, then retry
-                        CustomPciAtaBlockDevice.WaitIoStatic(ata.CmdBase);
-                        if (!CustomPciAtaBlockDevice.WriteSectorPio(ata.CmdBase, ata.CtrlBase, ata.DriveSelect, ata.IsLba48, startSector + s, bufToWrite, bufOff))
+                        // Perform controller soft-reset + drive re-select and retry up to 2 more times
+                        for (int retry = 0; retry < 2 && !ok; retry++)
+                        {
+                            CustomPciAtaBlockDevice.ResetAndSelectDrive(ata.CmdBase, ata.CtrlBase, ata.DriveSelect);
+                            ok = CustomPciAtaBlockDevice.WriteSectorPio(ata.CmdBase, ata.CtrlBase, ata.DriveSelect, ata.IsLba48, startSector + s, bufToWrite, bufOff);
+                        }
+                        if (!ok)
                         {
                             return false;
                         }
                     }
 
-                    // Every 256 sectors (128 KB), synchronize with drive cache to ensure mechanical media doesn't saturate
-                    if ((s & 0xFF) == 0)
+                    // Every 128 sectors (64 KB), flush drive cache to physical media
+                    if ((s & 0x7F) == 0 && s > 0)
                     {
-                        CustomPciAtaBlockDevice.SyncDriveCache(ata.CmdBase);
+                        CustomPciAtaBlockDevice.SyncDriveCache(ata.CmdBase, ata.DriveSelect);
                     }
 
-                    if (progressCallback != null && ((s & 0xFF) == 0 || s == count - 1))
+                    if (progressCallback != null && (s == 0 || (s & 0x3F) == 0 || s == count - 1))
                     {
                         progressCallback(s + 1, count);
                     }
@@ -84,47 +109,39 @@ namespace WeatherOS.Services
                 return true;
             }
 
-            // Generic BlockDevice fallback:
-            // Write in batches of up to 64 sectors (32 KB) per WriteBlock call to eliminate per-sector cache flushes.
-            const ulong BATCH_SECTORS = 64;
-            byte[] batchBuf = new byte[BATCH_SECTORS * 512];
-            ulong written = 0;
-
-            while (written < count)
+            // Generic BlockDevice fallback (1 sector per WriteBlock call for 100% HAL compatibility):
+            byte[] singleBuf = new byte[512];
+            for (ulong s = 0; s < count; s++)
             {
-                ulong batchCount = Math.Min(BATCH_SECTORS, count - written);
-                int batchBytes = (int)(batchCount * 512);
-                int srcOff = offset + (int)(written * 512);
+                int srcOff = offset + (int)(s * 512);
                 int avail = Math.Max(0, data.Length - srcOff);
-                int toCopy = Math.Min(batchBytes, avail);
+                int toCopy = Math.Min(512, avail);
 
                 if (toCopy > 0)
                 {
-                    Array.Copy(data, srcOff, batchBuf, 0, toCopy);
-                    if (toCopy < batchBytes)
+                    Array.Copy(data, srcOff, singleBuf, 0, toCopy);
+                    if (toCopy < 512)
                     {
-                        Array.Clear(batchBuf, toCopy, batchBytes - toCopy);
+                        Array.Clear(singleBuf, toCopy, 512 - toCopy);
                     }
                 }
                 else
                 {
-                    Array.Clear(batchBuf, 0, batchBytes);
+                    Array.Clear(singleBuf, 0, 512);
                 }
 
                 try
                 {
-                    rootDev.WriteBlock(startSector + written, batchCount, ref batchBuf);
+                    rootDev.WriteBlock(startSector + s, 1, ref singleBuf);
                 }
                 catch
                 {
                     return false;
                 }
 
-                written += batchCount;
-
-                if (progressCallback != null)
+                if (progressCallback != null && (s == 0 || (s & 0x3F) == 0 || s == count - 1))
                 {
-                    progressCallback(written, count);
+                    progressCallback(s + 1, count);
                 }
             }
 
@@ -266,10 +283,25 @@ namespace WeatherOS.Services
             return false;
         }
 
+        private static bool _isInstalledChecked = false;
+        private static bool _isInstalledCached = false;
+
+        public static void InvalidateInstalledCache()
+        {
+            _isInstalledChecked = false;
+        }
+
         public static bool IsInstalledOnDisk()
         {
             if (_forceInstalledFlag) return true;
-            if (IsBootedFromInstalledDisk()) return true;
+            if (_isInstalledChecked) return _isInstalledCached;
+            _isInstalledChecked = true;
+
+            if (IsBootedFromInstalledDisk())
+            {
+                _isInstalledCached = true;
+                return true;
+            }
 
             // 2. Check physical storage devices for WeatherOS Installation Marker Sector at LBA 9
             try
@@ -296,6 +328,7 @@ namespace WeatherOS.Services
                                 sec9[3] == (byte)'T' && sec9[4] == (byte)'H' && sec9[5] == (byte)'E' &&
                                 sec9[6] == (byte)'R' && sec9[7] == (byte)'O' && sec9[8] == (byte)'S')
                             {
+                                _isInstalledCached = true;
                                 return true;
                             }
                         }
@@ -305,20 +338,35 @@ namespace WeatherOS.Services
             }
             catch { }
 
-            // 3. Fallback check via Cosmos VFS: 0:\system\version.ini (for FAT32 installations)
+            // 3. Fallback check via Cosmos VFS: 0:\system\version.ini (only if VFS is safely mounted and path exists)
             try
             {
-                if (File.Exists("0:\\system\\version.ini"))
+                if (StorageService.IsVfsAvailable())
                 {
-                    string txt = File.ReadAllText("0:\\system\\version.ini");
-                    if (!string.IsNullOrEmpty(txt) && (txt.Contains("Status=Installed") || txt.Contains("Status=Updated")))
+                    if (Directory.Exists("0:\\system"))
                     {
-                        return true;
+                        string[] sysFiles = Directory.GetFiles("0:\\system");
+                        if (sysFiles != null)
+                        {
+                            for (int sf = 0; sf < sysFiles.Length; sf++)
+                            {
+                                if (sysFiles[sf].EndsWith("version.ini", StringComparison.OrdinalIgnoreCase))
+                                {
+                                    string txt = File.ReadAllText("0:\\system\\version.ini");
+                                    if (!string.IsNullOrEmpty(txt) && (txt.Contains("Status=Installed") || txt.Contains("Status=Updated")))
+                                    {
+                                        _isInstalledCached = true;
+                                        return true;
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
             catch { }
 
+            _isInstalledCached = false;
             return false;
         }
 
@@ -326,7 +374,23 @@ namespace WeatherOS.Services
         {
             try
             {
-                if (File.Exists("0:\\boot\\WeatherOS.bak")) return true;
+                if (StorageService.IsVfsAvailable())
+                {
+                    if (Directory.Exists("0:\\boot"))
+                    {
+                        string[] bootFiles = Directory.GetFiles("0:\\boot");
+                        if (bootFiles != null)
+                        {
+                            for (int bf = 0; bf < bootFiles.Length; bf++)
+                            {
+                                if (bootFiles[bf].EndsWith("WeatherOS.bak", StringComparison.OrdinalIgnoreCase))
+                                {
+                                    return true;
+                                }
+                            }
+                        }
+                    }
+                }
             }
             catch { }
 
@@ -350,14 +414,27 @@ namespace WeatherOS.Services
 
         public static string GetInstalledVersion()
         {
-            // Try reading 0:\system\version.ini
+            // Try reading 0:\system\version.ini safely without triggering VFS FileNotFoundException
             try
             {
-                if (File.Exists("0:\\system\\version.ini"))
+                if (StorageService.IsVfsAvailable())
                 {
-                    string text = File.ReadAllText("0:\\system\\version.ini");
-                    string v = ParseIniKey(text, "Version");
-                    if (!string.IsNullOrEmpty(v)) return v;
+                    if (Directory.Exists("0:\\system"))
+                    {
+                        string[] sysFiles = Directory.GetFiles("0:\\system");
+                        if (sysFiles != null)
+                        {
+                            for (int sf = 0; sf < sysFiles.Length; sf++)
+                            {
+                                if (sysFiles[sf].EndsWith("version.ini", StringComparison.OrdinalIgnoreCase))
+                                {
+                                    string text = File.ReadAllText("0:\\system\\version.ini");
+                                    string v = ParseIniKey(text, "Version");
+                                    if (!string.IsNullOrEmpty(v)) return v;
+                                }
+                            }
+                        }
+                    }
                 }
             }
             catch { }
@@ -381,11 +458,24 @@ namespace WeatherOS.Services
         {
             try
             {
-                if (File.Exists("0:\\system\\version.ini"))
+                if (StorageService.IsVfsAvailable())
                 {
-                    string text = File.ReadAllText("0:\\system\\version.ini");
-                    string d = ParseIniKey(text, "InstalledDate");
-                    if (!string.IsNullOrEmpty(d)) return d;
+                    if (Directory.Exists("0:\\system"))
+                    {
+                        string[] sysFiles = Directory.GetFiles("0:\\system");
+                        if (sysFiles != null)
+                        {
+                            for (int sf = 0; sf < sysFiles.Length; sf++)
+                            {
+                                if (sysFiles[sf].EndsWith("version.ini", StringComparison.OrdinalIgnoreCase))
+                                {
+                                    string text = File.ReadAllText("0:\\system\\version.ini");
+                                    string d = ParseIniKey(text, "InstalledDate");
+                                    if (!string.IsNullOrEmpty(d)) return d;
+                                }
+                            }
+                        }
+                    }
                 }
             }
             catch { }
@@ -959,8 +1049,43 @@ namespace WeatherOS.Services
                 BlockDevice dev = null;
                 try
                 {
+                    // Priority 0: Direct bare-metal PCI ATA devices (Intel ICH7-M / IDE / SATA)
+                    var pciAtaDrives = CustomPciAtaDriverService.GetDevices();
+                    if (pciAtaDrives != null && pciAtaDrives.Count > 0)
+                    {
+                        for (int p = 0; p < pciAtaDrives.Count; p++)
+                        {
+                            var pd = pciAtaDrives[p];
+                            if (pd == null || pd.BlockCount == 0) continue;
+                            byte[] sec9 = new byte[512];
+                            if (SafeReadSectors(pd, 9, 1, sec9, 0))
+                            {
+                                if (sec9[0] == (byte)'W' && sec9[1] == (byte)'E' && sec9[2] == (byte)'A' &&
+                                    sec9[3] == (byte)'T' && sec9[4] == (byte)'H' && sec9[5] == (byte)'E' &&
+                                    sec9[6] == (byte)'R' && sec9[7] == (byte)'O' && sec9[8] == (byte)'S')
+                                {
+                                    dev = pd;
+                                    break;
+                                }
+                            }
+                        }
+
+                        if (dev == null)
+                        {
+                            for (int p = 0; p < pciAtaDrives.Count; p++)
+                            {
+                                var pd = pciAtaDrives[p];
+                                if (pd != null && pd.BlockCount > 0)
+                                {
+                                    dev = pd;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
                     var physDrives = DiskWipeService.GetPhysicalDrives();
-                    if (physDrives != null && physDrives.Count > 0)
+                    if (dev == null && physDrives != null && physDrives.Count > 0)
                     {
                         // 1. Look for drive with WeatherOS installation marker at LBA 9
                         for (int i = 0; i < physDrives.Count; i++)
@@ -974,13 +1099,15 @@ namespace WeatherOS.Services
                             byte[] sec9 = new byte[512];
                             try
                             {
-                                d.ReadBlock(9, 1, ref sec9);
-                                if (sec9[0] == (byte)'W' && sec9[1] == (byte)'E' && sec9[2] == (byte)'A' &&
-                                    sec9[3] == (byte)'T' && sec9[4] == (byte)'H' && sec9[5] == (byte)'E' &&
-                                    sec9[6] == (byte)'R' && sec9[7] == (byte)'O' && sec9[8] == (byte)'S')
+                                if (SafeReadSectors(d, 9, 1, sec9, 0))
                                 {
-                                    dev = d;
-                                    break;
+                                    if (sec9[0] == (byte)'W' && sec9[1] == (byte)'E' && sec9[2] == (byte)'A' &&
+                                        sec9[3] == (byte)'T' && sec9[4] == (byte)'H' && sec9[5] == (byte)'E' &&
+                                        sec9[6] == (byte)'R' && sec9[7] == (byte)'O' && sec9[8] == (byte)'S')
+                                    {
+                                        dev = d;
+                                        break;
+                                    }
                                 }
                             }
                             catch { }
@@ -1042,32 +1169,69 @@ namespace WeatherOS.Services
                             return false;
                         }
 
-                        // Comprehensive multi-sector flash verification across kernel (LBA 64, middle, VMT, and end)
-                        ulong[] verifySectors = new ulong[] { 0, totalSec / 4, totalSec / 2, (totalSec * 3) / 4, totalSec - 1 };
-                        byte[] vfySec = new byte[512];
-                        for (int vi = 0; vi < verifySectors.Length; vi++)
+                        // Step 2: 100% Comprehensive read-back verification across entire kernel payload on physical disk
+                        FileTransferService.StatusMessage = "Verifying physical media sectors (100%)...";
+                        byte[] vfyBuffer = new byte[32 * 512]; // 16 KB read batch
+                        ulong vfyChecked = 0;
+                        while (vfyChecked < totalSec)
                         {
-                            ulong secIdx = verifySectors[vi];
-                            if (secIdx >= totalSec) continue;
-                            ulong lbaToVerify = 64UL + secIdx;
-                            int pkgSrcOff = kernelStart + (int)(secIdx * 512UL);
-
-                            if (SafeReadSectors(dev, lbaToVerify, 1, vfySec, 0))
+                            ulong batchCount = Math.Min(32UL, totalSec - vfyChecked);
+                            ulong startSec = 64UL + vfyChecked;
+                            int srcPkgOff = kernelStart + (int)(vfyChecked * 512UL);
+                            int bytesToCheck = (int)(batchCount * 512UL);
+                            if (srcPkgOff + bytesToCheck > kernelStart + kernelLen)
                             {
-                                int bytesToCheck = Math.Min(512, kernelLen - (int)(secIdx * 512UL));
-                                for (int bi = 0; bi < bytesToCheck; bi += 64)
+                                bytesToCheck = Math.Max(0, (kernelStart + kernelLen) - srcPkgOff);
+                            }
+
+                            if (!SafeReadSectors(dev, startSec, batchCount, vfyBuffer, 0))
+                            {
+                                statusMessage = $"Hardware read error: Could not verify sectors starting at LBA {startSec}.";
+                                return false;
+                            }
+
+                            // Byte-for-byte check
+                            bool match = true;
+                            for (int bi = 0; bi < bytesToCheck; bi++)
+                            {
+                                if (vfyBuffer[bi] != packageData[srcPkgOff + bi])
                                 {
-                                    if (vfySec[bi] != packageData[pkgSrcOff + bi])
+                                    match = false;
+                                    break;
+                                }
+                            }
+
+                            if (!match)
+                            {
+                                // Rewrite this batch immediately and re-verify
+                                SafeWriteSectors(dev, startSec, batchCount, packageData, srcPkgOff);
+                                if (dev is CustomPciAtaBlockDevice ataDev)
+                                {
+                                    CustomPciAtaBlockDevice.FlushPio(ataDev.CmdBase, ataDev.DriveSelect, ataDev.IsLba48);
+                                }
+                                if (!SafeReadSectors(dev, startSec, batchCount, vfyBuffer, 0))
+                                {
+                                    statusMessage = $"Hardware error: Retry read failed at LBA {startSec}.";
+                                    return false;
+                                }
+                                for (int bi = 0; bi < bytesToCheck; bi++)
+                                {
+                                    if (vfyBuffer[bi] != packageData[srcPkgOff + bi])
                                     {
-                                        statusMessage = $"Flash verification failed: Sector mismatch at LBA {lbaToVerify} (offset +{bi}). Expected 0x{packageData[pkgSrcOff + bi]:X2}, disk had 0x{vfySec[bi]:X2}.";
+                                        ulong badLba = startSec + (ulong)(bi / 512);
+                                        statusMessage = $"Flash verification failed: Platter mismatch at LBA {badLba} (offset +{bi % 512}). Expected 0x{packageData[srcPkgOff + bi]:X2}, disk had 0x{vfyBuffer[bi]:X2}.";
                                         return false;
                                     }
                                 }
                             }
-                            else
+
+                            vfyChecked += batchCount;
+                            if (liveProgressCallback != null && ((vfyChecked % 128) == 0 || vfyChecked == totalSec))
                             {
-                                statusMessage = $"Flash verification error: Could not read back LBA {lbaToVerify}.";
-                                return false;
+                                int pct = (int)((vfyChecked * 100UL) / totalSec);
+                                ulong mbDone = (vfyChecked * 512UL) / (1024UL * 1024UL);
+                                ulong mbTotal = (totalSec * 512UL) / (1024UL * 1024UL);
+                                liveProgressCallback(pct, mbDone, mbTotal);
                             }
                         }
 
@@ -1087,60 +1251,76 @@ namespace WeatherOS.Services
                             try
                             {
                                 byte[] s2Block = new byte[8 * 512];
-                                if (SafeReadSectors(dev, 1, 8, s2Block, 0))
+                                if (NativeBootloaderPayload.Stage2 != null && NativeBootloaderPayload.Stage2.Length >= 512)
                                 {
-                                    int rsecIdx = FindByteSequence(s2Block, new byte[] { (byte)'R', (byte)'S', (byte)'E', (byte)'C' }, 0, s2Block.Length);
-                                    if (rsecIdx >= 0 && rsecIdx + 8 <= s2Block.Length)
-                                    {
-                                        int off = rsecIdx + 4;
-                                        s2Block[off] = (byte)(totalSec & 0xFF);
-                                        s2Block[off + 1] = (byte)((totalSec >> 8) & 0xFF);
-                                        s2Block[off + 2] = (byte)((totalSec >> 16) & 0xFF);
-                                        s2Block[off + 3] = (byte)((totalSec >> 24) & 0xFF);
-                                    }
-                                    else if (NativeBootloaderPayload.Stage2RemSectorsOffset > 0 &&
-                                             NativeBootloaderPayload.Stage2RemSectorsOffset + 4 <= (uint)s2Block.Length)
-                                    {
-                                        s2Block[NativeBootloaderPayload.Stage2RemSectorsOffset] = (byte)(totalSec & 0xFF);
-                                        s2Block[NativeBootloaderPayload.Stage2RemSectorsOffset + 1] = (byte)((totalSec >> 8) & 0xFF);
-                                        s2Block[NativeBootloaderPayload.Stage2RemSectorsOffset + 2] = (byte)((totalSec >> 16) & 0xFF);
-                                        s2Block[NativeBootloaderPayload.Stage2RemSectorsOffset + 3] = (byte)((totalSec >> 24) & 0xFF);
-                                    }
-
-                                    int epntIdx = FindByteSequence(s2Block, new byte[] { (byte)'E', (byte)'P', (byte)'N', (byte)'T' }, 0, s2Block.Length);
-                                    if (epntIdx >= 0 && epntIdx + 8 <= s2Block.Length)
-                                    {
-                                        int off = epntIdx + 4;
-                                        s2Block[off] = (byte)(newEntryPoint & 0xFF);
-                                        s2Block[off + 1] = (byte)((newEntryPoint >> 8) & 0xFF);
-                                        s2Block[off + 2] = (byte)((newEntryPoint >> 16) & 0xFF);
-                                        s2Block[off + 3] = (byte)((newEntryPoint >> 24) & 0xFF);
-                                    }
-                                    else if (NativeBootloaderPayload.Stage2EntryPointOffset > 0 &&
-                                             NativeBootloaderPayload.Stage2EntryPointOffset + 4 <= (uint)s2Block.Length)
-                                    {
-                                        s2Block[NativeBootloaderPayload.Stage2EntryPointOffset] = (byte)(newEntryPoint & 0xFF);
-                                        s2Block[NativeBootloaderPayload.Stage2EntryPointOffset + 1] = (byte)((newEntryPoint >> 8) & 0xFF);
-                                        s2Block[NativeBootloaderPayload.Stage2EntryPointOffset + 2] = (byte)((newEntryPoint >> 16) & 0xFF);
-                                        s2Block[NativeBootloaderPayload.Stage2EntryPointOffset + 3] = (byte)((newEntryPoint >> 24) & 0xFF);
-                                    }
-
-                                    SafeWriteSectors(dev, 1, 8, s2Block, 0);
+                                    int copyLen = Math.Min(s2Block.Length, NativeBootloaderPayload.Stage2.Length);
+                                    Array.Copy(NativeBootloaderPayload.Stage2, 0, s2Block, 0, copyLen);
+                                }
+                                else
+                                {
+                                    SafeReadSectors(dev, 1, 8, s2Block, 0);
                                 }
 
-                                // Also synchronize MBR Partition 1 length at LBA 0 (offset 458)
+                                if (NativeBootloaderPayload.Stage2InstalledFlagOffset > 0 &&
+                                    NativeBootloaderPayload.Stage2InstalledFlagOffset < (uint)s2Block.Length)
+                                {
+                                    s2Block[NativeBootloaderPayload.Stage2InstalledFlagOffset] = 1;
+                                }
+
+                                int rsecIdx = FindByteSequence(s2Block, new byte[] { (byte)'R', (byte)'S', (byte)'E', (byte)'C' }, 0, s2Block.Length);
+                                if (rsecIdx >= 0 && rsecIdx + 8 <= s2Block.Length)
+                                {
+                                    int off = rsecIdx + 4;
+                                    s2Block[off] = (byte)(totalSec & 0xFF);
+                                    s2Block[off + 1] = (byte)((totalSec >> 8) & 0xFF);
+                                    s2Block[off + 2] = (byte)((totalSec >> 16) & 0xFF);
+                                    s2Block[off + 3] = (byte)((totalSec >> 24) & 0xFF);
+                                }
+                                else if (NativeBootloaderPayload.Stage2RemSectorsOffset > 0 &&
+                                         NativeBootloaderPayload.Stage2RemSectorsOffset + 4 <= (uint)s2Block.Length)
+                                {
+                                    s2Block[NativeBootloaderPayload.Stage2RemSectorsOffset] = (byte)(totalSec & 0xFF);
+                                    s2Block[NativeBootloaderPayload.Stage2RemSectorsOffset + 1] = (byte)((totalSec >> 8) & 0xFF);
+                                    s2Block[NativeBootloaderPayload.Stage2RemSectorsOffset + 2] = (byte)((totalSec >> 16) & 0xFF);
+                                    s2Block[NativeBootloaderPayload.Stage2RemSectorsOffset + 3] = (byte)((totalSec >> 24) & 0xFF);
+                                }
+
+                                int epntIdx = FindByteSequence(s2Block, new byte[] { (byte)'E', (byte)'P', (byte)'N', (byte)'T' }, 0, s2Block.Length);
+                                if (epntIdx >= 0 && epntIdx + 8 <= s2Block.Length)
+                                {
+                                    int off = epntIdx + 4;
+                                    s2Block[off] = (byte)(newEntryPoint & 0xFF);
+                                    s2Block[off + 1] = (byte)((newEntryPoint >> 8) & 0xFF);
+                                    s2Block[off + 2] = (byte)((newEntryPoint >> 16) & 0xFF);
+                                    s2Block[off + 3] = (byte)((newEntryPoint >> 24) & 0xFF);
+                                }
+                                else if (NativeBootloaderPayload.Stage2EntryPointOffset > 0 &&
+                                         NativeBootloaderPayload.Stage2EntryPointOffset + 4 <= (uint)s2Block.Length)
+                                {
+                                    s2Block[NativeBootloaderPayload.Stage2EntryPointOffset] = (byte)(newEntryPoint & 0xFF);
+                                    s2Block[NativeBootloaderPayload.Stage2EntryPointOffset + 1] = (byte)((newEntryPoint >> 8) & 0xFF);
+                                    s2Block[NativeBootloaderPayload.Stage2EntryPointOffset + 2] = (byte)((newEntryPoint >> 16) & 0xFF);
+                                    s2Block[NativeBootloaderPayload.Stage2EntryPointOffset + 3] = (byte)((newEntryPoint >> 24) & 0xFF);
+                                }
+
+                                SafeWriteSectors(dev, 1, 8, s2Block, 0);
+
+                                // Also synchronize MBR at LBA 0
                                 byte[] mbrBlock = new byte[512];
-                                if (SafeReadSectors(dev, 0, 1, mbrBlock, 0))
+                                if (NativeBootloaderPayload.Mbr != null && NativeBootloaderPayload.Mbr.Length >= 512)
                                 {
-                                    if (mbrBlock[510] == 0x55 && mbrBlock[511] == 0xAA && mbrBlock[450] == 0x83)
-                                    {
-                                        mbrBlock[458] = (byte)(totalSec & 0xFF);
-                                        mbrBlock[459] = (byte)((totalSec >> 8) & 0xFF);
-                                        mbrBlock[460] = (byte)((totalSec >> 16) & 0xFF);
-                                        mbrBlock[461] = (byte)((totalSec >> 24) & 0xFF);
-                                        SafeWriteSectors(dev, 0, 1, mbrBlock, 0);
-                                    }
+                                    Array.Copy(NativeBootloaderPayload.Mbr, 0, mbrBlock, 0, 512);
                                 }
+                                else
+                                {
+                                    SafeReadSectors(dev, 0, 1, mbrBlock, 0);
+                                }
+                                mbrBlock[450] = 0x83;
+                                mbrBlock[458] = (byte)(totalSec & 0xFF);
+                                mbrBlock[459] = (byte)((totalSec >> 8) & 0xFF);
+                                mbrBlock[460] = (byte)((totalSec >> 16) & 0xFF);
+                                mbrBlock[461] = (byte)((totalSec >> 24) & 0xFF);
+                                SafeWriteSectors(dev, 0, 1, mbrBlock, 0);
                             }
                             catch { }
                         }

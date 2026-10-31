@@ -91,31 +91,45 @@ namespace WeatherOS
                 _isVfsMounted = false;
             }
 
-            // Pre-seed all system files, documents, manifests and cumulative package in memory
-            StorageService.InitDefaultMemoryFiles();
-            UpdateManagerService.InitDefaultUpdatePackage();
-            TimeService.Initialize();
-
-            _weatherService = new WeatherService();
-            _tuiDesktop = new TuiDesktop(_weatherService);
-            _serialSensorService = new SerialSensorService();
-
-            InitializeCommandManager();
-
-            // Initial Boot Screen: Select between Live RAM Mode and Hard Disk Installer
-            // ONLY shown when booting from Live USB / Pen drive.
-            // When booting from an installed hard drive, WeatherOS boots directly into the desktop without prompts!
-            if (!UpdateManagerService.IsBootedFromInstalledDisk())
+            try
             {
-                var bootChoice = Graphics.BootMenu.Show();
-                if (bootChoice == Graphics.BootMode.InstallToDisk)
+                System.Console.WriteLine("[sys] Seeding memory files...");
+                StorageService.InitDefaultMemoryFiles();
+                UpdateManagerService.InitDefaultUpdatePackage();
+                TimeService.Initialize();
+
+                System.Console.WriteLine("[sys] Initializing weather service & desktop...");
+                _weatherService = new WeatherService();
+                _tuiDesktop = new TuiDesktop(_weatherService);
+                _serialSensorService = new SerialSensorService();
+
+                InitializeCommandManager();
+            }
+            catch (Exception ex)
+            {
+                System.Console.WriteLine("[boot] Subsystem warning: " + ex.Message);
+            }
+
+            try
+            {
+                // Initial Boot Screen: Select between Live RAM Mode and Hard Disk Installer
+                // ONLY shown when booting from Live USB / Pen drive.
+                if (!UpdateManagerService.IsBootedFromInstalledDisk())
                 {
-                    _tuiDesktop.StartApp("installer");
+                    var bootChoice = Graphics.BootMenu.Show();
+                    if (bootChoice == Graphics.BootMode.InstallToDisk)
+                    {
+                        _tuiDesktop.StartApp("installer");
+                    }
+                }
+                else
+                {
+                    UpdateManagerService.SetBootSource(BootSource.HardDisk);
                 }
             }
-            else
+            catch (Exception ex)
             {
-                UpdateManagerService.SetBootSource(BootSource.HardDisk);
+                System.Console.WriteLine("[boot] Boot menu warning: " + ex.Message);
             }
 
             if (_isNetworkConfigured)
@@ -166,7 +180,7 @@ namespace WeatherOS
                 }
                 else
                 {
-                    System.Console.WriteLine($"[net] Auto-locate disabled. Fetching weather for default: {targetCity}...");
+                    System.Console.WriteLine("[net] Auto-locate disabled. Fetching weather for default: " + targetCity + "...");
                     _weatherService.FetchOpenWeather(targetCity, DecodeApiKey());
                 }
             }
@@ -193,7 +207,6 @@ namespace WeatherOS
             _commandManager.Register(new GuiCommand(() => SwitchToGuiMode()));
             _commandManager.Register(new TransferCommand(() => LaunchTransferMode()));
             _commandManager.Register(new DisksCommand());
-            _commandManager.Register(new DiskDiagCommand());
             _commandManager.Register(new FormatCommand());
             _commandManager.Register(new PoweroffCommand());
             _commandManager.Register(new RebootCommand());
@@ -207,6 +220,11 @@ namespace WeatherOS
         protected override void Run()
         {
             string input = TerminalLineEditor.ReadLine("WeatherOS> ");
+            if (input == "__SWITCH_TO_GUI__")
+            {
+                SwitchToGuiMode();
+                return;
+            }
             ProcessCommand(input);
         }
 
@@ -223,7 +241,7 @@ namespace WeatherOS
             {
                 if (command == appIds[i])
                 {
-                    System.Console.WriteLine($"Launching TUI App: {appIds[i]}...");
+                    System.Console.WriteLine("Launching TUI App: " + appIds[i] + "...");
                     _tuiDesktop.StartApp(command);
                     PrintBootBanner();
                     return;
@@ -238,10 +256,6 @@ namespace WeatherOS
             if (command == "lsblk" || command == "diskpart")
             {
                 input = "disks";
-            }
-            if (command == "storagediag" || command == "diag")
-            {
-                input = "diskdiag";
             }
             if (command == "boot" || command == "bootmgr")
             {
@@ -262,7 +276,7 @@ namespace WeatherOS
             if (!executed)
             {
                 System.Console.ForegroundColor = ConsoleColor.Red;
-                System.Console.WriteLine($"Unknown command: '{command}'. Type 'help' for a list of commands.");
+                System.Console.WriteLine("Unknown command: '" + command + "'. Type 'help' for a list of commands.");
                 System.Console.ResetColor();
             }
         }
@@ -307,7 +321,7 @@ namespace WeatherOS
             System.Console.Write(_isNetworkConfigured ? " OK " : "WARN");
             System.Console.ResetColor();
             string ipDisplay = WeatherOS.Services.WeatherService.IsDebugModeActive ? WeatherOS.Services.RawTcpHttp.GetAssignedIp() : WeatherOS.Services.RawTcpHttp.GetMaskedIp();
-            System.Console.WriteLine($"] IPv4 Network Stack : {ipDisplay}");
+            System.Console.WriteLine("] IPv4 Network Stack : " + ipDisplay);
 
             System.Console.WriteLine(" [ OK ] Hardware Target    : Standard x86 PC (Standalone Mode)");
 

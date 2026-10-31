@@ -13,11 +13,10 @@ namespace WeatherOS.Apps
 
         private int _selectedIndex = 0;
         private string[] _options = {
-            "1. Disk Diagnostics & Hardware Analyzer",
-            "2. Live System Resources & Power Monitor",
-            "3. Network Card Hardware & Direct Sockets",
-            "4. ACPI Power & Battery Live Telemetry",
-            "5. Return to Main Menu"
+            "1. Live System Resources & Power Monitor",
+            "2. Network Card Hardware & Direct Sockets",
+            "3. ACPI Power & Battery Live Telemetry",
+            "4. Return to Main Menu"
         };
 
         public void Draw(TuiDesktop desktop)
@@ -49,24 +48,17 @@ namespace WeatherOS.Apps
             {
                 if (_selectedIndex == 0)
                 {
-                    // The first program: Disk Diagnostics & Hardware Analyzer
-                    var app = desktop.GetApp("diskdiag") as DiskDiagnosticsApp;
-                    app?.Refresh();
-                    desktop.SetCurrentApp("diskdiag");
+                    desktop.SetCurrentApp("resources");
                 }
                 else if (_selectedIndex == 1)
                 {
-                    desktop.SetCurrentApp("resources");
+                    desktop.SetCurrentApp("ipconfig");
                 }
                 else if (_selectedIndex == 2)
                 {
-                    desktop.SetCurrentApp("ipconfig");
-                }
-                else if (_selectedIndex == 3)
-                {
                     desktop.SetCurrentApp("battery");
                 }
-                else if (_selectedIndex == 4)
+                else if (_selectedIndex == 3)
                 {
                     desktop.SetCurrentApp("launcher");
                 }

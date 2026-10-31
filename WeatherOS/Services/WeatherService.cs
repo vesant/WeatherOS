@@ -57,15 +57,24 @@ namespace WeatherOS.Services
             Timestamp = DateTime.UtcNow;
 
             ForecastDays = new ForecastDayData[7];
-            DateTime now = DateTime.UtcNow;
+            string[] dayNames = new string[] { "TODAY", "TOMORROW", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY" };
             for (int i = 0; i < 7; i++)
             {
-                DateTime dayDt = now.AddDays(i);
-                string dStr = dayDt.ToString("yyyy-MM-dd");
+                int dayNum = 28 + i;
+                int monthNum = 10;
+                if (dayNum > 31)
+                {
+                    dayNum -= 31;
+                    monthNum = 11;
+                }
+                string mStr = (monthNum < 10) ? ("0" + monthNum) : monthNum.ToString();
+                string dStr = (dayNum < 10) ? ("0" + dayNum) : dayNum.ToString();
+                string dateStr = "2026-" + mStr + "-" + dStr;
+
                 ForecastDays[i] = new ForecastDayData
                 {
-                    Date = dStr,
-                    DayOfWeek = i == 0 ? "TODAY" : (i == 1 ? "TOMORROW" : WeatherService.GetDayOfWeekName(dStr, i)),
+                    Date = dateStr,
+                    DayOfWeek = (i < dayNames.Length) ? dayNames[i] : ("DAY +" + i),
                     MaxTempC = temp + (i % 3),
                     MinTempC = (temp - 6) + (i % 2),
                     ChanceOfRain = 10,
@@ -93,9 +102,9 @@ namespace WeatherOS.Services
         public WeatherService()
         {
             _cachedReading = new WeatherData(
-                temp: 20.0f,
-                humidity: 60.0f,
-                pressure: 1015.0f,
+                temp: 16.5f,
+                humidity: 58.0f,
+                pressure: 1017.0f,
                 windSpeed: 12.0f,
                 windDir: "NW",
                 condition: "Awaiting Telemetry...",
@@ -132,6 +141,57 @@ namespace WeatherOS.Services
             }
             catch { }
             return "";
+        }
+
+        public bool FetchQuickStationWeather(string lat, string lon, out int tempC, out int humidity, out int windKmh, out string condition)
+        {
+            tempC = 18;
+            humidity = 65;
+            windKmh = 12;
+            condition = "Partly Cloudy";
+
+            try
+            {
+                if (RawTcpHttp.GetAssignedIp() == "0.0.0.0") return false;
+
+                // Sanitize coordinates to clean decimal strings for Open-Meteo API
+                string sLat = (lat ?? "0").Trim();
+                string sLon = (lon ?? "0").Trim();
+
+                bool latNeg = sLat.EndsWith("S") || sLat.EndsWith("s") || sLat.StartsWith("-");
+                bool lonNeg = sLon.EndsWith("W") || sLon.EndsWith("w") || sLon.StartsWith("-");
+
+                sLat = sLat.Replace("N", "").Replace("n", "").Replace("S", "").Replace("s", "").Replace("+", "").Trim();
+                sLon = sLon.Replace("E", "").Replace("e", "").Replace("W", "").Replace("w", "").Replace("+", "").Trim();
+
+                if (latNeg && !sLat.StartsWith("-")) sLat = "-" + sLat;
+                if (lonNeg && !sLon.StartsWith("-")) sLon = "-" + sLon;
+
+                var openMeteoIp = new Cosmos.System.Network.IPv4.Address(94, 130, 142, 35);
+                var gatewayIp = RawTcpHttp.GetGatewayAddress();
+
+                string req = "GET /v1/forecast?latitude=" + sLat + "&longitude=" + sLon + "&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m&timezone=auto HTTP/1.1\r\nHost: api.open-meteo.com\r\nUser-Agent: WeatherOS/3.3\r\nConnection: close\r\n\r\n";
+                string resp = RawTcpHttp.FetchGet(openMeteoIp, gatewayIp, req);
+                if (!string.IsNullOrWhiteSpace(resp))
+                {
+                    int curIdx = CustomIndexOf(resp, "\"current\":", 0);
+                    if (curIdx != -1)
+                    {
+                        float t = ParseJsonFloatFromIndex(resp, "temperature_2m", curIdx);
+                        float h = ParseJsonFloatFromIndex(resp, "relative_humidity_2m", curIdx);
+                        float w = ParseJsonFloatFromIndex(resp, "wind_speed_10m", curIdx);
+                        float code = ParseJsonFloatFromIndex(resp, "weather_code", curIdx);
+
+                        tempC = (int)t;
+                        humidity = (int)h;
+                        windKmh = (int)w;
+                        condition = GetConditionFromWmoCode((int)code);
+                        return true;
+                    }
+                }
+            }
+            catch { }
+            return false;
         }
 
         public void FetchOpenWeather(string city, string apiKey)
@@ -180,7 +240,7 @@ namespace WeatherOS.Services
                 bool isOpenMeteo = false;
 
                 // 1. High-Precision Query via Open-Meteo when coordinates are available (provides exact humidity & genuine 7-day forecast)
-                if (safeCity.Contains(","))
+                if (safeCity.Contains(",") && IsNumericCoordPair(safeCity))
                 {
                     string[] coords = safeCity.Split(',');
                     if (coords.Length == 2)
@@ -189,7 +249,7 @@ namespace WeatherOS.Services
                         string lon = coords[1].Trim();
                         string openMeteoRequest = "GET /v1/forecast?latitude=" + lat + "&longitude=" + lon + "&current=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,weather_code,surface_pressure,wind_speed_10m,wind_direction_10m&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max&timezone=auto HTTP/1.1\r\nHost: api.open-meteo.com\r\nUser-Agent: WeatherOS/3.0\r\nConnection: close\r\n\r\n";
                         if (_debugMode && !WeatherOS.Graphics.TuiDesktop.IsGuiActive)
-                            System.Console.WriteLine($"[net] raw_tcp: querying Open-Meteo via {openMeteoIp.ToString()}...");
+                            System.Console.WriteLine("[net] raw_tcp: querying Open-Meteo via " + openMeteoIp.ToString() + "...");
                         response = RawTcpHttp.FetchGet(openMeteoIp, gatewayIp, openMeteoRequest);
                         if (!string.IsNullOrWhiteSpace(response) && CustomIndexOf(response, "\"current\":", 0) != -1)
                         {
@@ -209,14 +269,14 @@ namespace WeatherOS.Services
                     string weatherApiRequest = "GET /v1/forecast.json?key=" + effectiveKey + "&q=" + safeCity + "&days=7 HTTP/1.1\r\nHost: api.weatherapi.com\r\nUser-Agent: WeatherOS/3.0\r\nConnection: close\r\n\r\n";
 
                     if (_debugMode && !WeatherOS.Graphics.TuiDesktop.IsGuiActive)
-                        System.Console.WriteLine($"[net] raw_tcp: querying WeatherAPI via {primaryIp.ToString()}...");
+                        System.Console.WriteLine("[net] raw_tcp: querying WeatherAPI via " + primaryIp.ToString() + "...");
                     response = RawTcpHttp.FetchGet(primaryIp, gatewayIp, weatherApiRequest);
 
                     // 3. Secondary WeatherAPI Edge CDN (143.244.56.58)
                     if (string.IsNullOrWhiteSpace(response))
                     {
                         if (_debugMode && !WeatherOS.Graphics.TuiDesktop.IsGuiActive)
-                            System.Console.WriteLine($"[net] raw_tcp: falling back to secondary WeatherAPI edge ({secondaryIp.ToString()})...");
+                            System.Console.WriteLine("[net] raw_tcp: falling back to secondary WeatherAPI edge (" + secondaryIp.ToString() + ")...");
                         response = RawTcpHttp.FetchGet(secondaryIp, gatewayIp, weatherApiRequest);
                     }
                 }
@@ -225,7 +285,7 @@ namespace WeatherOS.Services
                 if (string.IsNullOrWhiteSpace(response))
                 {
                     if (_debugMode && !WeatherOS.Graphics.TuiDesktop.IsGuiActive)
-                        System.Console.WriteLine($"[net] raw_tcp: falling back to wttr.in ({wttrIp.ToString()})...");
+                        System.Console.WriteLine("[net] raw_tcp: falling back to wttr.in (" + wttrIp.ToString() + ")...");
                     string wttrCity = cleanCity.ToLower() == "setubal" ? "Setubal,Portugal" : safeCity;
                     string wttrRequest = "GET /" + wttrCity + "?format=j2 HTTP/1.1\r\nHost: wttr.in\r\nUser-Agent: curl/7.68.0\r\nConnection: close\r\n\r\n";
                     response = RawTcpHttp.FetchGet(wttrIp, gatewayIp, wttrRequest);
@@ -295,7 +355,7 @@ namespace WeatherOS.Services
                     _cachedReading.Condition = "Network Failure";
                 }
                 if (_debugMode && !WeatherOS.Graphics.TuiDesktop.IsGuiActive)
-                    System.Console.WriteLine($"[net] raw_tcp: critical failure: {ex.Message}");
+                    System.Console.WriteLine("[net] raw_tcp: critical failure: " + ex.Message);
             }
         }
 
@@ -981,28 +1041,9 @@ namespace WeatherOS.Services
         {
             if (dayIndex == 0) return "TODAY";
             if (dayIndex == 1) return "TOMORROW";
-            if (!string.IsNullOrEmpty(dateStr) && dateStr.Length >= 10)
-            {
-                try
-                {
-                    int year = int.Parse(dateStr.Substring(0, 4));
-                    int month = int.Parse(dateStr.Substring(5, 2));
-                    int day = int.Parse(dateStr.Substring(8, 2));
-                    var dt = new DateTime(year, month, day);
-                    switch (dt.DayOfWeek)
-                    {
-                        case DayOfWeek.Sunday: return "SUNDAY";
-                        case DayOfWeek.Monday: return "MONDAY";
-                        case DayOfWeek.Tuesday: return "TUESDAY";
-                        case DayOfWeek.Wednesday: return "WEDNESDAY";
-                        case DayOfWeek.Thursday: return "THURSDAY";
-                        case DayOfWeek.Friday: return "FRIDAY";
-                        case DayOfWeek.Saturday: return "SATURDAY";
-                    }
-                }
-                catch { }
-            }
-            return $"DAY +{dayIndex}";
+            string[] dayNames = new string[] { "TODAY", "TOMORROW", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY" };
+            if (dayIndex >= 0 && dayIndex < dayNames.Length) return dayNames[dayIndex];
+            return "DAY +" + dayIndex;
         }
 
         private void Parse7DayForecast(string json)
@@ -1105,7 +1146,9 @@ namespace WeatherOS.Services
                     {
                         int dayOffset = day - (parsedDays - 1);
                         DateTime projectedDate = baseDate.AddDays(dayOffset);
-                        string projDateStr = projectedDate.ToString("yyyy-MM-dd");
+                        string mStr = (projectedDate.Month < 10) ? ("0" + projectedDate.Month) : projectedDate.Month.ToString();
+                        string dStr = (projectedDate.Day < 10) ? ("0" + projectedDate.Day) : projectedDate.Day.ToString();
+                        string projDateStr = projectedDate.Year + "-" + mStr + "-" + dStr;
                         string projDayOfWeek = GetDayOfWeekName(projDateStr, day);
 
                         var prev = _cachedReading.ForecastDays[day - 1];
@@ -1247,14 +1290,52 @@ namespace WeatherOS.Services
             else moonPhase = "Full Moon";
         }
 
+        private static bool IsNumericCoordPair(string s)
+        {
+            if (string.IsNullOrWhiteSpace(s)) return false;
+            string[] parts = s.Split(',');
+            if (parts.Length != 2) return false;
+            for (int p = 0; p < 2; p++)
+            {
+                string t = parts[p].Trim();
+                if (t.Length == 0) return false;
+                for (int i = 0; i < t.Length; i++)
+                {
+                    char c = t[i];
+                    if (c != '-' && c != '+' && c != '.' && (c < '0' || c > '9')) return false;
+                }
+            }
+            return true;
+        }
+
         public static string ResolveCityQuery(string city, out string normalizedDisplayName)
         {
             string lower = (city ?? "").ToLower().Trim();
 
             // Clean common suffixes from previous queries or prompts
-            if (lower.EndsWith(", pt")) lower = lower.Substring(0, lower.Length - 4).Trim();
-            else if (lower.EndsWith(" pt")) lower = lower.Substring(0, lower.Length - 3).Trim();
-            else if (lower.EndsWith(", portugal")) lower = lower.Substring(0, lower.Length - 10).Trim();
+            if (lower.Contains(","))
+            {
+                string[] parts = lower.Split(',');
+                if (parts.Length == 2)
+                {
+                    string p1 = parts[1].Trim();
+                    if (p1 == "pt" || p1 == "portugal" || p1 == "es" || p1 == "spain" || p1 == "espanha" ||
+                        p1 == "fr" || p1 == "france" || p1 == "franca" || p1 == "uk" || p1 == "gb" ||
+                        p1 == "united kingdom" || p1 == "de" || p1 == "germany" || p1 == "alemanha" ||
+                        p1 == "it" || p1 == "italy" || p1 == "italia" || p1 == "ca" || p1 == "canada" ||
+                        p1 == "us" || p1 == "usa" || p1 == "united states" || p1 == "at" || p1 == "austria" ||
+                        p1 == "pl" || p1 == "poland" || p1 == "polonia" || p1 == "gr" || p1 == "greece" ||
+                        p1 == "grecia" || p1 == "tr" || p1 == "turkey" || p1 == "turquia" || p1 == "ru" ||
+                        p1 == "russia" || p1 == "no" || p1 == "norway" || p1 == "noruega" || p1 == "br" ||
+                        p1 == "brazil" || p1 == "brasil" || p1 == "ar" || p1 == "argentina" || p1 == "au" ||
+                        p1 == "australia" || p1 == "eg" || p1 == "egypt" || p1 == "egito" || p1 == "ma" ||
+                        p1 == "morocco" || p1 == "marrocos")
+                    {
+                        lower = parts[0].Trim();
+                    }
+                }
+            }
+
 
             if (lower == "setubal" || lower == "setúbal")
             {
@@ -1436,6 +1517,87 @@ namespace WeatherOS.Services
                 normalizedDisplayName = "ROMA, IT";
                 return "41.9028,12.4964";
             }
+            if (lower == "vienna" || lower == "viena")
+            {
+                normalizedDisplayName = "VIENA, AT";
+                return "48.2082,16.3738";
+            }
+            if (lower == "warsaw" || lower == "varsovia" || lower == "varsóvia")
+            {
+                normalizedDisplayName = "VARSOVIA, PL";
+                return "52.2297,21.0122";
+            }
+            if (lower == "athens" || lower == "atenas")
+            {
+                normalizedDisplayName = "ATENAS, GR";
+                return "37.9838,23.7275";
+            }
+            if (lower == "ankara" || lower == "ancara")
+            {
+                normalizedDisplayName = "ANCARA, TR";
+                return "39.9334,32.8597";
+            }
+            if (lower == "oslo")
+            {
+                normalizedDisplayName = "OSLO, NO";
+                return "59.9139,10.7522";
+            }
+            if (lower == "moscow" || lower == "moscovo" || lower == "moscou")
+            {
+                normalizedDisplayName = "MOSCOVO, RU";
+                return "55.7558,37.6173";
+            }
+            if (lower == "tokyo" || lower == "toquio" || lower == "tóquio")
+            {
+                normalizedDisplayName = "TOQUIO, JP";
+                return "35.6762,139.6503";
+            }
+            if (lower == "beijing" || lower == "pequim")
+            {
+                normalizedDisplayName = "PEQUIM, CN";
+                return "39.9042,116.4074";
+            }
+            if (lower == "ottawa" || lower == "otava")
+            {
+                normalizedDisplayName = "OTAVA, CA";
+                return "45.4215,-75.6972";
+            }
+            if (lower == "new york" || lower == "nova iorque")
+            {
+                normalizedDisplayName = "NOVA IORQUE, US";
+                return "40.7128,-74.0060";
+            }
+            if (lower == "washington")
+            {
+                normalizedDisplayName = "WASHINGTON, US";
+                return "38.9072,-77.0369";
+            }
+            if (lower == "sydney")
+            {
+                normalizedDisplayName = "SYDNEY, AU";
+                return "-33.8688,151.2093";
+            }
+            if (lower == "cairo")
+            {
+                normalizedDisplayName = "CAIRO, EG";
+                return "30.0444,31.2357";
+            }
+            if (lower == "rabat")
+            {
+                normalizedDisplayName = "RABAT, MA";
+                return "34.0209,-6.8416";
+            }
+            if (lower == "brasilia" || lower == "brasília")
+            {
+                normalizedDisplayName = "BRASILIA, BR";
+                return "-15.7975,-47.8919";
+            }
+            if (lower == "buenos aires")
+            {
+                normalizedDisplayName = "BUENOS AIRES, AR";
+                return "-34.6037,-58.3816";
+            }
+
 
             normalizedDisplayName = city.ToUpper();
             return city.Replace(" ", "%20");

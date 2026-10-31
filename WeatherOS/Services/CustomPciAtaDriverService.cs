@@ -135,10 +135,41 @@ namespace WeatherOS.Services
             WaitIo(_pCmd);
         }
 
-        public static void SyncDriveCache(ushort cmdBase)
+        public static void SyncDriveCache(ushort cmdBase, byte drvSel = 0xA0)
         {
-            EnsurePorts(cmdBase);
-            WaitReady(_pCmd, 500000);
+            try
+            {
+                EnsurePorts(cmdBase);
+                var pDrive = _pDrive;
+                var pCmd = _pCmd;
+                pDrive.Byte = (byte)(0xE0 | (drvSel == 0xB0 ? 0x10 : 0x00));
+                WaitIo(pCmd);
+                pCmd.Byte = 0xE7; // FLUSH CACHE
+                WaitIo(pCmd);
+                WaitReady(pCmd, 5000000);
+            }
+            catch { }
+        }
+
+        public static void ResetAndSelectDrive(ushort cmdBase, ushort ctrlBase, byte drvSel)
+        {
+            try
+            {
+                EnsurePorts(cmdBase, ctrlBase);
+                if (ctrlBase != 0 && _pCtrl != null)
+                {
+                    _pCtrl.Byte = 0x06; // SRST=1, nIEN=1
+                    WaitIo(_pCmd);
+                    WaitIo(_pCmd);
+                    _pCtrl.Byte = 0x02; // SRST=0, nIEN=1
+                    WaitIo(_pCmd);
+                    WaitIo(_pCmd);
+                }
+                _pDrive.Byte = (byte)(0xE0 | (drvSel == 0xB0 ? 0x10 : 0x00));
+                WaitIo(_pCmd);
+                WaitDriveReadyForCommand(_pCmd, 2500000);
+            }
+            catch { }
         }
 
         public static bool ReadSectorPio(ushort cmdBase, ushort ctrlBase, byte drvSel, bool lba48, ulong lba, byte[] buffer, int offset = 0, int timeout = 1500000)
@@ -154,14 +185,24 @@ namespace WeatherOS.Services
                 var pDrive = _pDrive;
                 var pCmd = _pCmd;
 
-                // Wait for drive to be READY (BSY=0, DRDY=1)
-                if (!WaitReady(pCmd, timeout)) return false;
+                bool use48 = lba48 && lba >= 0x0FFFFFFFU;
 
-                if (lba48 && lba >= 0x0FFFFFFFU)
+                // 1. ALWAYS select target drive FIRST and wait 400ns before polling status register!
+                if (use48)
                 {
                     pDrive.Byte = (byte)(0x40 | (drvSel == 0xB0 ? 0x10 : 0x00));
-                    WaitIo(pCmd);
+                }
+                else
+                {
+                    pDrive.Byte = (byte)(0xE0 | (drvSel == 0xB0 ? 0x10 : 0x00) | (int)((lba >> 24) & 0x0F));
+                }
+                WaitIo(pCmd);
 
+                // 2. Wait for selected drive to be READY (BSY=0, DRDY=1) before issuing command
+                if (!WaitDriveReadyForCommand(pCmd, timeout)) return false;
+
+                if (use48)
+                {
                     // High bytes
                     pSecCount.Byte = 0;
                     pLbaLow.Byte = (byte)(lba >> 24);
@@ -178,9 +219,6 @@ namespace WeatherOS.Services
                 }
                 else
                 {
-                    pDrive.Byte = (byte)(0xE0 | (drvSel == 0xB0 ? 0x10 : 0x00) | (int)((lba >> 24) & 0x0F));
-                    WaitIo(pCmd);
-
                     pSecCount.Byte = 1;
                     pLbaLow.Byte = (byte)lba;
                     pLbaMid.Byte = (byte)(lba >> 8);
@@ -227,14 +265,24 @@ namespace WeatherOS.Services
                 var pDrive = _pDrive;
                 var pCmd = _pCmd;
 
-                // 1. Wait for drive to be READY (BSY=0, DRDY=1) before issuing command
-                if (!WaitReady(pCmd, 2500000)) return false;
+                bool use48 = lba48 && lba >= 0x0FFFFFFFU;
 
-                if (lba48 && lba >= 0x0FFFFFFFU)
+                // 1. ALWAYS select target drive FIRST and wait 400ns before polling status register!
+                if (use48)
                 {
                     pDrive.Byte = (byte)(0x40 | (drvSel == 0xB0 ? 0x10 : 0x00));
-                    WaitIo(pCmd);
+                }
+                else
+                {
+                    pDrive.Byte = (byte)(0xE0 | (drvSel == 0xB0 ? 0x10 : 0x00) | (int)((lba >> 24) & 0x0F));
+                }
+                WaitIo(pCmd);
 
+                // 2. Wait for selected drive to be READY (BSY=0, DRDY=1) before issuing command
+                if (!WaitDriveReadyForCommand(pCmd, 2500000)) return false;
+
+                if (use48)
+                {
                     pSecCount.Byte = 0;
                     pLbaLow.Byte = (byte)(lba >> 24);
                     pLbaMid.Byte = (byte)(lba >> 32);
@@ -249,9 +297,6 @@ namespace WeatherOS.Services
                 }
                 else
                 {
-                    pDrive.Byte = (byte)(0xE0 | (drvSel == 0xB0 ? 0x10 : 0x00) | (int)((lba >> 24) & 0x0F));
-                    WaitIo(pCmd);
-
                     pSecCount.Byte = 1;
                     pLbaLow.Byte = (byte)lba;
                     pLbaMid.Byte = (byte)(lba >> 8);
@@ -260,11 +305,11 @@ namespace WeatherOS.Services
                     pCmd.Byte = 0x30; // WRITE SECTORS
                 }
 
-                // 2. Wait 400ns + wait for DRQ
+                // 3. Wait 400ns + wait for DRQ
                 WaitIo(pCmd);
                 if (!WaitDrq(pCmd, 2500000)) return false;
 
-                // 3. Write 256 words (512 bytes) atomically with CPU interrupts disabled to prevent FIFO desync
+                // 4. Write 256 words (512 bytes) atomically with CPU interrupts disabled to prevent FIFO desync
                 Cosmos.Core.CPU.DisableInterrupts();
                 try
                 {
@@ -279,7 +324,7 @@ namespace WeatherOS.Services
                     Cosmos.Core.CPU.EnableInterrupts();
                 }
 
-                // 4. CRITICAL: 400ns delay for drive controller to raise BSY bit, then wait for sector write to complete
+                // 5. CRITICAL: 400ns delay for drive controller to raise BSY bit, then wait for sector write to complete
                 WaitIo(pCmd);
                 return WaitNotBusy(pCmd, 2500000);
             }
@@ -298,9 +343,21 @@ namespace WeatherOS.Services
                 var pCmd = _pCmd;
                 pDrive.Byte = (byte)(0xE0 | (drvSel == 0xB0 ? 0x10 : 0x00));
                 WaitIo(pCmd);
-                pCmd.Byte = (lba48 && drvSel == 0xA0) ? (byte)0xEA : (byte)0xE7; // FLUSH CACHE EXT / FLUSH CACHE
+
+                // 1. Issue standard FLUSH CACHE (0xE7) - flushes all 28-bit write buffers
+                pCmd.Byte = 0xE7;
                 WaitIo(pCmd);
-                WaitNotBusy(pCmd, 5000000);
+                WaitReady(pCmd, 10000000);
+
+                // 2. If 48-bit LBA drive, also issue FLUSH CACHE EXT (0xEA)
+                if (lba48)
+                {
+                    pDrive.Byte = (byte)(0x40 | (drvSel == 0xB0 ? 0x10 : 0x00));
+                    WaitIo(pCmd);
+                    pCmd.Byte = 0xEA;
+                    WaitIo(pCmd);
+                    WaitReady(pCmd, 10000000);
+                }
             }
             catch { }
         }
@@ -311,6 +368,36 @@ namespace WeatherOS.Services
             b = pStatus.Byte;
             b = pStatus.Byte;
             b = pStatus.Byte;
+        }
+
+        private static bool WaitDriveReadyForCommand(IOPort pStatus, int timeout)
+        {
+            WaitIo(pStatus);
+            while (timeout-- > 0)
+            {
+                byte st = pStatus.Byte;
+                if (st == 0xFF) return false;
+                if ((st & 0x80) == 0)
+                {
+                    // If a previous PIO read/IDENTIFY was interrupted and left DRQ=1, drain the FIFO buffer
+                    if ((st & 0x08) != 0 && _pData != null)
+                    {
+                        for (int w = 0; w < 256; w++)
+                        {
+                            ushort dummy = _pData.Word;
+                        }
+                        WaitIo(pStatus);
+                        continue;
+                    }
+                    // BSY (bit 7) must be 0, DRDY (bit 6) must be 1.
+                    // Do NOT abort on stale ERR (bit 0) before issuing a command, because writing the command register clears ERR!
+                    if ((st & 0x40) != 0)
+                    {
+                        return true;
+                    }
+                }
+            }
+            return false;
         }
 
         private static bool WaitReady(IOPort pStatus, int timeout)
@@ -337,7 +424,11 @@ namespace WeatherOS.Services
             {
                 byte st = pStatus.Byte;
                 if (st == 0xFF) return false;
-                if ((st & 0x80) == 0) return true;
+                if ((st & 0x80) == 0)
+                {
+                    if ((st & 0x21) != 0) return false; // ERR or DF
+                    return true;
+                }
             }
             return false;
         }
@@ -492,6 +583,19 @@ namespace WeatherOS.Services
 
             // Probe Slave (0xB0)
             ProbeSingleTarget(cmdBase, ctrlBase, 0xB0, $"{channelTag} Slave");
+
+            // Restore Master (0xE0) drive selection on the channel so it is never left pointing at an empty Slave slot
+            try
+            {
+                var pDrive = new IOPort((ushort)(cmdBase + 6));
+                var pCmd = new IOPort((ushort)(cmdBase + 7));
+                pDrive.Byte = 0xE0;
+                byte dummy = pCmd.Byte;
+                dummy = pCmd.Byte;
+                dummy = pCmd.Byte;
+                dummy = pCmd.Byte;
+            }
+            catch { }
         }
 
         private static void ProbeSingleTarget(ushort cmdBase, ushort ctrlBase, byte drvSel, string channelTag)
