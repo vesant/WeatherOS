@@ -109,6 +109,16 @@ WeatherOS includes an interactive command interpreter accessible alongside the T
 
 ---
 
+## Overview
+
+![alt text](https://github.com/vesant/WeatherOS/blob/32bit/IMG_20261031_211950680_HDR_AE.jpg)
+
+![alt text](https://github.com/vesant/WeatherOS/blob/32bit/IMG_20261031_212004841_HDR_AE.jpg)
+
+![alt text](https://github.com/vesant/WeatherOS/blob/32bit/IMG_20261031_212019602_HDR_AE.jpg)
+
+---
+
 ## License
 
 This project is licensed under the BSD 3-Clause License. See `LICENSE` for details.
