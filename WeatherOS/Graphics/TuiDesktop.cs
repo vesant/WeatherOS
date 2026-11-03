@@ -147,10 +147,10 @@ namespace WeatherOS.Graphics
                         {
                             TimeService.Is24HourFormat = line.Substring(9).Trim() == "true";
                         }
-                        if (line.StartsWith("Timezone="))
+                        if (line.StartsWith("UtcOffset="))
                         {
                             int tz;
-                            if (int.TryParse(line.Substring(9).Trim(), out tz))
+                            if (int.TryParse(line.Substring(10).Trim(), out tz))
                             {
                                 TimeService.TimezoneOffset = tz;
                             }
@@ -169,7 +169,7 @@ namespace WeatherOS.Graphics
                          $"DebugLog={(_showDebugLogs ? "true" : "false")}\n" +
                          $"CustomKey={_customApiKey}\n" +
                          $"TimeFormat={(TimeService.Is24HourFormat ? "24" : "12")}\n" +
-                         $"Timezone={TimeService.TimezoneOffset}\n";
+                         $"UtcOffset={TimeService.TimezoneOffset}\n";
             string status;
             StorageService.SaveFile("settings.ini", cfg, out status);
 
@@ -288,7 +288,10 @@ namespace WeatherOS.Graphics
 
                     if (isRealTimeApp)
                     {
-                        for (int i = 0; i < 10; i++)
+                        int startY, startM, startD, startH, startMin, startSec;
+                        TimeService.GetCurrentLocalTime(out startY, out startM, out startD, out startH, out startMin, out startSec);
+
+                        for (int i = 0; i < 80; i++)
                         {
                             // Actively poll network hardware in real time
                             WeatherOS.Kernel.CustomNIC?.HackPoll();
@@ -298,9 +301,16 @@ namespace WeatherOS.Graphics
                                 ProcessKeyEvent(keyEvent);
                                 break;
                             }
-                            HardwareDelayMs(100);
-                            TimeService.Tick(100);
+                            HardwareDelayMs(15);
+                            TimeService.Tick(15);
                             if (_currentApp != "world_map") DrawMiniClock(force: false);
+
+                            int curY, curM, curD, curH, curMin, curSec;
+                            TimeService.GetCurrentLocalTime(out curY, out curM, out curD, out curH, out curMin, out curSec);
+                            if (curSec != startSec)
+                            {
+                                break;
+                            }
                         }
                     }
                     else

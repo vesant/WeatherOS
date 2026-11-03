@@ -660,6 +660,10 @@ namespace WeatherOS.Services
                     return null;
                 }
 
+                // Complete 3-way TCP handshake with pure ACK before sending HTTP request
+                SendTcpPacket(nic, 0x10, new byte[0]);
+                HardwareDelayMs(2);
+
                 // Send ACK + HTTP Request Payload
                 byte[] payload = new byte[requestString.Length];
                 for (int p = 0; p < requestString.Length; p++)
@@ -1027,11 +1031,11 @@ namespace WeatherOS.Services
 
             if (isSyn)
             {
-                // MSS = 1460 (0x05B4)
+                // MSS = 1360 (0x0550) - safe for PPPoE and tunnel MTUs
                 frame[currentOffset++] = 0x02;
                 frame[currentOffset++] = 0x04;
                 frame[currentOffset++] = 0x05;
-                frame[currentOffset++] = 0xB4;
+                frame[currentOffset++] = 0x50;
             }
 
             if (payload.Length > 0)
@@ -1292,29 +1296,33 @@ namespace WeatherOS.Services
                     {
                         payloadLen = packet.Length - payloadOffset;
                     }
-                    _acknowledgment = remoteSeq + (uint)payloadLen;
-                    
-                    if (_rxLength + payloadLen < _rxBuffer.Length)
+
+                    if (_acknowledgment == 0 || remoteSeq >= _acknowledgment)
                     {
-                        Array.Copy(packet, payloadOffset, _rxBuffer, _rxLength, payloadLen);
-                        _rxLength += payloadLen;
+                        _acknowledgment = remoteSeq + (uint)payloadLen;
+                        
+                        if (_rxLength + payloadLen < _rxBuffer.Length)
+                        {
+                            Array.Copy(packet, payloadOffset, _rxBuffer, _rxLength, payloadLen);
+                            _rxLength += payloadLen;
+                        }
+
+                        // Fast incremental detection of balanced root JSON braces
+                        for (int bi = 0; bi < payloadLen; bi++)
+                        {
+                            byte ch = packet[payloadOffset + bi];
+                            if (ch == '{') { _jsonBraceCount++; _jsonStarted = true; }
+                            else if (ch == '}') { _jsonBraceCount--; }
+                        }
+                        if (_jsonStarted && _jsonBraceCount == 0 && _rxLength > 200)
+                        {
+                            _finReceived = true;
+                        }
                     }
-                    
+
                     // Send ACK
                     var nic = NetworkDevice.Devices[0];
                     SendTcpPacket(nic, 0x10, new byte[0]);
-
-                    // Fast incremental detection of balanced root JSON braces
-                    for (int bi = 0; bi < payloadLen; bi++)
-                    {
-                        byte ch = packet[payloadOffset + bi];
-                        if (ch == '{') { _jsonBraceCount++; _jsonStarted = true; }
-                        else if (ch == '}') { _jsonBraceCount--; }
-                    }
-                    if (_jsonStarted && _jsonBraceCount == 0 && _rxLength > 200)
-                    {
-                        _finReceived = true;
-                    }
                 }
             }
             

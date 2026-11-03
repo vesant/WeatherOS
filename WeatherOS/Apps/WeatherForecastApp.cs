@@ -18,9 +18,18 @@ namespace WeatherOS.Apps
             var data = desktop.WeatherService.GetLatestReading();
             var days = data.ForecastDays;
 
+            if (days == null || days.Length < 7 || days[0] == null ||
+                string.IsNullOrEmpty(days[0].Date) ||
+                (days[0].Condition != null && days[0].Condition.Contains("Awaiting")))
+            {
+                desktop.WeatherService.EnsureForecastReady(desktop.DefaultCity, desktop.ApiKey);
+                data = desktop.WeatherService.GetLatestReading();
+                days = data.ForecastDays;
+            }
+
             if (days == null || days.Length < 7)
             {
-                win.WriteRow(3, "Awaiting 7-Day Telemetry from WeatherAPI.com...", ConsoleColor.Yellow, 2);
+                win.WriteRow(3, "Awaiting 7-Day Telemetry from WeatherAPI / Open-Meteo...", ConsoleColor.Yellow, 2);
                 win.WriteRow(5, "Press [R] to request forecast or [C] to select another city.", ConsoleColor.White, 2);
                 win.WriteFooter("[ESC] Return  |  [R] Refresh  |  [C] Change City", ConsoleColor.Yellow);
                 return;
@@ -32,7 +41,7 @@ namespace WeatherOS.Apps
                 var day = days[i];
                 int colX = win.InnerLeft + 1 + (i * 10);
 
-                bool hasData = !string.IsNullOrEmpty(day.Date) && (day.Condition == null || !day.Condition.Contains("Awaiting"));
+                bool hasData = (day != null) && !string.IsNullOrEmpty(day.Date) && (day.Condition == null || !day.Condition.Contains("Awaiting"));
                 if (!hasData)
                 {
                     System.Console.SetCursorPosition(colX, win.InnerTop + 1);
@@ -89,7 +98,7 @@ namespace WeatherOS.Apps
                     System.Console.Write(dayHeader.PadRight(9));
                 }
 
-                // Date line (e.g. "  12/10  ")
+                // Date line (e.g. "  03/11  ")
                 System.Console.SetCursorPosition(colX, win.InnerTop + 2);
                 System.Console.ForegroundColor = ConsoleColor.DarkGray;
                 string dateStr = FormatDateLabel(day.Date);
@@ -176,6 +185,22 @@ namespace WeatherOS.Apps
 
         private static string FormatDayHeader(string dateStr, string dayOfWeek)
         {
+            if (!string.IsNullOrEmpty(dateStr) && dateStr.Length >= 10)
+            {
+                try
+                {
+                    int year, month, day;
+                    if (int.TryParse(dateStr.Substring(0, 4), out year) &&
+                        int.TryParse(dateStr.Substring(5, 2), out month) &&
+                        int.TryParse(dateStr.Substring(8, 2), out day))
+                    {
+                        string dName = TimeService.GetDayOfWeekName(year, month, day).ToUpper();
+                        if (dName.Length > 3) dName = dName.Substring(0, 3);
+                        return $"   {dName}   ";
+                    }
+                }
+                catch { }
+            }
             if (!string.IsNullOrEmpty(dayOfWeek))
             {
                 string d = dayOfWeek.ToUpper();
@@ -187,20 +212,6 @@ namespace WeatherOS.Apps
                 if (d.Contains("FRI")) return "   FRI   ";
                 if (d.Contains("SAT")) return "   SAT   ";
             }
-            if (!string.IsNullOrEmpty(dateStr) && dateStr.Length >= 10)
-            {
-                try
-                {
-                    int year = int.Parse(dateStr.Substring(0, 4));
-                    int month = int.Parse(dateStr.Substring(5, 2));
-                    int day = int.Parse(dateStr.Substring(8, 2));
-                    var dt = new DateTime(year, month, day);
-                    string dName = dt.DayOfWeek.ToString().ToUpper();
-                    if (dName.Length > 3) dName = dName.Substring(0, 3);
-                    return $"   {dName}   ";
-                }
-                catch { }
-            }
             return "   DAY   ";
         }
 
@@ -209,13 +220,16 @@ namespace WeatherOS.Apps
             if (string.IsNullOrEmpty(cond)) return "Clear";
             string c = cond.ToLower();
             if (c.Contains("thunder") || c.Contains("trovoada")) return "Thunder";
-            if (c.Contains("heavy rain") || c.Contains("chuva forte")) return "Hvy Rain";
-            if (c.Contains("rain") || c.Contains("chuva")) return "Rain";
+            if (c.Contains("heavy rain") || c.Contains("chuva forte") || c.Contains("violent")) return "Hvy Rain";
+            if (c.Contains("mod") && c.Contains("rain")) return "Mod Rain";
+            if (c.Contains("light rain") || c.Contains("slight rain")) return "Lgt Rain";
+            if (c.Contains("rain") || c.Contains("shower") || c.Contains("chuva")) return "Rain";
             if (c.Contains("drizzle") || c.Contains("chuvisco")) return "Drizzle";
             if (c.Contains("snow") || c.Contains("neve")) return "Snow";
             if (c.Contains("blizzard")) return "Blizzard";
             if (c.Contains("fog") || c.Contains("mist") || c.Contains("nevoeiro")) return "Fog";
             if (c.Contains("part") || c.Contains("parcial")) return "Part.Cld";
+            if (c.Contains("mainly clear")) return "Mst.Clr";
             if (c.Contains("overcast") || c.Contains("coberto")) return "Overcast";
             if (c.Contains("cloud") || c.Contains("nublado")) return "Cloudy";
             if (c.Contains("clear") || c.Contains("limpo")) return "Clear";
@@ -257,7 +271,7 @@ namespace WeatherOS.Apps
                 System.Console.SetCursorPosition(left, top + 1); System.Console.Write("  - _ -  ");
                 System.Console.SetCursorPosition(left, top + 2); System.Console.Write("  _ - _  ");
             }
-            else if (c.Contains("part") || c.Contains("parcial"))
+            else if (c.Contains("part") || c.Contains("parcial") || c.Contains("mainly clear"))
             {
                 System.Console.ForegroundColor = ConsoleColor.Yellow;
                 System.Console.SetCursorPosition(left, top);     System.Console.Write("  \\ ( )  ");
@@ -289,7 +303,11 @@ namespace WeatherOS.Apps
             }
             else if (keyEvent.Key == ConsoleKeyEx.R || keyEvent.KeyChar == 'r' || keyEvent.KeyChar == 'R')
             {
-                desktop.WeatherService.FetchOpenWeather(desktop.DefaultCity, desktop.ApiKey);
+                var cur = desktop.WeatherService.GetLatestReading();
+                string targetLoc = (!string.IsNullOrWhiteSpace(cur.Location) && cur.Location != "UNKNOWN")
+                    ? cur.Location
+                    : desktop.DefaultCity;
+                desktop.WeatherService.FetchOpenWeather(targetLoc, desktop.ApiKey);
             }
             else if (keyEvent.Key == ConsoleKeyEx.C || keyEvent.KeyChar == 'c' || keyEvent.KeyChar == 'C')
             {

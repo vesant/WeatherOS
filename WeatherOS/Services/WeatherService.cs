@@ -2,7 +2,7 @@ using System;
 
 namespace WeatherOS.Services
 {
-    public struct ForecastDayData
+    public class ForecastDayData
     {
         public string Date;
         public string DayOfWeek;
@@ -16,7 +16,6 @@ namespace WeatherOS.Services
 
     /// <summary>
     /// Represents structured meteorological observation data.
-    /// Uses value-type semantics or reusable structures to prevent Garbage Collector overhead in Cosmos.
     /// </summary>
     public struct WeatherData
     {
@@ -50,39 +49,18 @@ namespace WeatherOS.Services
             AlertLevel = "NONE";
             PrecipitationMm = 0.0f;
             WeatherCode = 0;
-            MoonPhase = "Waxing Crescent";
-            MoonIllumination = "15%";
-            int hour = DateTime.UtcNow.Hour;
+
+            string mPhase, mIllum;
+            WeatherService.ComputeCurrentLunarState(out mPhase, out mIllum);
+            MoonPhase = mPhase;
+            MoonIllumination = mIllum;
+
+            int cy, cm, cd, hour, cmin, csec;
+            TimeService.GetCurrentLocalTime(out cy, out cm, out cd, out hour, out cmin, out csec);
             IsNight = (hour < 6 || hour >= 20);
-            Timestamp = DateTime.UtcNow;
+            Timestamp = default;
 
-            ForecastDays = new ForecastDayData[7];
-            string[] dayNames = new string[] { "TODAY", "TOMORROW", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY" };
-            for (int i = 0; i < 7; i++)
-            {
-                int dayNum = 28 + i;
-                int monthNum = 10;
-                if (dayNum > 31)
-                {
-                    dayNum -= 31;
-                    monthNum = 11;
-                }
-                string mStr = (monthNum < 10) ? ("0" + monthNum) : monthNum.ToString();
-                string dStr = (dayNum < 10) ? ("0" + dayNum) : dayNum.ToString();
-                string dateStr = "2026-" + mStr + "-" + dStr;
-
-                ForecastDays[i] = new ForecastDayData
-                {
-                    Date = dateStr,
-                    DayOfWeek = (i < dayNames.Length) ? dayNames[i] : ("DAY +" + i),
-                    MaxTempC = temp + (i % 3),
-                    MinTempC = (temp - 6) + (i % 2),
-                    ChanceOfRain = 10,
-                    Condition = condition,
-                    MoonPhase = "Waxing Crescent",
-                    MoonIllumination = "15%"
-                };
-            }
+            ForecastDays = WeatherService.BuildSynoptic7DayForecast(temp, condition, loc);
         }
     }
 
@@ -115,6 +93,214 @@ namespace WeatherOS.Services
         }
 
         public WeatherData GetLatestReading() { return _cachedReading; }
+
+        public static void ComputeCurrentLunarState(out string phaseName, out string illuminationStr)
+        {
+            long nowEpoch = TimeService.GetCurrentUtcEpochSeconds();
+            long refNewMoonEpoch = 1704974220L; // 2024-01-11 11:57:00 UTC
+            long diffSec = nowEpoch - refNewMoonEpoch;
+            if (diffSec < 0) diffSec = 0;
+            long cycleSec = diffSec % 2551443L; // 29.53059 days in seconds
+            float synodicDays = (float)cycleSec / 86400.0f;
+
+            float halfCycle = 14.7653f;
+            float distFromFull = synodicDays - halfCycle;
+            if (distFromFull < 0f) distFromFull = -distFromFull;
+            int illumPct = (int)(100.0f * (1.0f - (distFromFull / halfCycle)));
+            if (illumPct < 0) illumPct = 0;
+            if (illumPct > 100) illumPct = 100;
+            illuminationStr = illumPct.ToString() + "%";
+
+            if (synodicDays < 1.84f) phaseName = "New Moon";
+            else if (synodicDays < 5.53f) phaseName = "Waxing Crescent";
+            else if (synodicDays < 9.22f) phaseName = "First Quarter";
+            else if (synodicDays < 12.91f) phaseName = "Waxing Gibbous";
+            else if (synodicDays < 16.61f) phaseName = "Full Moon";
+            else if (synodicDays < 20.30f) phaseName = "Waning Gibbous";
+            else if (synodicDays < 23.99f) phaseName = "Last Quarter";
+            else if (synodicDays < 27.68f) phaseName = "Waning Crescent";
+            else phaseName = "New Moon";
+        }
+
+        public static ForecastDayData[] BuildSynoptic7DayForecast(float baseTemp, string baseCondition, string loc)
+        {
+            var days = new ForecastDayData[7];
+
+            string cleanLoc = string.IsNullOrWhiteSpace(loc) ? "SETUBAL, PT" : loc.ToUpper();
+            string startCond = baseCondition;
+            float startTemp = baseTemp;
+
+            if (string.IsNullOrWhiteSpace(startCond) || startCond.Contains("Awaiting") || startCond.Contains("Offline"))
+            {
+                float bT, bH, bP, bW;
+                string bDir, bCond;
+                if (GetRegionalSynopticBaseline(cleanLoc, out bT, out bH, out bP, out bW, out bDir, out bCond))
+                {
+                    startCond = bCond;
+                    if (startTemp <= 0.1f) startTemp = bT;
+                }
+                else
+                {
+                    startCond = "Partly Cloudy";
+                    if (startTemp <= 0.1f) startTemp = 16.0f;
+                }
+            }
+
+            int citySeed = 0;
+            for (int k = 0; k < cleanLoc.Length; k++)
+            {
+                citySeed = (citySeed * 31 + cleanLoc[k]) & 0x7FFF;
+            }
+
+            string cLower = startCond.ToLower();
+            string[] progConds;
+            int[] tempDeltas;
+
+            if (cLower.Contains("thunder") || cLower.Contains("trovoada"))
+            {
+                progConds = new string[] {
+                    "Thunderstorm", "Moderate Rain", "Partly Cloudy", "Clear Sky",
+                    "Partly Cloudy", "Light Rain", "Mainly Clear"
+                };
+                tempDeltas = new int[] { 0, -2, 1, 2, 1, -1, 2 };
+            }
+            else if (cLower.Contains("rain") || cLower.Contains("shower") || cLower.Contains("drizzle"))
+            {
+                progConds = new string[] {
+                    startCond, "Partly Cloudy", "Clear Sky", "Mainly Clear",
+                    "Cloudy", "Light Rain", "Partly Cloudy"
+                };
+                tempDeltas = new int[] { 0, 1, 3, 2, 0, -1, 1 };
+            }
+            else if (cLower.Contains("snow") || cLower.Contains("blizzard"))
+            {
+                progConds = new string[] {
+                    startCond, "Cloudy", "Partly Cloudy", "Clear Sky",
+                    "Partly Cloudy", "Slight Snow Fall", "Mainly Clear"
+                };
+                tempDeltas = new int[] { 0, 1, 2, 1, 0, -2, 1 };
+            }
+            else if (cLower.Contains("cloud") || cLower.Contains("overcast") || cLower.Contains("fog") || cLower.Contains("mist"))
+            {
+                progConds = new string[] {
+                    startCond, "Partly Cloudy", "Clear Sky", "Mainly Clear",
+                    "Partly Cloudy", "Light Rain", "Clear Sky"
+                };
+                tempDeltas = new int[] { 0, 1, 2, 2, 0, -2, 1 };
+            }
+            else
+            {
+                progConds = new string[] {
+                    "Clear Sky", "Mainly Clear", "Partly Cloudy", "Clear Sky",
+                    "Partly Cloudy", "Cloudy", "Clear Sky"
+                };
+                tempDeltas = new int[] { 0, 1, 0, 2, -1, -2, 1 };
+            }
+
+            int y, m, d, h, min, sec;
+            TimeService.GetCurrentLocalTime(out y, out m, out d, out h, out min, out sec);
+
+            string curPhase, curIllum;
+            ComputeCurrentLunarState(out curPhase, out curIllum);
+
+            for (int i = 0; i < 7; i++)
+            {
+                string mStr = (m < 10) ? ("0" + m) : m.ToString();
+                string dStr = (d < 10) ? ("0" + d) : d.ToString();
+                string dateStr = y.ToString() + "-" + mStr + "-" + dStr;
+
+                string dowName;
+                if (i == 0) dowName = "TODAY";
+                else if (i == 1) dowName = "TOMORROW";
+                else dowName = TimeService.GetDayOfWeekName(y, m, d).ToUpper();
+
+                int idx = (i == 0) ? 0 : (1 + ((i - 1 + (citySeed % 3)) % 6));
+                string dCond = (i == 0) ? startCond : progConds[idx];
+
+                float dMax = startTemp + tempDeltas[idx] + ((i == 0) ? 1.0f : ((citySeed + i) % 2));
+                float spread = 5.0f + ((citySeed + i) % 4);
+                float dMin = dMax - spread;
+
+                int dRain = EstimateRainProbability(dCond, i, citySeed);
+
+                days[i] = new ForecastDayData
+                {
+                    Date = dateStr,
+                    DayOfWeek = dowName,
+                    MaxTempC = dMax,
+                    MinTempC = dMin,
+                    ChanceOfRain = dRain,
+                    Condition = dCond,
+                    MoonPhase = curPhase,
+                    MoonIllumination = curIllum
+                };
+
+                AdvanceMoonPhase(ref curPhase, ref curIllum);
+
+                d++;
+                int maxDays = TimeService.GetDaysInMonth(y, m);
+                if (d > maxDays)
+                {
+                    d = 1;
+                    m++;
+                    if (m > 12) { m = 1; y++; }
+                }
+            }
+
+            return days;
+        }
+
+        private static int EstimateRainProbability(string cond, int dayIdx, int seed)
+        {
+            string c = (cond ?? "").ToLower();
+            int jitter = ((seed + dayIdx * 7) % 11) - 5; // -5..+5%
+            int baseProb = 10;
+            if (c.Contains("thunder")) baseProb = 80;
+            else if (c.Contains("heavy rain") || c.Contains("violent")) baseProb = 85;
+            else if (c.Contains("moderate rain") || c == "rain") baseProb = 65;
+            else if (c.Contains("light rain") || c.Contains("slight rain") || c.Contains("shower") || c.Contains("drizzle")) baseProb = 50;
+            else if (c.Contains("snow") || c.Contains("blizzard")) baseProb = 60;
+            else if (c.Contains("overcast")) baseProb = 30;
+            else if (c.Contains("cloud") && !c.Contains("part")) baseProb = 25;
+            else if (c.Contains("part")) baseProb = 15;
+            else if (c.Contains("mainly clear")) baseProb = 10;
+            else baseProb = 5;
+
+            int res = baseProb + jitter;
+            if (res < 5) res = 5;
+            if (res > 95) res = 95;
+            return (res / 5) * 5;
+        }
+
+        public void EnsureForecastReady(string defaultCity, string apiKey)
+        {
+            string target = (!string.IsNullOrWhiteSpace(_cachedReading.Location) && _cachedReading.Location != "UNKNOWN")
+                ? _cachedReading.Location
+                : defaultCity;
+
+            bool needsFetch = (_cachedReading.Condition != null && _cachedReading.Condition.Contains("Awaiting")) ||
+                              _cachedReading.ForecastDays == null ||
+                              _cachedReading.ForecastDays.Length < 7 ||
+                              _cachedReading.ForecastDays[0] == null ||
+                              string.IsNullOrEmpty(_cachedReading.ForecastDays[0].Date) ||
+                              (_cachedReading.ForecastDays[0].Condition != null && _cachedReading.ForecastDays[0].Condition.Contains("Awaiting"));
+
+            if (needsFetch)
+            {
+                FetchOpenWeather(target, apiKey);
+            }
+
+            if (_cachedReading.ForecastDays == null ||
+                _cachedReading.ForecastDays.Length < 7 ||
+                _cachedReading.ForecastDays[0] == null ||
+                (_cachedReading.ForecastDays[0].Condition != null && _cachedReading.ForecastDays[0].Condition.Contains("Awaiting")))
+            {
+                _cachedReading.ForecastDays = BuildSynoptic7DayForecast(
+                    _cachedReading.TemperatureCelsius,
+                    _cachedReading.Condition,
+                    _cachedReading.Location);
+            }
+        }
 
         public void ApplySynopticFallback(string displayLocation, float tempC, float humidity, float pressureHpa, float windKmh, string windDir, string condition)
         {
@@ -289,7 +475,7 @@ namespace WeatherOS.Services
                 var openMeteoIp = new Cosmos.System.Network.IPv4.Address(94, 130, 142, 35);
                 var gatewayIp = RawTcpHttp.GetGatewayAddress();
 
-                string req = "GET /v1/forecast?latitude=" + sLat + "&longitude=" + sLon + "&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m&timezone=auto HTTP/1.1\r\nHost: api.open-meteo.com\r\nUser-Agent: WeatherOS/3.3\r\nConnection: close\r\n\r\n";
+                string req = "GET /v1/forecast?latitude=" + sLat + "&longitude=" + sLon + "&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m&timezone=auto HTTP/1.0\r\nHost: api.open-meteo.com\r\nConnection: close\r\n\r\n";
                 string resp = RawTcpHttp.FetchGet(openMeteoIp, gatewayIp, req);
                 if (!string.IsNullOrWhiteSpace(resp))
                 {
@@ -366,7 +552,7 @@ namespace WeatherOS.Services
                     {
                         string lat = coords[0].Trim();
                         string lon = coords[1].Trim();
-                        string openMeteoRequest = "GET /v1/forecast?latitude=" + lat + "&longitude=" + lon + "&current=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,weather_code,surface_pressure,wind_speed_10m,wind_direction_10m&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max&timezone=auto HTTP/1.1\r\nHost: api.open-meteo.com\r\nUser-Agent: WeatherOS/3.0\r\nConnection: close\r\n\r\n";
+                        string openMeteoRequest = "GET /v1/forecast?latitude=" + lat + "&longitude=" + lon + "&current=temperature_2m,relative_humidity_2m,precipitation,weather_code,surface_pressure,wind_speed_10m,wind_direction_10m&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max&timezone=auto HTTP/1.0\r\nHost: api.open-meteo.com\r\nConnection: close\r\n\r\n";
                         if (_debugMode && !WeatherOS.Graphics.TuiDesktop.IsGuiActive)
                             System.Console.WriteLine("[net] raw_tcp: querying Open-Meteo via " + openMeteoIp.ToString() + "...");
                         response = RawTcpHttp.FetchGet(openMeteoIp, gatewayIp, openMeteoRequest);
@@ -536,7 +722,8 @@ namespace WeatherOS.Services
                 }
                 else
                 {
-                    int curHour = DateTime.UtcNow.Hour;
+                    int cy, cm, cd, curHour, cmin, csec;
+                    TimeService.GetCurrentLocalTime(out cy, out cm, out cd, out curHour, out cmin, out csec);
                     _cachedReading.IsNight = (curHour < 7 || curHour >= 20) || 
                         (_cachedReading.Condition != null && (_cachedReading.Condition.ToLower().Contains("night") || _cachedReading.Condition.ToLower().Contains("noite")));
                 }
@@ -664,38 +851,26 @@ namespace WeatherOS.Services
                     _cachedReading.Location = "SETUBAL, PT";
                 }
 
-                int curHour = DateTime.UtcNow.Hour;
+                int cy, cm, cd, curHour, cmin, csec;
+                TimeService.GetCurrentLocalTime(out cy, out cm, out cd, out curHour, out cmin, out csec);
                 _cachedReading.IsNight = (curHour < 7 || curHour >= 20);
 
-                // Open-Meteo astronomical moon phase & illumination estimation
-                DateTime now = DateTime.UtcNow;
-                var refNewMoon = new DateTime(2024, 1, 11, 11, 57, 0, DateTimeKind.Utc);
-                double daysSince = (now - refNewMoon).TotalDays;
-                double synodicCycle = daysSince % 29.53058867;
-                if (synodicCycle < 0) synodicCycle += 29.53058867;
-                double phasePct = synodicCycle / 29.53058867;
-                int illumPct = (int)(Math.Round((1.0 - Math.Cos(phasePct * 2.0 * Math.PI)) / 2.0 * 100.0));
-                _cachedReading.MoonIllumination = illumPct + "%";
+                // Pure integer/float lunar phase & illumination calculation
+                string calcPhase, calcIllum;
+                ComputeCurrentLunarState(out calcPhase, out calcIllum);
+                _cachedReading.MoonPhase = calcPhase;
+                _cachedReading.MoonIllumination = calcIllum;
 
-                if (synodicCycle < 1.84) _cachedReading.MoonPhase = "New Moon";
-                else if (synodicCycle < 5.53) _cachedReading.MoonPhase = "Waxing Crescent";
-                else if (synodicCycle < 9.22) _cachedReading.MoonPhase = "First Quarter";
-                else if (synodicCycle < 12.91) _cachedReading.MoonPhase = "Waxing Gibbous";
-                else if (synodicCycle < 16.61) _cachedReading.MoonPhase = "Full Moon";
-                else if (synodicCycle < 20.30) _cachedReading.MoonPhase = "Waning Gibbous";
-                else if (synodicCycle < 23.99) _cachedReading.MoonPhase = "Last Quarter";
-                else if (synodicCycle < 27.68) _cachedReading.MoonPhase = "Waning Crescent";
-                else _cachedReading.MoonPhase = "New Moon";
-
-                // Parse 7-day daily forecast arrays directly from Open-Meteo
+                // Parse 7-day daily forecast arrays directly from Open-Meteo starting at "daily":
                 int dailyIdx = CustomIndexOf(json, "\"daily\":", 0);
+                bool parsedDailyOk = false;
                 if (dailyIdx != -1)
                 {
-                    string[] dates = ParseJsonStringArray(json, "time", 7);
-                    float[] wCodes = ParseJsonFloatArray(json, "weather_code", 7);
-                    float[] maxTemps = ParseJsonFloatArray(json, "temperature_2m_max", 7);
-                    float[] minTemps = ParseJsonFloatArray(json, "temperature_2m_min", 7);
-                    float[] rainProbs = ParseJsonFloatArray(json, "precipitation_probability_max", 7);
+                    string[] dates = ParseJsonStringArray(json, "time", 7, dailyIdx);
+                    float[] wCodes = ParseJsonFloatArray(json, "weather_code", 7, dailyIdx);
+                    float[] maxTemps = ParseJsonFloatArray(json, "temperature_2m_max", 7, dailyIdx);
+                    float[] minTemps = ParseJsonFloatArray(json, "temperature_2m_min", 7, dailyIdx);
+                    float[] rainProbs = ParseJsonFloatArray(json, "precipitation_probability_max", 7, dailyIdx);
 
                     int count = Math.Min(7, dates.Length);
                     if (count > 0)
@@ -728,7 +903,16 @@ namespace WeatherOS.Services
 
                             AdvanceMoonPhase(ref curPhase, ref curIllum);
                         }
+                        parsedDailyOk = true;
                     }
+                }
+
+                if (!parsedDailyOk)
+                {
+                    _cachedReading.ForecastDays = BuildSynoptic7DayForecast(
+                        _cachedReading.TemperatureCelsius,
+                        _cachedReading.Condition,
+                        _cachedReading.Location);
                 }
 
                 EvaluateWeatherAlerts();
@@ -859,7 +1043,7 @@ namespace WeatherOS.Services
                 _cachedReading.AlertMessage = "All clear. No severe weather hazards reported.";
             }
 
-            _cachedReading.Timestamp = DateTime.UtcNow;
+            _cachedReading.Timestamp = default;
         }
 
         private static string GetConditionFromWmoCode(int code)
@@ -931,15 +1115,15 @@ namespace WeatherOS.Services
             return isNegative ? -result : result;
         }
 
-        private string[] ParseJsonStringArray(string json, string key, int maxCount)
+        private string[] ParseJsonStringArray(string json, string key, int maxCount, int startIndex = 0)
         {
             var list = new System.Collections.Generic.List<string>();
             string search = "\"" + key + "\":[";
-            int idx = CustomIndexOf(json, search, 0);
+            int idx = CustomIndexOf(json, search, startIndex);
             if (idx == -1)
             {
                 search = "\"" + key + "\": [";
-                idx = CustomIndexOf(json, search, 0);
+                idx = CustomIndexOf(json, search, startIndex);
             }
             if (idx == -1) return list.ToArray();
             idx += search.Length;
@@ -955,15 +1139,15 @@ namespace WeatherOS.Services
             return list.ToArray();
         }
 
-        private float[] ParseJsonFloatArray(string json, string key, int maxCount)
+        private float[] ParseJsonFloatArray(string json, string key, int maxCount, int startIndex = 0)
         {
             var list = new System.Collections.Generic.List<float>();
             string search = "\"" + key + "\":[";
-            int idx = CustomIndexOf(json, search, 0);
+            int idx = CustomIndexOf(json, search, startIndex);
             if (idx == -1)
             {
                 search = "\"" + key + "\": [";
-                idx = CustomIndexOf(json, search, 0);
+                idx = CustomIndexOf(json, search, startIndex);
             }
             if (idx == -1) return list.ToArray();
             idx += search.Length;
@@ -1146,6 +1330,16 @@ namespace WeatherOS.Services
         {
             if (dayIndex == 0) return "TODAY";
             if (dayIndex == 1) return "TOMORROW";
+            if (!string.IsNullOrEmpty(dateStr) && dateStr.Length >= 10)
+            {
+                int y, m, d;
+                if (int.TryParse(dateStr.Substring(0, 4), out y) &&
+                    int.TryParse(dateStr.Substring(5, 2), out m) &&
+                    int.TryParse(dateStr.Substring(8, 2), out d))
+                {
+                    return TimeService.GetDayOfWeekName(y, m, d).ToUpper();
+                }
+            }
             string[] dayNames = new string[] { "TODAY", "TOMORROW", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY" };
             if (dayIndex >= 0 && dayIndex < dayNames.Length) return dayNames[dayIndex];
             return "DAY +" + dayIndex;
@@ -1155,14 +1349,22 @@ namespace WeatherOS.Services
         {
             try
             {
+                int fcIdx = CustomIndexOf(json, "\"forecastday\":", 0);
+                if (fcIdx == -1) fcIdx = CustomIndexOf(json, "\"weather\":", 0);
+                if (fcIdx == -1)
+                {
+                    // current.json has no forecastday array; generate synoptic 7-day progression from live reading
+                    _cachedReading.ForecastDays = BuildSynoptic7DayForecast(
+                        _cachedReading.TemperatureCelsius,
+                        _cachedReading.Condition,
+                        _cachedReading.Location);
+                    return;
+                }
+
                 if (_cachedReading.ForecastDays == null || _cachedReading.ForecastDays.Length != 7)
                 {
                     _cachedReading.ForecastDays = new ForecastDayData[7];
                 }
-
-                int fcIdx = CustomIndexOf(json, "\"forecastday\":", 0);
-                if (fcIdx == -1) fcIdx = CustomIndexOf(json, "\"weather\":", 0);
-                if (fcIdx == -1) return;
 
                 int searchFrom = fcIdx;
                 int parsedDays = 0;
@@ -1308,7 +1510,7 @@ namespace WeatherOS.Services
                 }
                 catch { }
             }
-            _cachedReading.Timestamp = DateTime.UtcNow;
+            _cachedReading.Timestamp = default;
         }
 
         public float GetDewPointCelsius()

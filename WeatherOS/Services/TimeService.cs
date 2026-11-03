@@ -4,11 +4,12 @@ namespace WeatherOS.Services
 {
     public static class TimeService
     {
-        private static long _currentEpochSeconds = 1792524274L; // Default fallback (Oct 20, 2026)
+        private static long _currentEpochSeconds = 1793731500L; // Default fallback (Nov 03, 2026 18:45:00 UTC)
         private static int _loopMsAccumulator = 0;
+        private static int _lastRtcSecond = -1;
         private static bool _isNetworkSynced = false;
-        private static string _syncSource = "Internal Manual Clock (Calibrated)";
-        private static int _timeZoneOffset = 1; // Default UTC+1 (Western Europe)
+        private static string _syncSource = "Hardware CMOS RTC Crystal (0x70/0x71)";
+        private static int _timeZoneOffset = 0; // Default UTC+0 (Western European Time / Portugal WET)
         private static bool _is24HourFormat = true;
         private static bool _isInitialized = false;
 
@@ -30,14 +31,145 @@ namespace WeatherOS.Services
         public static bool IsNetworkSynced => _isNetworkSynced;
         public static string SyncSource => _syncSource;
 
+        private static byte ReadCmosRegister(byte reg)
+        {
+            try
+            {
+                var pIdx = new Cosmos.Core.IOPort(0x70);
+                var pData = new Cosmos.Core.IOPort(0x71);
+                pIdx.Byte = reg;
+                return pData.Byte;
+            }
+            catch
+            {
+                return 0xFF;
+            }
+        }
+
+        private static int ReadHardwareRtcSecond()
+        {
+            try
+            {
+                for (int w = 0; w < 200; w++)
+                {
+                    if ((ReadCmosRegister(0x0A) & 0x80) == 0) break;
+                }
+                byte rawSec = ReadCmosRegister(0x00);
+                if (rawSec == 0xFF) return -1;
+                byte regB = ReadCmosRegister(0x0B);
+                bool isBinary = (regB & 0x04) != 0;
+                int sec = isBinary ? rawSec : ((rawSec & 0x0F) + ((rawSec >> 4) * 10));
+                if (sec >= 0 && sec < 60) return sec;
+            }
+            catch { }
+            return -1;
+        }
+
+        private static bool TryReadHardwareRtcDateTime(out int year, out int month, out int day, out int hour, out int minute, out int second)
+        {
+            year = 2026; month = 11; day = 3; hour = 18; minute = 45; second = 0;
+            try
+            {
+                for (int w = 0; w < 400; w++)
+                {
+                    if ((ReadCmosRegister(0x0A) & 0x80) == 0) break;
+                }
+                byte rawSec = ReadCmosRegister(0x00);
+                byte rawMin = ReadCmosRegister(0x02);
+                byte rawHr  = ReadCmosRegister(0x04);
+                byte rawDay = ReadCmosRegister(0x07);
+                byte rawMon = ReadCmosRegister(0x08);
+                byte rawYr  = ReadCmosRegister(0x09);
+                byte regB   = ReadCmosRegister(0x0B);
+
+                if (rawSec == 0xFF || rawMin == 0xFF || rawHr == 0xFF) return false;
+
+                bool isBinary = (regB & 0x04) != 0;
+                bool is24h = (regB & 0x02) != 0;
+
+                second = isBinary ? rawSec : ((rawSec & 0x0F) + ((rawSec >> 4) * 10));
+                minute = isBinary ? rawMin : ((rawMin & 0x0F) + ((rawMin >> 4) * 10));
+
+                if (is24h)
+                {
+                    hour = isBinary ? rawHr : ((rawHr & 0x0F) + (((rawHr & 0x7F) >> 4) * 10));
+                }
+                else
+                {
+                    bool isPm = (rawHr & 0x80) != 0;
+                    byte hVal = (byte)(rawHr & 0x7F);
+                    hour = isBinary ? hVal : ((hVal & 0x0F) + ((hVal >> 4) * 10));
+                    if (isPm && hour < 12) hour += 12;
+                    else if (!isPm && hour == 12) hour = 0;
+                }
+
+                day = isBinary ? rawDay : ((rawDay & 0x0F) + ((rawDay >> 4) * 10));
+                month = isBinary ? rawMon : ((rawMon & 0x0F) + ((rawMon >> 4) * 10));
+                int yr2 = isBinary ? rawYr : ((rawYr & 0x0F) + ((rawYr >> 4) * 10));
+                year = 2000 + yr2;
+
+                if (second < 0 || second > 59) return false;
+                if (minute < 0 || minute > 59) return false;
+                if (hour < 0 || hour > 23) return false;
+                if (month < 1 || month > 12) return false;
+                if (day < 1 || day > 31) return false;
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static void PollHardwareRtc()
+        {
+            int rtcSec = ReadHardwareRtcSecond();
+            if (rtcSec >= 0 && rtcSec < 60)
+            {
+                if (_lastRtcSecond < 0)
+                {
+                    _lastRtcSecond = rtcSec;
+                }
+                else if (rtcSec != _lastRtcSecond)
+                {
+                    int delta = (rtcSec - _lastRtcSecond + 60) % 60;
+                    if (delta > 0 && delta <= 55)
+                    {
+                        _currentEpochSeconds += delta;
+                        _loopMsAccumulator = 0;
+                    }
+                    _lastRtcSecond = rtcSec;
+                }
+            }
+        }
+
         public static void Initialize()
         {
             if (_isInitialized) return;
 
-            // Initialize baseline to today (Oct 20, 2026 19:24:34 UTC)
-            _currentEpochSeconds = UtcToEpoch(2026, 10, 20, 19, 24, 34);
+            int ry, rm, rd, rh, rmin, rsec;
+            if (TryReadHardwareRtcDateTime(out ry, out rm, out rd, out rh, out rmin, out rsec))
+            {
+                _lastRtcSecond = rsec;
+                if (ry >= 2025 && ry <= 2099)
+                {
+                    _currentEpochSeconds = UtcToEpoch(ry, rm, rd, rh, rmin, rsec);
+                    _syncSource = "Hardware CMOS RTC Crystal (0x70/0x71)";
+                }
+                else
+                {
+                    _currentEpochSeconds = UtcToEpoch(2026, 11, 3, rh, rmin, rsec);
+                    _syncSource = "Hardware CMOS Crystal (RTC Driven)";
+                }
+            }
+            else
+            {
+                _currentEpochSeconds = UtcToEpoch(2026, 11, 3, 18, 45, 0);
+                _lastRtcSecond = ReadHardwareRtcSecond();
+                _syncSource = "Internal Software Engine";
+            }
+
             _loopMsAccumulator = 0;
-            _syncSource = "Internal Software Engine";
             _isInitialized = true;
         }
 
@@ -45,7 +177,10 @@ namespace WeatherOS.Services
         {
             if (!_isInitialized) Initialize();
 
-            if (ms > 0)
+            PollHardwareRtc();
+
+            // Software accumulator fallback only if hardware CMOS RTC is not responding
+            if (_lastRtcSecond < 0 && ms > 0)
             {
                 _loopMsAccumulator += ms;
                 if (_loopMsAccumulator >= 1000)
@@ -67,6 +202,7 @@ namespace WeatherOS.Services
             {
                 _currentEpochSeconds = (long)ntpEpoch;
                 _loopMsAccumulator = 0;
+                _lastRtcSecond = ReadHardwareRtcSecond();
                 _isNetworkSynced = true;
                 string sIp = (ntpServerIp != null) ? $"{ntpServerIp[0]}.{ntpServerIp[1]}.{ntpServerIp[2]}.{ntpServerIp[3]}" : "pool.ntp.org";
                 _syncSource = $"NTP Network Atomic Clock ({sIp})";
@@ -85,6 +221,7 @@ namespace WeatherOS.Services
             {
                 _currentEpochSeconds = parsedEpoch;
                 _loopMsAccumulator = 0;
+                _lastRtcSecond = ReadHardwareRtcSecond();
                 _isNetworkSynced = true;
                 _syncSource = "HTTP Telemetry Gateway (Network Synced)";
                 return true;
@@ -127,36 +264,42 @@ namespace WeatherOS.Services
 
             _currentEpochSeconds = UtcToEpoch(utcYear, utcMonth, utcDay, utcHour, minute, second);
             _loopMsAccumulator = 0;
+            _lastRtcSecond = ReadHardwareRtcSecond();
             _syncSource = "Manual User Calibration";
         }
 
         public static void AdjustHours(int deltaHours)
         {
             if (!_isInitialized) Initialize();
+            PollHardwareRtc();
             _currentEpochSeconds += (deltaHours * 3600L);
         }
 
         public static void AdjustMinutes(int deltaMinutes)
         {
             if (!_isInitialized) Initialize();
+            PollHardwareRtc();
             _currentEpochSeconds += (deltaMinutes * 60L);
         }
 
         public static long GetCurrentUtcEpochSeconds()
         {
             if (!_isInitialized) Initialize();
+            PollHardwareRtc();
             return _currentEpochSeconds;
         }
 
         public static void GetCurrentUtcTime(out int year, out int month, out int day, out int hour, out int minute, out int second)
         {
             if (!_isInitialized) Initialize();
+            PollHardwareRtc();
             EpochToUtc(_currentEpochSeconds, out year, out month, out day, out hour, out minute, out second);
         }
 
         public static void GetCurrentLocalTime(out int year, out int month, out int day, out int hour, out int minute, out int second)
         {
             if (!_isInitialized) Initialize();
+            PollHardwareRtc();
             long localEpoch = _currentEpochSeconds + (_timeZoneOffset * 3600L);
             EpochToUtc(localEpoch, out year, out month, out day, out hour, out minute, out second);
         }
