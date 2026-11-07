@@ -46,10 +46,10 @@ namespace WeatherOS.Apps
     /// Dedicated Full-Screen Meteorological Broadcast Mode (80x25, 720x400 VGA)
     /// with 5 Real-Time Multi-Spectral Meteorological Map Layers:
     ///   0: SYNOPTIC ICONS   (18x16 Weather Sprites & Station Temperatures)
-    ///   1: THERMAL HEATMAP  (6-Band Continental Isotherms & Temperature Gradient in °C)
+    ///   1: THERMAL HEATMAP  (6-Band Continental Isotherms & Thermal Zone Classification)
     ///   2: PRECIP RADAR     (Synoptic Rain Bands, Frontal Showers & Cloud Cover)
-    ///   3: WIND VECTORS     (Directional Wind Velocity Field & Jet Streams in km/h)
-    ///   4: WEATHER RADAR    (Animated 16-Frame Loop NEXRAD Doppler Reflectivity dBZ Sweep)
+    ///   3: WIND VECTORS     (Directional Wind Streamlines & Synoptic Wind Classification)
+    ///   4: WEATHER RADAR    (Animated 16-Frame Loop NEXRAD Doppler Reflectivity Sweep)
     /// </summary>
     public class WorldWeatherMapApp : IApp
     {
@@ -72,18 +72,22 @@ namespace WeatherOS.Apps
         private string[][] _continentMaps;
 
         // Custom VGA Plane 2 Glyph Codes (0xC0..0xDF seamlessly bridge the 9th pixel column in hardware)
-        private const byte GLYPH_COAST_NW      = 0xC0; // '/' NW sloped coast (top-left ocean, bottom-right land)
-        private const byte GLYPH_COAST_NE      = 0xC1; // '\' NE sloped coast (top-right ocean, bottom-left land)
-        private const byte GLYPH_COAST_SW      = 0xC2; // '\' SW sloped coast (bottom-left ocean, top-right land)
-        private const byte GLYPH_COAST_SE      = 0xC3; // '/' SE sloped coast (bottom-right ocean, top-left land)
-        private const byte GLYPH_COAST_NORTH   = 0xC4; // Smooth horizontal North coast (top ocean, bottom land)
-        private const byte GLYPH_COAST_SOUTH   = 0xC5; // Smooth horizontal South coast (top land, bottom ocean)
-        private const byte GLYPH_COAST_WEST    = 0xC6; // Smooth vertical West coast (left ocean, right land)
-        private const byte GLYPH_COAST_EAST    = 0xC7; // Smooth vertical East coast (left land, right ocean)
-        private const byte GLYPH_ISLAND        = 0xC8; // Rounded island / cape tip
-        private const byte GLYPH_BORDER_HORIZ  = 0xC9; // Subtle 1px horizontal country border on land
-        private const byte GLYPH_BORDER_VERT   = 0xCA; // Subtle 1px vertical country border on land
-        private const byte GLYPH_HIGHLAND      = 0xCB; // Topographical mountain / highland stipple on land
+        public const byte GLYPH_COAST_NW        = 0xC0; // '/' NW sloped coast (top-left ocean, bottom-right land)
+        public const byte GLYPH_COAST_NE        = 0xC1; // '\' NE sloped coast (top-right ocean, bottom-left land)
+        public const byte GLYPH_COAST_SW        = 0xC2; // '\' SW sloped coast (bottom-left ocean, top-right land)
+        public const byte GLYPH_COAST_SE        = 0xC3; // '/' SE sloped coast (bottom-right ocean, top-left land)
+        public const byte GLYPH_COAST_NORTH     = 0xC4; // Smooth horizontal North coast (top ocean, bottom land)
+        public const byte GLYPH_COAST_SOUTH     = 0xC5; // Smooth horizontal South coast (top land, bottom ocean)
+        public const byte GLYPH_COAST_WEST      = 0xC6; // Smooth vertical West coast (left ocean, right land)
+        public const byte GLYPH_COAST_EAST      = 0xC7; // Smooth vertical East coast (left land, right ocean)
+        public const byte GLYPH_ISLAND          = 0xC8; // Rounded isolated island
+        public const byte GLYPH_BORDER_HORIZ    = 0xC9; // Subtle 1px horizontal country border on land
+        public const byte GLYPH_BORDER_VERT     = 0xCA; // Subtle 1px vertical country border on land
+        public const byte GLYPH_HIGHLAND        = 0xCB; // Topographical mountain / highland relief on land
+        public const byte GLYPH_PENINSULA_VERT  = 0xCC; // Narrow vertical peninsula / isthmus (ocean W & E)
+        public const byte GLYPH_PENINSULA_HORIZ = 0xCD; // Narrow horizontal peninsula / island arc (ocean N & S)
+        public const byte GLYPH_CAPE_NORTH      = 0xCE; // Rounded northern cape tip (land only S)
+        public const byte GLYPH_CAPE_SOUTH      = 0xCF; // Rounded southern peninsula tip (land only N)
 
         // 2-Cell (18x16 pixel) Broadcast Weather Icon Sprites in 0xD0..0xDB
         private const byte GLYPH_SUN_L         = 0xD0;
@@ -193,79 +197,79 @@ namespace WeatherOS.Apps
         {
             _zones = new GlobalStation[5][];
 
-            // 0: EUROPE (Positioned accurately on the improved 80x22 continental map)
+            // 0: EUROPE (Accurately mapped to the high-realism 80x22 European continental projection)
             _zones[0] = new GlobalStation[]
             {
-                new GlobalStation("Lisbon",    "38.72,-9.14",   "Portugal",       "PT", "38.72",  "-9.14",  5, 16,  18, 74, 12, 1018, "Partly Cloudy"),
-                new GlobalStation("Madrid",    "40.42,-3.70",   "Spain",          "ES", "40.42",  "-3.70", 12, 15,  16, 49, 11, 1019, "Clear"),
-                new GlobalStation("London",    "51.51,-0.13",   "United Kingdom", "UK", "51.51",  "-0.13", 17,  8,  14, 76, 18, 1014, "Partly Cloudy"),
-                new GlobalStation("Paris",     "48.86,2.35",    "France",         "FR", "48.86",   "2.35", 22, 11,  13, 67, 12, 1016, "Partly Cloudy"),
-                new GlobalStation("Berlin",    "52.52,13.40",   "Germany",        "DE", "52.52",  "13.40", 34,  9,   9, 91, 15, 1011, "Rain"),
+                new GlobalStation("Lisbon",    "38.72,-9.14",   "Portugal",       "PT", "38.72",  "-9.14",  4, 16,  18, 74, 12, 1018, "Partly Cloudy"),
+                new GlobalStation("Madrid",    "40.42,-3.70",   "Spain",          "ES", "40.42",  "-3.70", 11, 15,  16, 49, 11, 1019, "Clear"),
+                new GlobalStation("London",    "51.51,-0.13",   "United Kingdom", "UK", "51.51",  "-0.13", 15,  8,  14, 76, 18, 1014, "Partly Cloudy"),
+                new GlobalStation("Paris",     "48.86,2.35",    "France",         "FR", "48.86",   "2.35", 20, 11,  13, 67, 12, 1016, "Partly Cloudy"),
+                new GlobalStation("Berlin",    "52.52,13.40",   "Germany",        "DE", "52.52",  "13.40", 35,  9,   9, 91, 15, 1011, "Rain"),
                 new GlobalStation("Oslo",      "59.91,10.75",   "Norway",         "NO", "59.91",  "10.75", 33,  4,   6, 88, 14, 1013, "Cloudy"),
-                new GlobalStation("Rome",      "41.90,12.50",   "Italy",          "IT", "41.90",  "12.50", 33, 15,  15, 76, 10, 1017, "Clear"),
-                new GlobalStation("Vienna",    "48.21,16.37",   "Austria",        "AT", "48.21",  "16.37", 40, 12,  11, 79, 12, 1015, "Partly Cloudy"),
-                new GlobalStation("Warsaw",    "52.23,21.01",   "Poland",         "PL", "52.23",  "21.01", 45,  9,  10, 92, 14, 1010, "Rain"),
-                new GlobalStation("Athens",    "37.98,23.73",   "Greece",         "GR", "37.98",  "23.73", 47, 17,  16, 80, 12, 1018, "Partly Cloudy"),
-                new GlobalStation("Ankara",    "39.93,32.86",   "Turkey",         "TR", "39.93",  "32.86", 62, 16,  11, 93, 14, 1012, "Rain"),
-                new GlobalStation("Moscow",    "55.75,37.62",   "Russia",         "RU", "55.75",  "37.62", 63,  6,   5, 65, 16, 1009, "Cloudy"),
-                new GlobalStation("Rabat",     "34.02,-6.83",   "Morocco",        "MA", "34.02",  "-6.83",  8, 20,  19, 81, 12, 1019, "Partly Cloudy"),
-                new GlobalStation("Algiers",   "36.75,3.06",    "Algeria",        "DZ", "36.75",   "3.06", 22, 20,  20, 60, 11, 1018, "Clear"),
-                new GlobalStation("Cairo",     "30.04,31.24",   "Egypt",          "EG", "30.04",  "31.24", 58, 20,  23, 50, 14, 1017, "Clear")
+                new GlobalStation("Rome",      "41.90,12.50",   "Italy",          "IT", "41.90",  "12.50", 32, 15,  15, 76, 10, 1017, "Clear"),
+                new GlobalStation("Vienna",    "48.21,16.37",   "Austria",        "AT", "48.21",  "16.37", 39, 13,  11, 79, 12, 1015, "Partly Cloudy"),
+                new GlobalStation("Warsaw",    "52.23,21.01",   "Poland",         "PL", "52.23",  "21.01", 47,  9,  10, 92, 14, 1010, "Rain"),
+                new GlobalStation("Athens",    "37.98,23.73",   "Greece",         "GR", "37.98",  "23.73", 44, 17,  16, 80, 12, 1018, "Partly Cloudy"),
+                new GlobalStation("Ankara",    "39.93,32.86",   "Turkey",         "TR", "39.93",  "32.86", 60, 16,  11, 93, 14, 1012, "Rain"),
+                new GlobalStation("Moscow",    "55.75,37.62",   "Russia",         "RU", "55.75",  "37.62", 62,  6,   5, 65, 16, 1009, "Cloudy"),
+                new GlobalStation("Rabat",     "34.02,-6.83",   "Morocco",        "MA", "34.02",  "-6.83",  7, 20,  19, 81, 12, 1019, "Partly Cloudy"),
+                new GlobalStation("Algiers",   "36.75,3.06",    "Algeria",        "DZ", "36.75",   "3.06", 20, 20,  20, 60, 11, 1018, "Clear"),
+                new GlobalStation("Cairo",     "30.04,31.24",   "Egypt",          "EG", "30.04",  "31.24", 65, 20,  23, 50, 14, 1017, "Clear")
             };
 
             // 1: ASIA (80x22 full-screen map)
             _zones[1] = new GlobalStation[]
             {
-                new GlobalStation("Ankara",    "39.93,32.86",   "Turkey",         "TR", "39.93",  "32.86",  6,  7,  11, 93, 11, 1016, "Partly Cloudy"),
-                new GlobalStation("Riyadh",    "24.71,46.68",   "Saudi Arabia",   "SA", "24.71",  "46.68", 11, 13,  26, 22, 14, 1015, "Clear"),
-                new GlobalStation("New Delhi", "28.61,77.21",   "India",          "IN", "28.61",  "77.21", 29, 11,  27, 48, 10, 1014, "Clear"),
-                new GlobalStation("Beijing",   "39.90,116.41",  "China",          "CN", "39.90", "116.41", 52,  7,  12, 45, 15, 1018, "Partly Cloudy"),
-                new GlobalStation("Bangkok",   "13.76,100.50",  "Thailand",       "TH", "13.76", "100.50", 44, 14,  29, 88, 16, 1009, "Thunderstorm"),
-                new GlobalStation("Singapore", "1.35,103.82",   "Singapore",      "SG",  "1.35", "103.82", 45, 18,  28, 86, 14, 1010, "Rain"),
-                new GlobalStation("Jakarta",   "-6.21,106.85",  "Indonesia",      "ID", "-6.21", "106.85", 50, 20,  29, 84, 12, 1010, "Rain"),
-                new GlobalStation("Seoul",     "37.57,126.98",  "South Korea",    "KR", "37.57", "126.98", 61,  8,  11, 58, 12, 1019, "Clear"),
+                new GlobalStation("Ankara",    "39.93,32.86",   "Turkey",         "TR", "39.93",  "32.86",  5,  5,  11, 93, 11, 1016, "Partly Cloudy"),
+                new GlobalStation("Riyadh",    "24.71,46.68",   "Saudi Arabia",   "SA", "24.71",  "46.68", 10, 10,  26, 22, 14, 1015, "Clear"),
+                new GlobalStation("New Delhi", "28.61,77.21",   "India",          "IN", "28.61",  "77.21", 28, 10,  27, 48, 10, 1014, "Clear"),
+                new GlobalStation("Beijing",   "39.90,116.41",  "China",          "CN", "39.90", "116.41", 50,  7,  12, 45, 15, 1018, "Partly Cloudy"),
+                new GlobalStation("Bangkok",   "13.76,100.50",  "Thailand",       "TH", "13.76", "100.50", 47, 14,  29, 88, 16, 1009, "Thunderstorm"),
+                new GlobalStation("Singapore", "1.35,103.82",   "Singapore",      "SG",  "1.35", "103.82", 48, 18,  28, 86, 14, 1010, "Rain"),
+                new GlobalStation("Jakarta",   "-6.21,106.85",  "Indonesia",      "ID", "-6.21", "106.85", 49, 21,  29, 84, 12, 1010, "Rain"),
+                new GlobalStation("Seoul",     "37.57,126.98",  "South Korea",    "KR", "37.57", "126.98", 59,  8,  11, 58, 12, 1019, "Clear"),
                 new GlobalStation("Tokyo",     "35.68,139.65",  "Japan",          "JP", "35.68", "139.65", 70,  9,  16, 60, 14, 1020, "Clear")
             };
 
             // 2: AMERICAS (80x22 full-screen map)
             _zones[2] = new GlobalStation[]
             {
-                new GlobalStation("Ottawa",       "45.42,-75.70",  "Canada",         "CA",  "45.42", "-75.70", 31,  4,   8, 68, 16, 1016, "Cloudy"),
+                new GlobalStation("Ottawa",       "45.42,-75.70",  "Canada",         "CA",  "45.42", "-75.70", 34,  4,   8, 68, 16, 1016, "Cloudy"),
                 new GlobalStation("New York",     "40.71,-74.01",  "United States",  "US",  "40.71", "-74.01", 34,  6,  15, 59, 14, 1015, "Partly Cloudy"),
-                new GlobalStation("Washington",   "38.91,-77.04",  "United States",  "US",  "38.91", "-77.04", 26,  7,  17, 61, 12, 1016, "Partly Cloudy"),
-                new GlobalStation("Mexico City",  "19.43,-99.13",  "Mexico",         "MX",  "19.43", "-99.13", 19, 10,  21, 52, 10, 1018, "Clear"),
-                new GlobalStation("Havana",       "23.11,-82.37",  "Cuba",           "CU",  "23.11", "-82.37", 33, 10,  27, 86, 22, 1009, "Thunderstorm"),
+                new GlobalStation("Washington",   "38.91,-77.04",  "United States",  "US",  "38.91", "-77.04", 28,  7,  17, 61, 12, 1016, "Partly Cloudy"),
+                new GlobalStation("Mexico City",  "19.43,-99.13",  "Mexico",         "MX",  "19.43", "-99.13", 20, 10,  21, 52, 10, 1018, "Clear"),
+                new GlobalStation("Havana",       "23.11,-82.37",  "Cuba",           "CU",  "23.11", "-82.37", 42, 10,  27, 86, 22, 1009, "Thunderstorm"),
                 new GlobalStation("Bogota",       "4.71,-74.07",   "Colombia",       "CO",   "4.71", "-74.07", 36, 13,  16, 84, 10, 1013, "Rain"),
-                new GlobalStation("Lima",         "-12.05,-77.04", "Peru",           "PE", "-12.05", "-77.04", 35, 16,  19, 78, 12, 1014, "Cloudy"),
-                new GlobalStation("Brasilia",     "-15.79,-47.88", "Brazil",         "BR", "-15.79", "-47.88", 49, 16,  25, 85, 14, 1011, "Thunderstorm"),
-                new GlobalStation("Santiago",     "-33.45,-70.67", "Chile",          "CL", "-33.45", "-70.67", 37, 19,  14, 55, 11, 1016, "Clear"),
-                new GlobalStation("Buenos Aires", "-34.60,-58.38", "Argentina",      "AR", "-34.60", "-58.38", 45, 19,  20, 67, 16, 1016, "Partly Cloudy")
+                new GlobalStation("Lima",         "-12.05,-77.04", "Peru",           "PE", "-12.05", "-77.04", 32, 16,  19, 78, 12, 1014, "Cloudy"),
+                new GlobalStation("Brasilia",     "-15.79,-47.88", "Brazil",         "BR", "-15.79", "-47.88", 51, 16,  25, 85, 14, 1011, "Thunderstorm"),
+                new GlobalStation("Santiago",     "-33.45,-70.67", "Chile",          "CL", "-33.45", "-70.67", 35, 19,  14, 55, 11, 1016, "Clear"),
+                new GlobalStation("Buenos Aires", "-34.60,-58.38", "Argentina",      "AR", "-34.60", "-58.38", 46, 19,  20, 67, 16, 1016, "Partly Cloudy")
             };
 
             // 3: OCEANIA (80x22 full-screen map)
             _zones[3] = new GlobalStation[]
             {
-                new GlobalStation("Jakarta",      "-6.21,106.85",  "Indonesia",      "ID",  "-6.21", "106.85", 12,  3,  29, 84, 12, 1010, "Rain"),
-                new GlobalStation("Port Moresby", "-9.44,147.18",  "Papua N. Guinea","PG",  "-9.44", "147.18", 38,  5,  29, 88, 18, 1009, "Thunderstorm"),
-                new GlobalStation("Sydney",       "-33.87,151.21", "Australia",      "AU", "-33.87", "151.21", 43, 13,  19, 65, 16, 1020, "Partly Cloudy"),
-                new GlobalStation("Canberra",     "-35.28,149.13", "Australia",      "AU", "-35.28", "149.13", 39, 15,  14, 82, 12, 1022, "Clear"),
-                new GlobalStation("Melbourne",    "-37.81,144.96", "Australia",      "AU", "-37.81", "144.96", 31, 16,  11, 74, 15, 1021, "Cloudy"),
-                new GlobalStation("Suva",         "-18.14,178.44", "Fiji",           "FJ", "-18.14", "178.44", 64,  9,  26, 85, 18, 1011, "Rain"),
-                new GlobalStation("Wellington",   "-41.29,174.78", "New Zealand",    "NZ", "-41.29", "174.78", 61, 18,   9, 78, 22, 1014, "Cloudy")
+                new GlobalStation("Jakarta",      "-6.21,106.85",  "Indonesia",      "ID",  "-6.21", "106.85", 11,  3,  29, 84, 12, 1010, "Rain"),
+                new GlobalStation("Port Moresby", "-9.44,147.18",  "Papua N. Guinea","PG",  "-9.44", "147.18", 40,  5,  29, 88, 18, 1009, "Thunderstorm"),
+                new GlobalStation("Sydney",       "-33.87,151.21", "Australia",      "AU", "-33.87", "151.21", 45, 13,  19, 65, 16, 1020, "Partly Cloudy"),
+                new GlobalStation("Canberra",     "-35.28,149.13", "Australia",      "AU", "-35.28", "149.13", 41, 15,  14, 82, 12, 1022, "Clear"),
+                new GlobalStation("Melbourne",    "-37.81,144.96", "Australia",      "AU", "-37.81", "144.96", 36, 16,  11, 74, 15, 1021, "Cloudy"),
+                new GlobalStation("Suva",         "-18.14,178.44", "Fiji",           "FJ", "-18.14", "178.44", 66,  8,  26, 85, 18, 1011, "Rain"),
+                new GlobalStation("Wellington",   "-41.29,174.78", "New Zealand",    "NZ", "-41.29", "174.78", 66, 17,   9, 78, 22, 1014, "Cloudy")
             };
 
             // 4: AFRICA (80x22 full-screen map)
             _zones[4] = new GlobalStation[]
             {
-                new GlobalStation("Rabat",        "34.02,-6.83",   "Morocco",        "MA",  "34.02",  "-6.83", 17,  2,  19, 81, 12, 1019, "Partly Cloudy"),
-                new GlobalStation("Algiers",      "36.75,3.06",    "Algeria",        "DZ",  "36.75",   "3.06", 28,  2,  20, 60, 11, 1018, "Clear"),
+                new GlobalStation("Rabat",        "34.02,-6.83",   "Morocco",        "MA",  "34.02",  "-6.83", 16,  2,  19, 81, 12, 1019, "Partly Cloudy"),
+                new GlobalStation("Algiers",      "36.75,3.06",    "Algeria",        "DZ",  "36.75",   "3.06", 24,  1,  20, 60, 11, 1018, "Clear"),
                 new GlobalStation("Cairo",        "30.04,31.24",   "Egypt",          "EG",  "30.04",  "31.24", 46,  3,  24, 50, 14, 1017, "Clear"),
-                new GlobalStation("Dakar",        "14.69,-17.44",  "Senegal",        "SN",  "14.69", "-17.44", 12,  7,  29, 74, 18, 1012, "Partly Cloudy"),
-                new GlobalStation("Abuja",        "9.08,7.40",     "Nigeria",        "NG",   "9.08",   "7.40", 28,  9,  28, 88, 14, 1010, "Thunderstorm"),
-                new GlobalStation("Addis Ababa",  "9.03,38.74",    "Ethiopia",       "ET",   "9.03",  "38.74", 50,  9,  16, 68, 12, 1018, "Partly Cloudy"),
-                new GlobalStation("Nairobi",      "-1.29,36.82",   "Kenya",          "KE",  "-1.29",  "36.82", 48, 12,  21, 76, 11, 1015, "Rain"),
-                new GlobalStation("Luanda",       "-8.84,13.23",   "Angola",         "AO",  "-8.84",  "13.23", 31, 14,  25, 79, 14, 1014, "Partly Cloudy"),
-                new GlobalStation("Cape Town",    "-33.92,18.42",  "South Africa",   "ZA", "-33.92",  "18.42", 36, 19,  13, 65, 16, 1017, "Clear")
+                new GlobalStation("Dakar",        "14.69,-17.44",  "Senegal",        "SN",  "14.69", "-17.44",  9,  7,  29, 74, 18, 1012, "Partly Cloudy"),
+                new GlobalStation("Abuja",        "9.08,7.40",     "Nigeria",        "NG",   "9.08",   "7.40", 27,  9,  28, 88, 14, 1010, "Thunderstorm"),
+                new GlobalStation("Addis Ababa",  "9.03,38.74",    "Ethiopia",       "ET",   "9.03",  "38.74", 48,  9,  16, 68, 12, 1018, "Partly Cloudy"),
+                new GlobalStation("Nairobi",      "-1.29,36.82",   "Kenya",          "KE",  "-1.29",  "36.82", 47, 12,  21, 76, 11, 1015, "Rain"),
+                new GlobalStation("Luanda",       "-8.84,13.23",   "Angola",         "AO",  "-8.84",  "13.23", 29, 14,  25, 79, 14, 1014, "Partly Cloudy"),
+                new GlobalStation("Cape Town",    "-33.92,18.42",  "South Africa",   "ZA", "-33.92",  "18.42", 34, 20,  13, 65, 16, 1017, "Clear")
             };
         }
 
@@ -273,144 +277,149 @@ namespace WeatherOS.Apps
         {
             _continentMaps = new string[5][];
 
-            // 0: EUROPE (Refined Iberian Peninsula, Gibraltar Strait, Brittany, British Isles,
-            //    Italian Boot + Sicily/Sardinia/Corsica, Adriatic Sea, Greece/Crete, Crimea/Black Sea, Scandinavia)
+            // 0: EUROPE (High-realism projection with English Channel, Irish Sea, Danish Straits,
+            //    Gulf of Bothnia, Strait of Gibraltar, Italian Boot + Sicily/Sardinia/Corsica, Adriatic,
+            //    Peloponnese/Crete, Black Sea + Crimea, Anatolia, Cyprus, and North Africa)
             _continentMaps[0] = new string[]
             {
-                "                                    ############             ###################",
-                "    #####                        ################         ######################",
-                "   #######                      ^^^^###|##########      ########################",
-                "    #####                      ^^^^^###|####  #####    #########################",
-                "                               ^^^^####|###    #####  ##########################",
-                "                  ###          #####|#####     ##### ###########################",
-                "                 #####          ####|####     ###############|##################",
-                "           ###   #####            ##  ###    ################|##################",
-                "          ####  ######               ####   #################|##################",
-                "           ##   ######          ####  ###################|###|##################",
-                "                 #####         ######|##########|########|###|##################",
-                "                ##########---########|##########|########|###|##################",
-                "               ##############|#######|#####-----#########|###|####   ###  ######",
-                "                 ############|######^^^^^^#####|########|#######           #####",
-                "     ###############^^^^#####|#####^^^^^^^^####|#########|#####             ####",
-                "    #####|###########^^^^#########|######---########|#########   ###############",
-                "    #####|############---#########  ####    ####  ##|#######    ########^^^^####",
-                "     ####|##########      ##  ##     ####    ###   ########     ########^^^^####",
-                "      ###########             ##     ###      ####   ####        ###############",
-                "                                     ###       ##    ###                        ",
-                "      ############################                         #####################",
-                "   #############################################################################"
+                "                                      #########             #####    ###########",
+                "   #####                           ##############         ########  ############",
+                "  #######                        ^^^^#####|#######       #######################",
+                "   #####                        ^^^^####|###  #####     ########################",
+                "                               ^^^^####|###    #####   ###################^^^###",
+                "               ###            ^^^^####|###      ##### ####################^^^###",
+                "              #####           ####|######        #####|###################^^^###",
+                "         ###  #####                #####      ########|###################^^^###",
+                "        ####  ######         ###    ###     ##########|########|###########^^###",
+                "         ##    #####         ###  ######### ###########|########|###############",
+                "                            #####|#########|###########|########|###############",
+                "              #########---#######|#########|###########|########|###########    ",
+                "             ############|#######|######|--^^^^^######|########|###  ###        ",
+                "              ###########|#####^^^^^^^^^#######|######|######   ###             ",
+                "     ######^^^#####|#####|####^^^^^^^^^^#######|#######|####          #####     ",
+                "    ####|##########|########|#####^^^#    #####|########|##        ######^^^### ",
+                "   #####|##########---######  ##  ###^^    ####|#######   #########^^^^^########",
+                "    ####|#########     ##     ##   ####     ###|######   ##########^^^^^####### ",
+                "     ###|######                     ###      ###|###       #############        ",
+                "                                   ###        ###            ###      ####      ",
+                "     ########################     ####                        ##################",
+                "  ##############################            ####################################"
             };
 
-            // 1: ASIA (Refined Arabia, Persian Gulf, Indian Subcontinent + Sri Lanka, Himalayas,
-            //    Indochina/Malay Peninsula, Indonesian Archipelago, Taiwan, Korea & Japan)
+            // 1: ASIA (High-realism projection with Anatolia, Caspian Sea, Red Sea, Arabian Peninsula,
+            //    Persian Gulf, Triangular Indian Subcontinent + Sri Lanka, Himalayas, Bay of Bengal,
+            //    Indochina & Malay Peninsula, Sumatra/Java/Borneo/Sulawesi/Philippines, Korea, Japan & Kamchatka)
             _continentMaps[1] = new string[]
             {
-                "           #####################################################################",
-                "        ########################################################################",
-                "      ##########################################################################",
-                "    ###############################|############################################",
-                "   ################################|########################|###################",
-                "  ###############      ############|################^^^^####|############       ",
-                "  ###############       ###########|###########^^^^^^^^^####|##########    ###  ",
-                "  #####^^^#######        ##########|#########^^^^^^^^^^^#####|#######     ##### ",
-                "   ##############         #########|#######^^^^^#############|######     ###### ",
-                "      #####|#####         #########|#####^^^^^^^^^###########|#####     ######  ",
-                "      #####|######    #############|####^^^^^^^^^^###############       #####   ",
-                "       ####|########  #################|##########|##############        ###    ",
-                "        ###|#########   ###############|##########|#############   ##           ",
-                "         ############     #############|##########|###########                  ",
-                "          ###########       ###########|###   ####|#########      ###           ",
-                "           #########          #########       #####|#######       ####          ",
-                "            #######            #######         #####|####          ###          ",
-                "                                #####  ##       #####                           ",
-                "                                 ###   ##        ####       ######              ",
-                "                                                  ####     ########   #####     ",
-                "                                                #########   ######   #######    ",
-                "                                                  #############                 "
+                "                ######################    ######################################",
+                "             ###################################################################",
+                "          ##########################################################      ######",
+                "        #######    ################################################       ##### ",
+                "   #########       #####|######################^^^#################       ####  ",
+                "  ##########       #####|###############^^^^^######################        ##   ",
+                "  #########         ####|##########^^^^^^^^^^################|#####      ####   ",
+                "    ###|####        ####|#######^^^^^^^^^^^^^^#########|#####|####          ### ",
+                "     ##|######     #####|######^^^^^^^^^^^^^^^^########|#####|###   ###    #### ",
+                "     ##|#######   ######|#####^^^^^^^^^^^^^^^^^########|###   ##    ####  ##### ",
+                "      #|########    ####|####|^^^^^^^###|######|###########               ###   ",
+                "       ##########     #######|##########|######|############                    ",
+                "        ########        #####|##########|######|###########     ###             ",
+                "         #####            ####|#########|##   #|#########                       ",
+                "                           ###|#######|##     ####|######          ###          ",
+                "                            ##|######|#        ###|#####           ####         ",
+                "                             #|#####           ##|###               ####        ",
+                "                              |###              ###                  ##         ",
+                "                                ##              ####        ######              ",
+                "                                             ####  ##      ########   ###       ",
+                "                                              #####        ########   ###   ####",
+                "                                                #######               ##   #####"
             };
 
-            // 2: AMERICAS (Refined North America, Hudson Bay, Florida, Gulf of Mexico,
-            //    Cuba/Antilles, Central American Isthmus, Andes Spine & South American Cone)
+            // 2: AMERICAS (High-realism projection with Alaska & Aleutians, Hudson Bay, Baffin & Greenland,
+            //    Newfoundland, Rocky Mountains, US East Coast, Florida Peninsula, Gulf of Mexico,
+            //    Baja California, Yucatan, Cuba & Hispaniola, Panama Isthmus, Andes & Brazilian Bulge)
             _continentMaps[2] = new string[]
             {
-                "     #############        ########################             ############     ",
-                "   #################    ############################          ##############    ",
-                "  ####################################################         ############     ",
-                "    #######^^#########################################           ########       ",
-                "          ^^^^##################|#####################                          ",
-                "           ^^^^^################|###################                            ",
-                "            ^^^^^^##############|#################                              ",
-                "             ^^^^^^###############################                              ",
-                "              ^^^^^##########################                                   ",
-                "               ^^^^###########       ###                                        ",
-                "                 ^^^^########         #   ######  #####                         ",
-                "                   ^^^#######                      ###                          ",
-                "                      ########        #############                             ",
-                "                        ########    #################                           ",
-                "                          ####### ^^^^###################                       ",
-                "                                 ^^^^^##|####################                   ",
-                "                                 ^^^^###|######################                 ",
-                "                                  ^^^###|#####################                  ",
-                "                                   ^^###|##################                     ",
-                "                                    ^^##|##############                         ",
-                "                                    ^^##|###########                            ",
-                "                                     ^^^|#######                                "
+                "        ########       #######     #########         #############              ",
+                "    ###############   #########   ###########       ###############             ",
+                "  ####################^^########     ##########     ##############              ",
+                "   ####   ######^^^^############       ############  ############               ",
+                "           ^^^^^^###############|######################   ######                ",
+                "            ^^^^^^##############|########################                       ",
+                "             ^^^^^^#############|#####################                          ",
+                "              ^^^^^^############|##################                             ",
+                "              ## ^^^^###########|###############                                ",
+                "               ## ^^^^######         ###                                        ",
+                "                  ^^^^######  ####    ##  ######                                ",
+                "                    ^^^^#####                   ####  ###                       ",
+                "                       ######        ###########                                ",
+                "                         ####      #################                            ",
+                "                                ^^^^######################                      ",
+                "                               ^^^^^###|###########################             ",
+                "                               ^^^^^###|############################            ",
+                "                                ^^^^###|#########################               ",
+                "                                 ^^^###|#####################                   ",
+                "                                  ^^^##|################                        ",
+                "                                   ^^^#|############                            ",
+                "                                    ^^^|########                                "
             };
 
-            // 3: OCEANIA (Refined Indonesian Arc, New Guinea, Australia with Gulf of Carpentaria,
-            //    Great Australian Bight, Tasmania, Fiji & New Zealand North/South Islands)
+            // 3: OCEANIA (High-realism projection with Sumatra/Java/Borneo/Sulawesi, New Guinea & Solomons,
+            //    Australia with Kimberley, Arnhem Land, Gulf of Carpentaria, Cape York, Great Australian Bight,
+            //    Great Dividing Range, Tasmania across Bass Strait, New Caledonia, Fiji & New Zealand N/S Islands)
             _continentMaps[3] = new string[]
             {
-                "                                                                                ",
-                "       ######                                                                   ",
-                "      ##########     ######                                                     ",
-                "       #############  #######        ###########                                ",
-                "          ###########                ###############                            ",
-                "                       #####          ##############                            ",
-                "                                        ##########                              ",
-                "                       ########    #####                                        ",
-                "                    ############  #######                     #####             ",
-                "                  ########################                   #######            ",
-                "                ############################                  #####             ",
-                "               ##############################                                   ",
-                "              ####################|###########                                  ",
-                "              ####################|###########                                  ",
-                "               ###################|##########                                   ",
-                "                ########^^^^^#####|#########                     ####           ",
-                "                 ######       ####|########                     ######          ",
-                "                                  ########                    ########          ",
-                "                                  ####                        #######           ",
-                "                                                              ######            ",
-                "                                                             #####              ",
+                "   #####      #######                                                           ",
+                "    ######   #########   #####                                                  ",
+                "      #####  ########   ######      #####                                       ",
+                "        ###########     #####     #############                                 ",
+                "           ########               ###############   ####                        ",
+                "                     #####          ###############   ####                      ",
+                "                                       ##########      ####                     ",
+                "                        ########        ###                                     ",
+                "                     ############      #####                      #####         ",
+                "                 #################    #######                    #######        ",
+                "               ###############################         ####       #####         ",
+                "              #################################                                 ",
+                "             #######################|###########                                ",
+                "             #######################|###########^^                              ",
+                "              ######################|##########^^^                              ",
+                "               #######          ####|#########^^^                   ####        ",
+                "                #####            ###|##########                    ######       ",
+                "                                    ########                      #######       ",
+                "                                                          ####   ######         ",
+                "                                     #####               #######                ",
+                "                                      ###               ######                  ",
                 "                                                                                "
             };
 
-            // 4: AFRICA (Refined Atlas Mountains, Red Sea, Horn of Africa, Gulf of Guinea,
-            //    East African Highlands, Cape Peninsula & Madagascar)
+            // 4: AFRICA (High-realism projection with Mediterranean N shore, Maghreb & Atlas Mountains,
+            //    Gulf of Sidra, Egypt/Nile, Red Sea & Arabia, Wide West African Bulge, Deep Gulf of Guinea,
+            //    Ethiopian Highlands & Somali Horn, Great Rift, Southern Africa & Madagascar)
             _continentMaps[4] = new string[]
             {
-                "                #########################                                       ",
-                "             ######^^^^^####################      ###########                   ",
-                "           ##########|############|##########   ###############                 ",
-                "          ###########|############|############################                 ",
-                "         ############|############|############################                 ",
-                "        #############|############|############################  ####           ",
-                "        ##########################|#############################  #####         ",
-                "        #############|############|#############################   #####        ",
-                "         ############|############|##############################   #####       ",
-                "          ###########|############|#############|###################            ",
-                "            #########|############|#############|#####################          ",
-                "               ###################|#############|###################            ",
-                "                          ########|#############|################               ",
-                "                           #######|^^^^#########|#############                  ",
-                "                            ######|^^^^^########|###########     #####          ",
-                "                            ######|############|###########     #######         ",
-                "                             #####|############|##########     ########         ",
-                "                              ####|############|#########      #######          ",
-                "                               ###|###########|########        ######           ",
-                "                                ##|###################                          ",
-                "                                 ####################                           ",
-                "                                   ################                             "
+                "      #########     ###          ####                   ###############         ",
+                "                  ###############     ##                   ##############       ",
+                "              #####^^^^^^#########                 ###      ##############      ",
+                "            ########^^^^^^########   ################        ##############     ",
+                "          ###########|############|##################   ############            ",
+                "         ############|############|##################    #############          ",
+                "        #############|############|###################    ##############        ",
+                "       ##############|############|####################    #############        ",
+                "        #############|############|#####################     #########          ",
+                "         ############|############|#############^^^^############                ",
+                "           ##########|############|#############^^^^##########                  ",
+                "                         #########|############|#############                   ",
+                "                          ########|############|############                    ",
+                "                           #######|^^^^########|###########                     ",
+                "                           #######|^^^^^#######|#########       ####            ",
+                "                            ######|############|########       ######           ",
+                "                            ######|############|#######       #######           ",
+                "                             #####|###########|#######        ######            ",
+                "                              ####|###########|######         #####             ",
+                "                               ###|###############                              ",
+                "                                ##|#############                                ",
+                "                                  ##########                                    "
             };
         }
 
@@ -481,7 +490,7 @@ namespace WeatherOS.Apps
                     _backupsCaptured = true;
                 }
 
-                // 4. Write Custom 8x16 Coastline Slopes, Borders & 18x16 Weather Sprites into 0xC0..0xDF
+                // 4. Write Custom 8x16 Coastline Slopes, Peninsulas, Borders & 18x16 Weather Sprites into 0xC0..0xDF
                 ProgramCustomGlyphs(fontRam);
 
                 // 5. Restore Sequencer & Graphics Controller back to normal Text Mode (Planes 0 & 1)
@@ -498,14 +507,14 @@ namespace WeatherOS.Apps
                 SetDacColor(dacWrite, dacData,  1,  6, 18, 34); // DarkBlue: Deep Ocean & Radar Base Blue
                 SetDacColor(dacWrite, dacData,  2, 14, 28, 10); // DarkGreen: Continental Landmass Forest Green
                 SetDacColor(dacWrite, dacData,  3,  5, 23, 30); // DarkCyan: Broadcast HUD / Cold Isotherm Band
-                SetDacColor(dacWrite, dacData,  4, 48, 10,  8); // DarkRed: Hot Thermal Core / Doppler 55dBZ Crimson
-                SetDacColor(dacWrite, dacData, 20, 52, 28,  4); // DarkYellow (EGA 6->20): Warm Amber / Doppler 42dBZ Orange
-                SetDacColor(dacWrite, dacData, 57, 22, 34, 63); // Blue: NEXRAD Outer Virga 15dBZ Indigo-Blue
-                SetDacColor(dacWrite, dacData, 58, 26, 56, 18); // Green: Vibrant NEXRAD 30dBZ Lime / Temperate Isotherm
+                SetDacColor(dacWrite, dacData,  4, 48, 10,  8); // DarkRed: Hot Thermal Core / Doppler Storm Crimson
+                SetDacColor(dacWrite, dacData, 20, 52, 28,  4); // DarkYellow (EGA 6->20): Warm Amber / Doppler Heavy Orange
+                SetDacColor(dacWrite, dacData, 57, 22, 34, 63); // Blue: NEXRAD Outer Virga Indigo-Blue
+                SetDacColor(dacWrite, dacData, 58, 26, 56, 18); // Green: Vibrant NEXRAD Moderate Lime / Temperate Isotherm
                 SetDacColor(dacWrite, dacData, 59, 20, 52, 63); // Cyan: Rain / Frost Cyan
                 SetDacColor(dacWrite, dacData, 60, 63, 14, 10); // Red: Intense NEXRAD Storm Core Red
-                SetDacColor(dacWrite, dacData, 61, 63, 24, 58); // Magenta: NEXRAD 62dBZ Hail Core Magenta
-                SetDacColor(dacWrite, dacData, 62, 63, 56,  6); // Yellow: Radiant Broadcast Sun / 40dBZ Gold
+                SetDacColor(dacWrite, dacData, 61, 63, 24, 58); // Magenta: NEXRAD Hail Core Magenta
+                SetDacColor(dacWrite, dacData, 62, 63, 56,  6); // Yellow: Radiant Broadcast Sun / Heavy Echo Gold
                 SetDacColor(dacWrite, dacData, 63, 63, 63, 63); // White: Pure Cloud & Telemetry White
 
                 _vgaCustomActive = true;
@@ -595,44 +604,45 @@ namespace WeatherOS.Apps
 
         private static unsafe void ProgramCustomGlyphs(byte* fontRam)
         {
-            // 1. Smooth 45-degree & curved coastal edge slopes
+            // 1. Mathematically Aligned 8x16 Coastal Slopes, Peninsulas & Cape Tips
+            //    (Horizontal coasts align at scanlines 2..13; vertical coasts align at columns 1..7)
             WriteGlyph(fontRam, GLYPH_COAST_NW,
-                0x01, 0x03, 0x03, 0x07, 0x07, 0x0F, 0x0F, 0x1F,
-                0x1F, 0x3F, 0x3F, 0x7F, 0x7F, 0xFF, 0xFF, 0xFF);
+                0x00, 0x00, 0x01, 0x03, 0x03, 0x07, 0x07, 0x0F,
+                0x0F, 0x1F, 0x1F, 0x3F, 0x3F, 0x7F, 0x7F, 0x7F);
 
             WriteGlyph(fontRam, GLYPH_COAST_NE,
-                0x80, 0xC0, 0xC0, 0xE0, 0xE0, 0xF0, 0xF0, 0xF8,
-                0xF8, 0xFC, 0xFC, 0xFE, 0xFE, 0xFE, 0xFF, 0xFF);
+                0x00, 0x00, 0x80, 0xC0, 0xC0, 0xE0, 0xE0, 0xF0,
+                0xF0, 0xF8, 0xF8, 0xFC, 0xFC, 0xFE, 0xFE, 0xFE);
 
             WriteGlyph(fontRam, GLYPH_COAST_SW,
-                0xFF, 0xFF, 0xFF, 0x7F, 0x7F, 0x3F, 0x3F, 0x1F,
-                0x1F, 0x0F, 0x0F, 0x07, 0x07, 0x03, 0x03, 0x01);
+                0x7F, 0x7F, 0x7F, 0x3F, 0x3F, 0x1F, 0x1F, 0x0F,
+                0x0F, 0x07, 0x07, 0x03, 0x03, 0x01, 0x00, 0x00);
 
             WriteGlyph(fontRam, GLYPH_COAST_SE,
-                0xFF, 0xFF, 0xFE, 0xFE, 0xFC, 0xFC, 0xF8, 0xF8,
-                0xF0, 0xF0, 0xE0, 0xE0, 0xC0, 0xC0, 0x80, 0x80);
+                0xFE, 0xFE, 0xFE, 0xFC, 0xFC, 0xF8, 0xF8, 0xF0,
+                0xF0, 0xE0, 0xE0, 0xC0, 0xC0, 0x80, 0x00, 0x00);
 
             WriteGlyph(fontRam, GLYPH_COAST_NORTH,
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x3F, 0xFF, 0xFF,
+                0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
                 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF);
 
             WriteGlyph(fontRam, GLYPH_COAST_SOUTH,
                 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-                0xFF, 0xFF, 0xFC, 0x00, 0x00, 0x00, 0x00, 0x00);
+                0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00);
 
             WriteGlyph(fontRam, GLYPH_COAST_WEST,
-                0x1F, 0x3F, 0x3F, 0x7F, 0x7F, 0x7F, 0x7F, 0x7F,
-                0x7F, 0x7F, 0x7F, 0x7F, 0x7F, 0x3F, 0x3F, 0x1F);
+                0x7F, 0x7F, 0x7F, 0x7F, 0x7F, 0x7F, 0x7F, 0x7F,
+                0x7F, 0x7F, 0x7F, 0x7F, 0x7F, 0x7F, 0x7F, 0x7F);
 
             WriteGlyph(fontRam, GLYPH_COAST_EAST,
-                0xF8, 0xFC, 0xFC, 0xFE, 0xFE, 0xFE, 0xFE, 0xFE,
-                0xFE, 0xFE, 0xFE, 0xFE, 0xFE, 0xFC, 0xFC, 0xF8);
+                0xFE, 0xFE, 0xFE, 0xFE, 0xFE, 0xFE, 0xFE, 0xFE,
+                0xFE, 0xFE, 0xFE, 0xFE, 0xFE, 0xFE, 0xFE, 0xFE);
 
             WriteGlyph(fontRam, GLYPH_ISLAND,
-                0x00, 0x00, 0x18, 0x3C, 0x7E, 0x7E, 0xFF, 0xFF,
-                0xFF, 0xFF, 0x7E, 0x7E, 0x3C, 0x18, 0x00, 0x00);
+                0x00, 0x00, 0x18, 0x3C, 0x7E, 0x7E, 0x7E, 0x7E,
+                0x7E, 0x7E, 0x7E, 0x7E, 0x3C, 0x18, 0x00, 0x00);
 
-            // 2. Internal Country Borders & Mountain Highland Relief
+            // 2. Internal Country Borders, Mountain Relief & Narrow Peninsula/Cape Glyphs
             WriteGlyph(fontRam, GLYPH_BORDER_HORIZ,
                 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xAA,
                 0x55, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00);
@@ -644,6 +654,22 @@ namespace WeatherOS.Apps
             WriteGlyph(fontRam, GLYPH_HIGHLAND,
                 0x22, 0x55, 0x88, 0x55, 0x22, 0x55, 0x88, 0x55,
                 0x22, 0x55, 0x88, 0x55, 0x22, 0x55, 0x88, 0x55);
+
+            WriteGlyph(fontRam, GLYPH_PENINSULA_VERT,
+                0x7E, 0x7E, 0x7E, 0x7E, 0x7E, 0x7E, 0x7E, 0x7E,
+                0x7E, 0x7E, 0x7E, 0x7E, 0x7E, 0x7E, 0x7E, 0x7E);
+
+            WriteGlyph(fontRam, GLYPH_PENINSULA_HORIZ,
+                0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+                0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00);
+
+            WriteGlyph(fontRam, GLYPH_CAPE_NORTH,
+                0x00, 0x00, 0x18, 0x3C, 0x3C, 0x7E, 0x7E, 0x7E,
+                0x7E, 0x7E, 0x7E, 0x7E, 0x7E, 0x7E, 0x7E, 0x7E);
+
+            WriteGlyph(fontRam, GLYPH_CAPE_SOUTH,
+                0x7E, 0x7E, 0x7E, 0x7E, 0x7E, 0x7E, 0x7E, 0x7E,
+                0x7E, 0x7E, 0x7E, 0x3C, 0x3C, 0x18, 0x00, 0x00);
 
             // 3. 18x16 Two-Cell Broadcast Weather Icon Sprites
             WriteGlyph(fontRam, GLYPH_SUN_L,
@@ -689,6 +715,101 @@ namespace WeatherOS.Apps
                 0xFC, 0x00, 0x54, 0x28, 0x54, 0x00, 0x00, 0x00);
         }
 
+        /// <summary>
+        /// Complete 16-case coastal topology resolver. Returns true and selects the exact 8x16
+        /// coastal bevel, peninsula, cape, or island glyph whenever a land cell touches ocean on any side.
+        /// </summary>
+        public static bool TryGetCoastalGlyph(bool upLand, bool downLand, bool leftLand, bool rightLand, out byte coastGlyph)
+        {
+            if (upLand && downLand && leftLand && rightLand)
+            {
+                coastGlyph = (byte)' ';
+                return false;
+            }
+
+            if (!upLand && !downLand && !leftLand && !rightLand)
+            {
+                coastGlyph = GLYPH_ISLAND;
+                return true;
+            }
+
+            // 1-Neighbor Cape / Peninsula Tips
+            if (!upLand && downLand && !leftLand && !rightLand)
+            {
+                coastGlyph = GLYPH_CAPE_NORTH;
+                return true;
+            }
+            if (upLand && !downLand && !leftLand && !rightLand)
+            {
+                coastGlyph = GLYPH_CAPE_SOUTH;
+                return true;
+            }
+            if (!upLand && !downLand && !leftLand && rightLand)
+            {
+                coastGlyph = GLYPH_COAST_WEST;
+                return true;
+            }
+            if (!upLand && !downLand && leftLand && !rightLand)
+            {
+                coastGlyph = GLYPH_COAST_EAST;
+                return true;
+            }
+
+            // 2-Neighbor Narrow Peninsulas / Isthmuses
+            if (upLand && downLand && !leftLand && !rightLand)
+            {
+                coastGlyph = GLYPH_PENINSULA_VERT;
+                return true;
+            }
+            if (!upLand && !downLand && leftLand && rightLand)
+            {
+                coastGlyph = GLYPH_PENINSULA_HORIZ;
+                return true;
+            }
+
+            // 2-Neighbor Diagonal Coastal Slopes
+            if (!upLand && !leftLand && downLand && rightLand)
+            {
+                coastGlyph = GLYPH_COAST_NW;
+                return true;
+            }
+            if (!upLand && !rightLand && downLand && leftLand)
+            {
+                coastGlyph = GLYPH_COAST_NE;
+                return true;
+            }
+            if (!downLand && !leftLand && upLand && rightLand)
+            {
+                coastGlyph = GLYPH_COAST_SW;
+                return true;
+            }
+            if (!downLand && !rightLand && upLand && leftLand)
+            {
+                coastGlyph = GLYPH_COAST_SE;
+                return true;
+            }
+
+            // 3-Neighbor Straight Cardinal Coastlines
+            if (!upLand && downLand && leftLand && rightLand)
+            {
+                coastGlyph = GLYPH_COAST_NORTH;
+                return true;
+            }
+            if (!downLand && upLand && leftLand && rightLand)
+            {
+                coastGlyph = GLYPH_COAST_SOUTH;
+                return true;
+            }
+            if (!leftLand && rightLand && upLand && downLand)
+            {
+                coastGlyph = GLYPH_COAST_WEST;
+                return true;
+            }
+
+            coastGlyph = GLYPH_COAST_EAST;
+            return true;
+        }
+
         // =====================================================================
         // REAL-TIME ZERO-ALLOCATION ANIMATION ENGINE (FOR LAYER 5: WEATHER RADAR)
         // =====================================================================
@@ -710,7 +831,7 @@ namespace WeatherOS.Apps
         }
 
         /// <summary>
-        /// Redraws only the animated Doppler Radar canvas, station dBZ badges, and frame counter digits
+        /// Redraws only the animated Doppler Radar canvas, descriptive text station badges, and legend
         /// directly into 0xB8000 with ZERO string or object allocations.
         /// </summary>
         private void RenderWeatherRadarFrameZeroAlloc()
@@ -727,13 +848,11 @@ namespace WeatherOS.Apps
                 {
                     WorldWeatherMapLayers.RenderDopplerRadarCell(
                         _currentZone, stations, map, mx, my, screenY, _radarFrame,
-                        GLYPH_COAST_NW, GLYPH_COAST_NE, GLYPH_COAST_SW, GLYPH_COAST_SE,
-                        GLYPH_COAST_NORTH, GLYPH_COAST_SOUTH, GLYPH_COAST_WEST, GLYPH_COAST_EAST,
-                        GLYPH_ISLAND);
+                        GLYPH_BORDER_HORIZ, GLYPH_BORDER_VERT, GLYPH_HIGHLAND);
                 }
             }
 
-            // Draw non-selected station dBZ badges, then selected station badge on top (zero-alloc)
+            // Draw non-selected station text badges, then selected station badge on top (zero-alloc)
             for (int i = 0; i < stations.Length; i++)
             {
                 if (i == _selectedStation) continue;
@@ -744,7 +863,7 @@ namespace WeatherOS.Apps
                 WorldWeatherMapLayers.DrawRadarStationBadgeZeroAlloc(_currentZone, stations, _selectedStation, true, _radarFrame);
             }
 
-            // Redraw the Row 22 Doppler Radar Legend & Frame Counter (zero-alloc)
+            // Redraw the Row 22 Weather Radar Text Legend (zero-alloc)
             DrawRadarLegendZeroAlloc();
         }
 
@@ -851,9 +970,7 @@ namespace WeatherOS.Apps
                     {
                         WorldWeatherMapLayers.RenderDopplerRadarCell(
                             _currentZone, stations, map, mx, my, screenY, _radarFrame,
-                            GLYPH_COAST_NW, GLYPH_COAST_NE, GLYPH_COAST_SW, GLYPH_COAST_SE,
-                            GLYPH_COAST_NORTH, GLYPH_COAST_SOUTH, GLYPH_COAST_WEST, GLYPH_COAST_EAST,
-                            GLYPH_ISLAND);
+                            GLYPH_BORDER_HORIZ, GLYPH_BORDER_VERT, GLYPH_HIGHLAND);
                         continue;
                     }
 
@@ -880,80 +997,45 @@ namespace WeatherOS.Apps
                         continue;
                     }
 
-                    // Check orthogonal neighbors to auto-bevel outer coastlines with 8x16 pixel slopes
+                    // Check orthogonal neighbors to bevel all outer coastlines, peninsulas, capes & islands
                     bool upLand    = IsLandCell(map, mx, my - 1);
                     bool downLand  = IsLandCell(map, mx, my + 1);
                     bool leftLand  = IsLandCell(map, mx - 1, my);
                     bool rightLand = IsLandCell(map, mx + 1, my);
 
-                    // In Layer 1 (Thermal Heatmap), color coastal bevels with the local thermal band color
-                    // so peninsulas (Italy, Greece, Iberia, UK, Japan) display the full thermal gradient!
-                    ConsoleColor coastFg = (_currentLayer == 1)
-                        ? WorldWeatherMapLayers.GetThermalCoastColor(_currentZone, stations, mx, my)
-                        : ConsoleColor.DarkGreen;
+                    byte coastGlyph;
+                    if (TryGetCoastalGlyph(upLand, downLand, leftLand, rightLand, out coastGlyph))
+                    {
+                        ConsoleColor coastFg = (_currentLayer == 1)
+                            ? WorldWeatherMapLayers.GetThermalCoastColor(_currentZone, stations, mx, my)
+                            : ConsoleColor.DarkGreen;
+                        PutVgaCell(mx, screenY, coastGlyph, coastFg, ConsoleColor.DarkBlue);
+                        continue;
+                    }
 
-                    if (!upLand && !leftLand && downLand && rightLand)
+                    // Interior Continental Landmass: Render according to Active Meteorological Layer
+                    if (_currentLayer == 0)
                     {
-                        PutVgaCell(mx, screenY, GLYPH_COAST_NW, coastFg, ConsoleColor.DarkBlue);
+                        if (c == '^')
+                            PutVgaCell(mx, screenY, GLYPH_HIGHLAND, ConsoleColor.Green, ConsoleColor.DarkGreen);
+                        else if (c == '-')
+                            PutVgaCell(mx, screenY, GLYPH_BORDER_HORIZ, ConsoleColor.Green, ConsoleColor.DarkGreen);
+                        else if (c == '|')
+                            PutVgaCell(mx, screenY, GLYPH_BORDER_VERT, ConsoleColor.Green, ConsoleColor.DarkGreen);
+                        else
+                            PutVgaCell(mx, screenY, (byte)' ', ConsoleColor.DarkGreen, ConsoleColor.DarkGreen);
                     }
-                    else if (!upLand && !rightLand && downLand && leftLand)
+                    else if (_currentLayer == 1)
                     {
-                        PutVgaCell(mx, screenY, GLYPH_COAST_NE, coastFg, ConsoleColor.DarkBlue);
+                        WorldWeatherMapLayers.RenderThermalCell(_currentZone, stations, mx, my, screenY, true);
                     }
-                    else if (!downLand && !leftLand && upLand && rightLand)
+                    else if (_currentLayer == 2)
                     {
-                        PutVgaCell(mx, screenY, GLYPH_COAST_SW, coastFg, ConsoleColor.DarkBlue);
+                        WorldWeatherMapLayers.RenderPrecipCell(_currentZone, stations, mx, my, screenY, true);
                     }
-                    else if (!downLand && !rightLand && upLand && leftLand)
+                    else if (_currentLayer == 3)
                     {
-                        PutVgaCell(mx, screenY, GLYPH_COAST_SE, coastFg, ConsoleColor.DarkBlue);
-                    }
-                    else if (!upLand && !downLand && !leftLand && !rightLand)
-                    {
-                        PutVgaCell(mx, screenY, GLYPH_ISLAND, coastFg, ConsoleColor.DarkBlue);
-                    }
-                    else if (!upLand && downLand && leftLand && rightLand)
-                    {
-                        PutVgaCell(mx, screenY, GLYPH_COAST_NORTH, coastFg, ConsoleColor.DarkBlue);
-                    }
-                    else if (!downLand && upLand && leftLand && rightLand)
-                    {
-                        PutVgaCell(mx, screenY, GLYPH_COAST_SOUTH, coastFg, ConsoleColor.DarkBlue);
-                    }
-                    else if (!leftLand && rightLand && upLand && downLand)
-                    {
-                        PutVgaCell(mx, screenY, GLYPH_COAST_WEST, coastFg, ConsoleColor.DarkBlue);
-                    }
-                    else if (!rightLand && leftLand && upLand && downLand)
-                    {
-                        PutVgaCell(mx, screenY, GLYPH_COAST_EAST, coastFg, ConsoleColor.DarkBlue);
-                    }
-                    else
-                    {
-                        // Interior Continental Landmass: Render according to Active Meteorological Layer
-                        if (_currentLayer == 0)
-                        {
-                            if (c == '^')
-                                PutVgaCell(mx, screenY, GLYPH_HIGHLAND, ConsoleColor.Green, ConsoleColor.DarkGreen);
-                            else if (c == '-')
-                                PutVgaCell(mx, screenY, GLYPH_BORDER_HORIZ, ConsoleColor.Green, ConsoleColor.DarkGreen);
-                            else if (c == '|')
-                                PutVgaCell(mx, screenY, GLYPH_BORDER_VERT, ConsoleColor.Green, ConsoleColor.DarkGreen);
-                            else
-                                PutVgaCell(mx, screenY, (byte)' ', ConsoleColor.DarkGreen, ConsoleColor.DarkGreen);
-                        }
-                        else if (_currentLayer == 1)
-                        {
-                            WorldWeatherMapLayers.RenderThermalCell(_currentZone, stations, mx, my, screenY, true);
-                        }
-                        else if (_currentLayer == 2)
-                        {
-                            WorldWeatherMapLayers.RenderPrecipCell(_currentZone, stations, mx, my, screenY, true);
-                        }
-                        else if (_currentLayer == 3)
-                        {
-                            WorldWeatherMapLayers.RenderWindCell(_currentZone, stations, mx, my, screenY, true);
-                        }
+                        WorldWeatherMapLayers.RenderWindCell(_currentZone, stations, mx, my, screenY, true);
                     }
                 }
             }
@@ -993,38 +1075,41 @@ namespace WeatherOS.Apps
 
             int x = st.MapX;
             int y = 1 + st.MapY;
-            if (y < 1 || y > 22 || x < 0 || x >= 73) return;
+            if (y < 1 || y > 22 || x < 0 || x >= 70) return;
 
             string badge;
             ConsoleColor fg;
-            // High-contrast dark badge pill so station values are 100% readable over any dithered layer
+            // High-contrast dark badge pill so station text is 100% readable over any dithered layer
             ConsoleColor bg = isSelected ? ConsoleColor.DarkCyan : ConsoleColor.Black;
 
             if (_currentLayer == 1)
             {
-                // Thermal Layer: Show Temperature with Cold/Mild/Warm/Hot color coding
-                badge = st.TempC + "ºC";
-                if (isSelected) fg = ConsoleColor.Yellow;
-                else if (st.TempC >= 21) fg = ConsoleColor.Red;
-                else if (st.TempC >= 15) fg = ConsoleColor.Yellow;
-                else if (st.TempC >= 11) fg = ConsoleColor.Green;
-                else fg = ConsoleColor.Cyan;
+                // Thermal Layer: Show Descriptive Thermal Zone Text ("FREEZE", "COLD", "COOL", "MILD", "WARM", "HOT")
+                if (st.TempC >= 21)      { badge = "HOT";    fg = isSelected ? ConsoleColor.Yellow : ConsoleColor.Red; }
+                else if (st.TempC >= 17) { badge = "WARM";   fg = ConsoleColor.Yellow; }
+                else if (st.TempC >= 14) { badge = "MILD";   fg = ConsoleColor.Yellow; }
+                else if (st.TempC >= 11) { badge = "COOL";   fg = isSelected ? ConsoleColor.Yellow : ConsoleColor.Green; }
+                else if (st.TempC >= 8)  { badge = "COLD";   fg = isSelected ? ConsoleColor.Yellow : ConsoleColor.Cyan; }
+                else                     { badge = "FREEZE"; fg = isSelected ? ConsoleColor.Yellow : ConsoleColor.White; }
             }
             else if (_currentLayer == 2)
             {
-                // Precip Radar Layer: Show Precipitation Tier + Relative Humidity %
+                // Precip Radar Layer: Show Descriptive Precipitation Condition Text ("STORM", "RAIN", "OVERCAST", "CLOUDY", "CLEAR")
                 int pScore = WorldWeatherMapLayers.GetStationPrecipScore(st);
-                if (pScore == 4)      { badge = "STRM " + st.Humidity + "%"; fg = ConsoleColor.Yellow; }
-                else if (pScore == 3) { badge = "RAIN " + st.Humidity + "%"; fg = ConsoleColor.Cyan; }
-                else if (pScore == 2) { badge = "OVC "  + st.Humidity + "%"; fg = ConsoleColor.White; }
-                else if (pScore == 1) { badge = "CLD "  + st.Humidity + "%"; fg = ConsoleColor.Green; }
-                else                  { badge = "DRY "  + st.Humidity + "%"; fg = isSelected ? ConsoleColor.Yellow : ConsoleColor.Green; }
+                if (pScore == 4)      { badge = "STORM";    fg = ConsoleColor.Yellow; }
+                else if (pScore == 3) { badge = "RAIN";     fg = isSelected ? ConsoleColor.Yellow : ConsoleColor.Cyan; }
+                else if (pScore == 2) { badge = "OVERCAST"; fg = isSelected ? ConsoleColor.Yellow : ConsoleColor.White; }
+                else if (pScore == 1) { badge = "CLOUDY";   fg = isSelected ? ConsoleColor.Yellow : ConsoleColor.Green; }
+                else                  { badge = "CLEAR";    fg = isSelected ? ConsoleColor.Yellow : ConsoleColor.Green; }
             }
             else
             {
-                // Wind Layer: Show Wind Vector Arrow + Speed in km/h
-                badge = ">>" + st.WindKmh + "kmh";
-                fg = isSelected ? ConsoleColor.Yellow : (st.WindKmh >= 15 ? ConsoleColor.Yellow : ConsoleColor.Cyan);
+                // Wind Layer: Show Descriptive Wind Streamline Text (">>GALE", ">>STRONG", ">MODERATE", "~BREEZE", "-CALM")
+                if (st.WindKmh >= 20)      { badge = ">>GALE";    fg = ConsoleColor.Yellow; }
+                else if (st.WindKmh >= 15) { badge = ">>STRONG";  fg = ConsoleColor.Yellow; }
+                else if (st.WindKmh >= 12) { badge = ">MODERATE"; fg = isSelected ? ConsoleColor.Yellow : ConsoleColor.Cyan; }
+                else if (st.WindKmh >= 9)  { badge = "~BREEZE";   fg = isSelected ? ConsoleColor.Yellow : ConsoleColor.Green; }
+                else                       { badge = "-CALM";     fg = isSelected ? ConsoleColor.Yellow : ConsoleColor.Green; }
             }
 
             if (isSelected)
@@ -1080,31 +1165,31 @@ namespace WeatherOS.Apps
             }
             else if (_currentLayer == 1)
             {
-                const string leg1 = " THERMAL SCALE: [ ]<=7C [ ]8-10C [ ]11-13C [ ]14-16C [ ]17-20C [ ]>=21C Hot ";
+                const string leg1 = " THERMAL HEATMAP: [ ]Freeze  [ ]Cold  [ ]Cool  [ ]Mild  [ ]Warm  [ ]Hot Core ";
                 int sx = 80 - leg1.Length;
                 DirectVgaWrite(sx, 22, leg1, ConsoleColor.White, ConsoleColor.DarkCyan);
                 // Place real colored thermal band swatches inside the brackets
-                PutVgaCell(sx + 17, 22, 0xB2, ConsoleColor.Cyan,   ConsoleColor.DarkBlue);
-                PutVgaCell(sx + 25, 22, 0xB1, ConsoleColor.Cyan,   ConsoleColor.DarkCyan);
-                PutVgaCell(sx + 34, 22, 0xB1, ConsoleColor.Green,  ConsoleColor.DarkGreen);
-                PutVgaCell(sx + 44, 22, 0xB1, ConsoleColor.Yellow, ConsoleColor.DarkGreen);
-                PutVgaCell(sx + 54, 22, 0xB2, ConsoleColor.Yellow, ConsoleColor.DarkYellow);
-                PutVgaCell(sx + 64, 22, 0xB2, ConsoleColor.Yellow, ConsoleColor.DarkRed);
+                PutVgaCell(sx + 19, 22, 0xB2, ConsoleColor.Cyan,   ConsoleColor.DarkBlue);
+                PutVgaCell(sx + 30, 22, 0xB1, ConsoleColor.Cyan,   ConsoleColor.DarkCyan);
+                PutVgaCell(sx + 39, 22, 0xB1, ConsoleColor.Green,  ConsoleColor.DarkGreen);
+                PutVgaCell(sx + 48, 22, 0xB1, ConsoleColor.Yellow, ConsoleColor.DarkGreen);
+                PutVgaCell(sx + 57, 22, 0xB2, ConsoleColor.Yellow, ConsoleColor.DarkYellow);
+                PutVgaCell(sx + 66, 22, 0xB2, ConsoleColor.Yellow, ConsoleColor.DarkRed);
             }
             else if (_currentLayer == 2)
             {
-                const string leg2 = " PRECIP RADAR: [ ]Dry  [ ]Clouds  [ ]Overcast  [/]Rain Band  [*]Storm Core ";
+                const string leg2 = " PRECIP RADAR: [ ]Clear  [ ]Cloudy  [ ]Overcast  [/]Rain Band  [*]Storm Core ";
                 int sx = 80 - leg2.Length;
                 DirectVgaWrite(sx, 22, leg2, ConsoleColor.White, ConsoleColor.DarkCyan);
                 PutVgaCell(sx + 16, 22, (byte)' ', ConsoleColor.DarkGreen, ConsoleColor.DarkGreen);
-                PutVgaCell(sx + 24, 22, 0xB0,      ConsoleColor.Green,     ConsoleColor.DarkGreen);
-                PutVgaCell(sx + 35, 22, 0xB1,      ConsoleColor.White,     ConsoleColor.DarkGreen);
-                PutVgaCell(sx + 48, 22, (byte)'/', ConsoleColor.Cyan,      ConsoleColor.DarkCyan);
-                PutVgaCell(sx + 62, 22, (byte)'*', ConsoleColor.Yellow,    ConsoleColor.DarkBlue);
+                PutVgaCell(sx + 26, 22, 0xB0,      ConsoleColor.Green,     ConsoleColor.DarkGreen);
+                PutVgaCell(sx + 37, 22, 0xB1,      ConsoleColor.White,     ConsoleColor.DarkGreen);
+                PutVgaCell(sx + 50, 22, (byte)'/', ConsoleColor.Cyan,      ConsoleColor.DarkCyan);
+                PutVgaCell(sx + 64, 22, (byte)'*', ConsoleColor.Yellow,    ConsoleColor.DarkBlue);
             }
             else if (_currentLayer == 3)
             {
-                const string leg3 = " WIND STREAMLINES: [-]<12km/h Calm  [~]12-14km/h Breeze  [>>]>=15km/h Jet ";
+                const string leg3 = " WIND VECTORS: [-]Calm  [~]Light Breeze  [>]Moderate Wind  [>>]Strong Gale ";
                 int sx = 80 - leg3.Length;
                 DirectVgaWrite(sx, 22, leg3, ConsoleColor.White, ConsoleColor.DarkCyan);
             }
@@ -1116,19 +1201,18 @@ namespace WeatherOS.Apps
 
         private void DrawRadarLegendZeroAlloc()
         {
-            const string leg4 = " DOPPLER RADAR [LOOP 01/16]: [ ]20dBZ  [ ]32dBZ  [ ]42dBZ  [ ]52dBZ  [ ]60dBZ ";
+            const string leg4Live   = " WEATHER RADAR [LIVE]: [ ]Light  [ ]Moderate  [ ]Heavy  [ ]Severe  [ ]Storm ";
+            const string leg4Paused = " WEATHER RADAR [HOLD]: [ ]Light  [ ]Moderate  [ ]Heavy  [ ]Severe  [ ]Storm ";
+            string leg4 = _radarPaused ? leg4Paused : leg4Live;
             int sx = 80 - leg4.Length;
             DirectVgaWrite(sx, 22, leg4, ConsoleColor.White, ConsoleColor.DarkCyan);
 
-            // Overwrite frame counter "01" with current 1..16 frame (zero heap allocations)
-            WorldWeatherMapLayers.DirectVgaWriteTwoDigits(sx + 21, 22, _radarFrame + 1, ConsoleColor.Yellow, ConsoleColor.DarkCyan);
-
-            // Place live NEXRAD dBZ color swatches inside the legend brackets
-            PutVgaCell(sx + 30, 22, 0xB0, ConsoleColor.Cyan,    ConsoleColor.DarkBlue);
-            PutVgaCell(sx + 40, 22, 0xB1, ConsoleColor.Green,   ConsoleColor.DarkGreen);
-            PutVgaCell(sx + 50, 22, 0xB2, ConsoleColor.Yellow,  ConsoleColor.DarkYellow);
-            PutVgaCell(sx + 60, 22, 0xB2, ConsoleColor.Red,     ConsoleColor.DarkYellow);
-            PutVgaCell(sx + 70, 22, 0xDB, ConsoleColor.Magenta, ConsoleColor.DarkRed);
+            // Place live NEXRAD radar intensity swatches inside the legend brackets (zero heap allocations)
+            PutVgaCell(sx + 24, 22, 0xB0, ConsoleColor.Cyan,    ConsoleColor.DarkBlue);
+            PutVgaCell(sx + 34, 22, 0xB1, ConsoleColor.Green,   ConsoleColor.DarkGreen);
+            PutVgaCell(sx + 47, 22, 0xB2, ConsoleColor.Yellow,  ConsoleColor.DarkYellow);
+            PutVgaCell(sx + 57, 22, 0xB2, ConsoleColor.Red,     ConsoleColor.DarkYellow);
+            PutVgaCell(sx + 68, 22, 0xDB, ConsoleColor.Magenta, ConsoleColor.DarkRed);
         }
 
         private void GetWeatherSpritePair(string condition, out byte glyphL, out byte glyphR, out ConsoleColor colorL, out ConsoleColor colorR)

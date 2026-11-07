@@ -15,6 +15,20 @@ namespace WeatherOS.Services
         private const byte SHADE_DARK  = 0xB2; // '▓' 75% stipple
         private const byte BLOCK_FULL  = 0xDB; // '█' 100% solid block
 
+        // Pre-allocated static text badges for Weather Radar (0 heap allocations per frame)
+        private const string BADGE_STORM        = "STORM";
+        private const string BADGE_STORM_SEL    = "[STORM]";
+        private const string BADGE_SEVERE       = "SEVERE";
+        private const string BADGE_SEVERE_SEL   = "[SEVERE]";
+        private const string BADGE_HEAVY        = "HEAVY";
+        private const string BADGE_HEAVY_SEL    = "[HEAVY]";
+        private const string BADGE_MODERATE     = "MODERATE";
+        private const string BADGE_MODERATE_SEL = "[MODERATE]";
+        private const string BADGE_LIGHT        = "LIGHT";
+        private const string BADGE_LIGHT_SEL    = "[LIGHT]";
+        private const string BADGE_CLEAR        = "CLEAR";
+        private const string BADGE_CLEAR_SEL    = "[CLEAR]";
+
         // Pre-allocated 16-step fixed-point trig tables (-64 .. +64) for zero-allocation cyclonic rotation
         private static readonly int[] Cos16 = new int[16]
         {
@@ -24,7 +38,7 @@ namespace WeatherOS.Services
 
         private static readonly int[] Sin16 = new int[16]
         {
-              0,  24,  45,  59,  64,  59,  45,  24,
+              0,  24,  45,  59,  64, 59,  45,  24,
               0, -24, -45, -59, -64, -59, -45, -24
         };
 
@@ -161,7 +175,7 @@ namespace WeatherOS.Services
             if (!isLand)
             {
                 // Coastal marine thermal bloom & sea-surface isotherm lines
-                if (nearDist <= 55 && ((mx + my) % 3 == 0))
+                if (nearDist <= 45 && ((mx + my) % 4 == 0))
                 {
                     ConsoleColor seaCol = (t >= 19) ? ConsoleColor.Yellow : (t >= 13 ? ConsoleColor.Green : ConsoleColor.Cyan);
                     WorldWeatherMapApp.PutVgaCell(mx, screenY, (byte)'~', seaCol, ConsoleColor.DarkBlue);
@@ -252,24 +266,19 @@ namespace WeatherOS.Services
 
             if (!isLand)
             {
-                // Marine Precipitation & Frontal Cloud Bands over Ocean near coasts
-                if (nearDist <= 115)
+                // Marine Precipitation & Frontal Cloud Bands over Ocean near coasts (always DarkBlue bg)
+                if (nearDist <= 95)
                 {
-                    if (effMoisture >= 92 || (stScore == 4 && nearDist <= 38))
+                    if (effMoisture >= 92 || (stScore == 4 && nearDist <= 32))
                     {
-                        byte g = ((mx + my) % 2 == 0) ? (byte)'*' : SHADE_DARK;
+                        byte g = ((mx + my) % 2 == 0) ? (byte)'*' : (byte)'/';
                         WorldWeatherMapApp.PutVgaCell(mx, screenY, g, ConsoleColor.Yellow, ConsoleColor.DarkBlue);
                         return;
                     }
-                    if (effMoisture >= 83 || (stScore >= 3 && nearDist <= 65))
+                    if (effMoisture >= 83 || (stScore >= 3 && nearDist <= 55))
                     {
-                        byte g = ((mx + my) % 2 == 0) ? (byte)'/' : SHADE_MED;
+                        byte g = ((mx + my) % 2 == 0) ? (byte)'/' : SHADE_LIGHT;
                         WorldWeatherMapApp.PutVgaCell(mx, screenY, g, ConsoleColor.Cyan, ConsoleColor.DarkBlue);
-                        return;
-                    }
-                    if (effMoisture >= 73 && nearDist <= 78)
-                    {
-                        WorldWeatherMapApp.PutVgaCell(mx, screenY, SHADE_LIGHT, ConsoleColor.Cyan, ConsoleColor.DarkBlue);
                         return;
                     }
                 }
@@ -322,7 +331,7 @@ namespace WeatherOS.Services
 
             if (!isLand)
             {
-                if (((mx + my * 3) % 6) == 0)
+                if (((mx + my * 3) % 7) == 0)
                 {
                     ConsoleColor seaWindCol = (w >= 15) ? ConsoleColor.Yellow : ConsoleColor.Cyan;
                     WorldWeatherMapApp.PutVgaCell(mx, screenY, (byte)'~', seaWindCol, ConsoleColor.DarkBlue);
@@ -358,8 +367,9 @@ namespace WeatherOS.Services
         }
 
         // =====================================================================
-        // LAYER 4 (5/5): ANIMATED NEXRAD DOPPLER WEATHER RADAR (dBZ LOOP)
-        // Modeled after high-resolution cyclonic hook-echo Doppler sweeps.
+        // LAYER 4 (5/5): ANIMATED NEXRAD DOPPLER WEATHER RADAR (LOOP)
+        // Modeled after high-resolution cyclonic hook-echo Doppler sweeps while
+        // preserving 100% continental coastline & terrain clarity.
         // Zero heap allocations (0 bytes allocated per animation tick).
         // =====================================================================
 
@@ -370,30 +380,30 @@ namespace WeatherOS.Services
             int c1x, c1y, c2x, c2y;
             bool southernHemisphere = (zone == 3);
 
-            if (zone == 0) // Europe: Central/Eastern European Frontal Cyclone + Atlantic Wave
+            if (zone == 0) // Europe: Central European Frontal Cyclone + Eastern Mediterranean / Balkan Wave
             {
-                c1x = 37; c1y = 10;
-                c2x = 14; c2y = 13;
+                c1x = 38; c1y = 10;
+                c2x = 58; c2y = 16;
             }
-            else if (zone == 1) // Asia: Western Pacific / South China Sea Typhoon + Monsoon Trough
+            else if (zone == 1) // Asia: East Asian / South China Sea Typhoon + Monsoon Trough
             {
                 c1x = 48; c1y = 13;
-                c2x = 28; c2y = 12;
+                c2x = 28; c2y = 11;
             }
-            else if (zone == 2) // Americas: Gulf/Caribbean Hurricane Hook-Echo + Amazon Squall
+            else if (zone == 2) // Americas: US/Gulf Hook-Echo Cyclone + Amazonia Squall System
             {
-                c1x = 30; c1y = 9;
-                c2x = 46; c2y = 15;
+                c1x = 29; c1y = 6;
+                c2x = 49; c2y = 16;
             }
-            else if (zone == 3) // Oceania: Coral Sea Tropical Cyclone + Tasman Front
+            else if (zone == 3) // Oceania: Coral Sea / N.Queensland Cyclone + Tasman Front
             {
-                c1x = 42; c1y = 8;
-                c2x = 58; c2y = 15;
+                c1x = 39; c1y = 10;
+                c2x = 42; c2y = 15;
             }
-            else // Africa: West/Central African Squall Vortex + Indian Ocean Wave
+            else // Africa: West/Central African Squall Vortex + East African Wave
             {
-                c1x = 29; c1y = 10;
-                c2x = 48; c2y = 13;
+                c1x = 27; c1y = 8;
+                c2x = 46; c2y = 11;
             }
 
             // Smooth cyclical advection along frontal track across the 16 frames
@@ -413,14 +423,14 @@ namespace WeatherOS.Services
             GlobalStation st = stations[nearIdx];
             int stScore = GetStationPrecipScore(st);
 
-            if (stScore >= 3 && nearDist <= 64)
+            if (stScore >= 3 && nearDist <= 42)
             {
-                int localDbz = (stScore == 4 ? 58 : 46) - (nearDist / 2);
+                int localDbz = (stScore == 4 ? 56 : 44) - (nearDist / 2);
                 if (localDbz > maxDbz) maxDbz = localDbz;
             }
-            else if (_gridHum[idx] >= 84 && maxDbz < 28)
+            else if (_gridHum[idx] >= 86 && maxDbz < 24)
             {
-                int humDbz = (_gridHum[idx] - 62);
+                int humDbz = (_gridHum[idx] - 65);
                 if (humDbz > maxDbz) maxDbz = humDbz;
             }
 
@@ -433,7 +443,7 @@ namespace WeatherOS.Services
             int dy = (my - cy) * 2;
 
             int r2 = dx * dx + dy * dy;
-            int maxRadius2 = isPrimary ? 960 : 520;
+            int maxRadius2 = isPrimary ? 340 : 170;
             if (r2 > maxRadius2) return 0;
 
             int rotIdx = clockwise ? ((16 - (frame & 15)) & 15) : (frame & 15);
@@ -447,46 +457,46 @@ namespace WeatherOS.Services
             int dbz = 0;
 
             // 1. Sweeping Main Comma-Arc / Frontal Squall Band
-            int arcShiftX = rx - 5;
-            int bandCenterY = -4 + (arcShiftX * arcShiftX) / 26;
+            int arcShiftX = rx - 3;
+            int bandCenterY = -3 + (arcShiftX * arcShiftX) / 16;
             int distFromBand = ry - bandCenterY;
             if (distFromBand < 0) distFromBand = -distFromBand;
 
-            if (rx >= -14 && rx <= 26 && distFromBand <= 14)
+            if (rx >= -9 && rx <= 15 && distFromBand <= 8)
             {
-                int bandCore = 62 - (distFromBand * 4) - ((arcShiftX * arcShiftX) / 18);
-                if (!isPrimary) bandCore -= 8;
+                int bandCore = 62 - (distFromBand * 6) - ((arcShiftX * arcShiftX) / 9);
+                if (!isPrimary) bandCore -= 10;
                 if (bandCore > dbz) dbz = bandCore;
             }
 
             // 2. Cyclonic Hook-Echo Vortex Eye on the Western/Southwestern Flank
-            int hx = rx + 11;
-            int hy = ry - 5;
+            int hx = rx + 7;
+            int hy = ry - 3;
             int hr2 = hx * hx + hy * hy;
-            if (hr2 <= 42)
+            if (hr2 <= 25)
             {
                 int hookDbz;
-                if (hr2 <= 3)
+                if (hr2 <= 2)
                     hookDbz = 26; // Inner eye
-                else if (hr2 <= 18)
-                    hookDbz = 60 - (hr2 - 8) * (hr2 - 8) / 4; // Intense red hook-echo eyewall
+                else if (hr2 <= 11)
+                    hookDbz = 61 - (hr2 - 5) * (hr2 - 5) / 3; // Intense red hook-echo eyewall
                 else
-                    hookDbz = 48 - (hr2 - 18);
+                    hookDbz = 48 - (hr2 - 11) * 2;
 
-                if (!isPrimary) hookDbz -= 6;
+                if (!isPrimary) hookDbz -= 8;
                 if (hookDbz > dbz) dbz = hookDbz;
             }
 
             // 3. Outer Spiral Feeder Bands (Green / Blue trailing bands rotating with frame)
             int spiralPhase = (dx * 3 + dy * 2 - frame * 3) & 7;
-            if (r2 <= (isPrimary ? 780 : 400) && dbz < 36)
+            if (r2 <= (isPrimary ? 280 : 140) && dbz < 36)
             {
-                int feeder = (isPrimary ? 38 : 30) - (r2 / 24) - (spiralPhase <= 3 ? spiralPhase * 2 : (8 - spiralPhase) * 2);
+                int feeder = (isPrimary ? 38 : 30) - (r2 / 10) - (spiralPhase <= 3 ? spiralPhase * 2 : (8 - spiralPhase) * 2);
                 if (feeder > dbz) dbz = feeder;
             }
 
             // 4. High-Resolution Cellular Radar Granularity
-            if (dbz > 8)
+            if (dbz > 10)
             {
                 int cellHash = ((mx * 17) ^ (my * 31) ^ (frame * 13)) & 7;
                 dbz += (cellHash - 3);
@@ -498,51 +508,96 @@ namespace WeatherOS.Services
         public static void RenderDopplerRadarCell(
             int zone, GlobalStation[] stations, string[] map,
             int mx, int my, int screenY, int animFrame,
-            byte glyphCoastNW, byte glyphCoastNE, byte glyphCoastSW, byte glyphCoastSE,
-            byte glyphCoastN,  byte glyphCoastS,  byte glyphCoastW,  byte glyphCoastE,
-            byte glyphIsland)
+            byte glyphBorderHoriz, byte glyphBorderVert, byte glyphHighland)
         {
+            string line = (my < map.Length) ? map[my] : "";
+            char c = (mx < line.Length) ? line[mx] : ' ';
             int dbz = ComputeDopplerDbzAt(zone, stations, mx, my, animFrame);
 
-            // Render NEXRAD multi-spectral Doppler radar reflectivity (all backgrounds strictly 0..7)
-            if (dbz >= 12)
+            // 1. Open Ocean Cell: ALWAYS preserve DarkBlue ocean background so the continent silhouette is 100% clear
+            if (c == ' ')
+            {
+                if (dbz >= 48)
+                {
+                    WorldWeatherMapApp.PutVgaCell(mx, screenY, (byte)'*', ConsoleColor.Red, ConsoleColor.DarkBlue);
+                }
+                else if (dbz >= 36)
+                {
+                    WorldWeatherMapApp.PutVgaCell(mx, screenY, (byte)'/', ConsoleColor.Yellow, ConsoleColor.DarkBlue);
+                }
+                else if (dbz >= 24)
+                {
+                    WorldWeatherMapApp.PutVgaCell(mx, screenY, (byte)'/', ConsoleColor.Green, ConsoleColor.DarkBlue);
+                }
+                else if (dbz >= 16)
+                {
+                    WorldWeatherMapApp.PutVgaCell(mx, screenY, SHADE_LIGHT, ConsoleColor.Cyan, ConsoleColor.DarkBlue);
+                }
+                else
+                {
+                    WorldWeatherMapApp.PutVgaCell(mx, screenY, (byte)' ', ConsoleColor.DarkBlue, ConsoleColor.DarkBlue);
+                }
+                return;
+            }
+
+            // 2. Coastal Land Boundary Cell: ALWAYS render the smooth 8x16 coastal bevel glyph against DarkBlue ocean
+            bool upLand    = IsLand(map, mx, my - 1);
+            bool downLand  = IsLand(map, mx, my + 1);
+            bool leftLand  = IsLand(map, mx - 1, my);
+            bool rightLand = IsLand(map, mx + 1, my);
+
+            byte coastGlyph;
+            if (WorldWeatherMapApp.TryGetCoastalGlyph(upLand, downLand, leftLand, rightLand, out coastGlyph))
+            {
+                ConsoleColor coastFg = ConsoleColor.DarkGreen;
+                if (dbz >= 52) coastFg = ConsoleColor.Red;
+                else if (dbz >= 38) coastFg = ConsoleColor.Yellow;
+                else if (dbz >= 24) coastFg = ConsoleColor.Green;
+                else if (dbz >= 14) coastFg = ConsoleColor.Cyan;
+
+                WorldWeatherMapApp.PutVgaCell(mx, screenY, coastGlyph, coastFg, ConsoleColor.DarkBlue);
+                return;
+            }
+
+            // 3. Interior Continental Land Cell: Render multi-spectral NEXRAD Doppler reflectivity if active
+            if (dbz >= 14)
             {
                 byte glyph;
                 ConsoleColor fg;
                 ConsoleColor bg;
 
-                if (dbz >= 56)
+                if (dbz >= 55)
                 {
-                    // 56..65+ dBZ: Extreme Convective Storm / Hook-Echo Core (Solid Red & Magenta Core on DarkRed)
-                    glyph = (dbz >= 61) ? BLOCK_FULL : SHADE_DARK;
-                    fg = (dbz >= 62 && ((mx + my + animFrame) % 3 == 0)) ? ConsoleColor.Magenta : ConsoleColor.Red;
+                    // Extreme Convective Storm / Hook-Echo Core (Solid Red & Magenta Core on DarkRed)
+                    glyph = (dbz >= 60) ? BLOCK_FULL : SHADE_DARK;
+                    fg = (dbz >= 61 && ((mx + my + animFrame) % 3 == 0)) ? ConsoleColor.Magenta : ConsoleColor.Red;
                     bg = ConsoleColor.DarkRed;
                 }
-                else if (dbz >= 47)
+                else if (dbz >= 46)
                 {
-                    // 47..55 dBZ: Severe Storm Red/Orange Arc (Red on Amber DarkYellow)
-                    glyph = (dbz >= 51) ? SHADE_DARK : SHADE_MED;
+                    // Severe Storm Red/Orange Arc (Red on Amber DarkYellow)
+                    glyph = (dbz >= 50) ? SHADE_DARK : SHADE_MED;
                     fg = ConsoleColor.Red;
                     bg = ConsoleColor.DarkYellow;
                 }
-                else if (dbz >= 37)
+                else if (dbz >= 36)
                 {
-                    // 37..46 dBZ: Heavy Rain Yellow/Amber Band (Yellow on DarkYellow / DarkGreen)
-                    glyph = (dbz >= 42) ? SHADE_DARK : SHADE_MED;
+                    // Heavy Rain Yellow/Amber Band (Yellow on DarkYellow / DarkGreen)
+                    glyph = (dbz >= 41) ? SHADE_DARK : SHADE_MED;
                     fg = ConsoleColor.Yellow;
-                    bg = (dbz >= 41) ? ConsoleColor.DarkYellow : ConsoleColor.DarkGreen;
+                    bg = (dbz >= 40) ? ConsoleColor.DarkYellow : ConsoleColor.DarkGreen;
                 }
                 else if (dbz >= 24)
                 {
-                    // 24..36 dBZ: Moderate Rain Bright Green / Dark Green Band
+                    // Moderate Rain Bright Green / Dark Green Band
                     glyph = (dbz >= 30) ? SHADE_DARK : SHADE_MED;
                     fg = ConsoleColor.Green;
                     bg = ConsoleColor.DarkGreen;
                 }
                 else
                 {
-                    // 12..23 dBZ: Outer Peripheral Light Precipitation / Virga Halo (Blue / Indigo / Cyan on DarkBlue)
-                    glyph = (dbz >= 18) ? SHADE_MED : SHADE_LIGHT;
+                    // Outer Peripheral Light Precipitation / Virga Halo (Blue / Cyan on DarkBlue)
+                    glyph = (dbz >= 19) ? SHADE_MED : SHADE_LIGHT;
                     fg = (dbz >= 19) ? ConsoleColor.Cyan : ConsoleColor.Blue;
                     bg = ConsoleColor.DarkBlue;
                 }
@@ -551,48 +606,15 @@ namespace WeatherOS.Services
                 return;
             }
 
-            // Otherwise, render the Dark-Contrast Radar Base Map
-            string line = (my < map.Length) ? map[my] : "";
-            char c = (mx < line.Length) ? line[mx] : ' ';
-
-            if (c == ' ')
-            {
-                WorldWeatherMapApp.PutVgaCell(mx, screenY, (byte)' ', ConsoleColor.DarkBlue, ConsoleColor.DarkBlue);
-                return;
-            }
-
-            bool upLand    = IsLand(map, mx, my - 1);
-            bool downLand  = IsLand(map, mx, my + 1);
-            bool leftLand  = IsLand(map, mx - 1, my);
-            bool rightLand = IsLand(map, mx + 1, my);
-
-            if (!upLand && !leftLand && downLand && rightLand)
-                WorldWeatherMapApp.PutVgaCell(mx, screenY, glyphCoastNW, ConsoleColor.DarkGreen, ConsoleColor.DarkBlue);
-            else if (!upLand && !rightLand && downLand && leftLand)
-                WorldWeatherMapApp.PutVgaCell(mx, screenY, glyphCoastNE, ConsoleColor.DarkGreen, ConsoleColor.DarkBlue);
-            else if (!downLand && !leftLand && upLand && rightLand)
-                WorldWeatherMapApp.PutVgaCell(mx, screenY, glyphCoastSW, ConsoleColor.DarkGreen, ConsoleColor.DarkBlue);
-            else if (!downLand && !rightLand && upLand && leftLand)
-                WorldWeatherMapApp.PutVgaCell(mx, screenY, glyphCoastSE, ConsoleColor.DarkGreen, ConsoleColor.DarkBlue);
-            else if (!upLand && !downLand && !leftLand && !rightLand)
-                WorldWeatherMapApp.PutVgaCell(mx, screenY, glyphIsland, ConsoleColor.DarkGreen, ConsoleColor.DarkBlue);
-            else if (!upLand && downLand && leftLand && rightLand)
-                WorldWeatherMapApp.PutVgaCell(mx, screenY, glyphCoastN, ConsoleColor.DarkGreen, ConsoleColor.DarkBlue);
-            else if (!downLand && upLand && leftLand && rightLand)
-                WorldWeatherMapApp.PutVgaCell(mx, screenY, glyphCoastS, ConsoleColor.DarkGreen, ConsoleColor.DarkBlue);
-            else if (!leftLand && rightLand && upLand && downLand)
-                WorldWeatherMapApp.PutVgaCell(mx, screenY, glyphCoastW, ConsoleColor.DarkGreen, ConsoleColor.DarkBlue);
-            else if (!rightLand && leftLand && upLand && downLand)
-                WorldWeatherMapApp.PutVgaCell(mx, screenY, glyphCoastE, ConsoleColor.DarkGreen, ConsoleColor.DarkBlue);
+            // 4. Uncovered Interior Continental Land: Render crisp continental relief & borders
+            if (c == '^')
+                WorldWeatherMapApp.PutVgaCell(mx, screenY, glyphHighland, ConsoleColor.Green, ConsoleColor.DarkGreen);
+            else if (c == '-')
+                WorldWeatherMapApp.PutVgaCell(mx, screenY, glyphBorderHoriz, ConsoleColor.Green, ConsoleColor.DarkGreen);
+            else if (c == '|')
+                WorldWeatherMapApp.PutVgaCell(mx, screenY, glyphBorderVert, ConsoleColor.Green, ConsoleColor.DarkGreen);
             else
-            {
-                if (c == '^')
-                    WorldWeatherMapApp.PutVgaCell(mx, screenY, (byte)'^', ConsoleColor.Green, ConsoleColor.DarkGreen);
-                else if (c == '-' || c == '|')
-                    WorldWeatherMapApp.PutVgaCell(mx, screenY, (byte)'.', ConsoleColor.Green, ConsoleColor.DarkGreen);
-                else
-                    WorldWeatherMapApp.PutVgaCell(mx, screenY, (byte)' ', ConsoleColor.DarkGreen, ConsoleColor.DarkGreen);
-            }
+                WorldWeatherMapApp.PutVgaCell(mx, screenY, (byte)' ', ConsoleColor.DarkGreen, ConsoleColor.DarkGreen);
         }
 
         private static bool IsLand(string[] map, int x, int y)
@@ -604,7 +626,7 @@ namespace WeatherOS.Services
         }
 
         // =====================================================================
-        // ZERO-ALLOCATION VGA INTEGER & BADGE WRITERS FOR REAL-TIME RADAR LOOP
+        // ZERO-ALLOCATION VGA INTEGER & TEXT BADGE WRITERS FOR RADAR LOOP
         // =====================================================================
 
         public static int DirectVgaWriteInt(int x, int y, int value, ConsoleColor fg, ConsoleColor bg)
@@ -638,53 +660,56 @@ namespace WeatherOS.Services
             return x;
         }
 
-        public static void DirectVgaWriteTwoDigits(int x, int y, int value, ConsoleColor fg, ConsoleColor bg)
-        {
-            if (value < 0) value = 0;
-            if (value > 99) value = 99;
-            int d10 = value / 10;
-            int d1 = value - d10 * 10;
-            WorldWeatherMapApp.PutVgaCell(x,     y, (byte)('0' + d10), fg, bg);
-            WorldWeatherMapApp.PutVgaCell(x + 1, y, (byte)('0' + d1),  fg, bg);
-        }
-
         /// <summary>
-        /// Zero-allocation station badge renderer for Layer 4 (5/5 Weather Radar).
-        /// Draws "[54dBZ]" or "48dBZ" directly into VGA memory without creating any string objects.
+        /// Zero-allocation descriptive text station badge renderer for Layer 4 (5/5 Weather Radar).
+        /// Draws human-readable condition text ("STORM", "SEVERE", "HEAVY", "MODERATE", "LIGHT", "CLEAR")
+        /// directly into VGA memory using pre-allocated static string literals (0 bytes allocated per frame).
         /// </summary>
         public static void DrawRadarStationBadgeZeroAlloc(int zone, GlobalStation[] stations, int stationIdx, bool isSelected, int animFrame)
         {
             GlobalStation st = stations[stationIdx];
             int x = st.MapX;
             int y = 1 + st.MapY;
-            if (y < 1 || y > 22 || x < 0 || x >= 72) return;
+            if (y < 1 || y > 22 || x < 0 || x >= 70) return;
 
             int dbz = ComputeDopplerDbzAt(zone, stations, st.MapX, st.MapY, animFrame);
-            if (dbz < 5) dbz = 5;
 
             ConsoleColor bg = isSelected ? ConsoleColor.DarkCyan : ConsoleColor.Black;
             ConsoleColor fg;
-            if (isSelected) fg = ConsoleColor.Yellow;
-            else if (dbz >= 48) fg = ConsoleColor.Red;
-            else if (dbz >= 36) fg = ConsoleColor.Yellow;
-            else if (dbz >= 24) fg = ConsoleColor.Green;
-            else fg = ConsoleColor.Cyan;
+            string label;
 
-            int cx = x;
-            if (isSelected)
+            if (dbz >= 52)
             {
-                WorldWeatherMapApp.PutVgaCell(cx++, y, (byte)'[', ConsoleColor.Yellow, bg);
+                label = isSelected ? BADGE_STORM_SEL : BADGE_STORM;
+                fg = isSelected ? ConsoleColor.Yellow : ConsoleColor.Red;
+            }
+            else if (dbz >= 44)
+            {
+                label = isSelected ? BADGE_SEVERE_SEL : BADGE_SEVERE;
+                fg = isSelected ? ConsoleColor.Yellow : ConsoleColor.Red;
+            }
+            else if (dbz >= 34)
+            {
+                label = isSelected ? BADGE_HEAVY_SEL : BADGE_HEAVY;
+                fg = ConsoleColor.Yellow;
+            }
+            else if (dbz >= 22)
+            {
+                label = isSelected ? BADGE_MODERATE_SEL : BADGE_MODERATE;
+                fg = isSelected ? ConsoleColor.Yellow : ConsoleColor.Green;
+            }
+            else if (dbz >= 14)
+            {
+                label = isSelected ? BADGE_LIGHT_SEL : BADGE_LIGHT;
+                fg = isSelected ? ConsoleColor.Yellow : ConsoleColor.Cyan;
+            }
+            else
+            {
+                label = isSelected ? BADGE_CLEAR_SEL : BADGE_CLEAR;
+                fg = isSelected ? ConsoleColor.Yellow : ConsoleColor.Green;
             }
 
-            cx = DirectVgaWriteInt(cx, y, dbz, fg, bg);
-            WorldWeatherMapApp.PutVgaCell(cx++, y, (byte)'d', fg, bg);
-            WorldWeatherMapApp.PutVgaCell(cx++, y, (byte)'B', fg, bg);
-            WorldWeatherMapApp.PutVgaCell(cx++, y, (byte)'Z', fg, bg);
-
-            if (isSelected && cx < 80)
-            {
-                WorldWeatherMapApp.PutVgaCell(cx, y, (byte)']', ConsoleColor.Yellow, bg);
-            }
+            WorldWeatherMapApp.DirectVgaWrite(x, y, label, fg, bg);
         }
     }
 }
