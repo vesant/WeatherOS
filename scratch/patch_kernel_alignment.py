@@ -272,16 +272,36 @@ def patch_asm_file(asm_path):
         print("Patched SetMethodInfo assertion to safe jump!")
 
     dah_target = "\t\tSystemVoidCosmosCoreVTablesImplDebugAndHaltSystemString:" + nl
-    dah_repl = "\t\tSystemVoidCosmosCoreVTablesImplDebugAndHaltSystemString:" + nl + "\t\tRet 0x8" + nl
-    if dah_target in content and dah_repl not in content:
+    dah_repl = "\t\tSystemVoidCosmosCoreVTablesImplDebugAndHaltSystemString:" + nl + "\t\tmov ECX, 0x0" + nl + "\t\tRet 0x8" + nl
+    old_dah_repl = "\t\tSystemVoidCosmosCoreVTablesImplDebugAndHaltSystemString:" + nl + "\t\tRet 0x8" + nl
+    if old_dah_repl in content:
+        content = content.replace(old_dah_repl, dah_repl, 1)
+        print("Upgraded DebugAndHalt with mov ECX, 0x0 + Ret 0x8!")
+    elif dah_target in content and dah_repl not in content:
         content = content.replace(dah_target, dah_repl, 1)
-        print("Patched DebugAndHalt with safe Ret 0x8!")
+        print("Patched DebugAndHalt with safe mov ECX, 0x0 + Ret 0x8!")
 
     dss_target = "\t\tSystemVoidCosmosCoreVTablesImplDebugSystemString:" + nl
-    dss_repl = "\t\tSystemVoidCosmosCoreVTablesImplDebugSystemString:" + nl + "\t\tRet 0x8" + nl
-    if dss_target in content and dss_repl not in content:
+    dss_repl = "\t\tSystemVoidCosmosCoreVTablesImplDebugSystemString:" + nl + "\t\tmov ECX, 0x0" + nl + "\t\tRet 0x8" + nl
+    old_dss_repl = "\t\tSystemVoidCosmosCoreVTablesImplDebugSystemString:" + nl + "\t\tRet 0x8" + nl
+    if old_dss_repl in content:
+        content = content.replace(old_dss_repl, dss_repl, 1)
+        print("Upgraded DebugSystemString with mov ECX, 0x0 + Ret 0x8!")
+    elif dss_target in content and dss_repl not in content:
         content = content.replace(dss_target, dss_repl, 1)
-        print("Patched DebugSystemString with safe Ret 0x8!")
+        print("Patched DebugSystemString with safe mov ECX, 0x0 + Ret 0x8!")
+
+    dhx_target = "\t\tSystemVoidCosmosCoreVTablesImplDebugHexSystemStringSystemUInt32:" + nl
+    dhx_repl = "\t\tSystemVoidCosmosCoreVTablesImplDebugHexSystemStringSystemUInt32:" + nl + "\t\tmov ECX, 0x0" + nl + "\t\tRet 0xC" + nl
+    if dhx_target in content and dhx_repl not in content:
+        content = content.replace(dhx_target, dhx_repl, 1)
+        print("Patched DebugHex with safe mov ECX, 0x0 + Ret 0xC!")
+
+    mtypes_target = "\tstatic_field__Cosmos_Core_VTablesImpl_mTypes_Contents:" + nl
+    mtypes_repl = "\talign 16" + nl + "\tstatic_field__Cosmos_Core_VTablesImpl_mTypes_Contents:" + nl
+    if mtypes_target in content and mtypes_repl not in content:
+        content = content.replace(mtypes_target, mtypes_repl, 1)
+        print("Aligned static_field__Cosmos_Core_VTablesImpl_mTypes_Contents to 16 bytes!")
 
     with open(asm_path, "w", encoding="latin-1") as f:
         f.write(content)
