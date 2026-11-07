@@ -46,10 +46,10 @@ namespace WeatherOS.Apps
     /// Dedicated Full-Screen Meteorological Broadcast Mode (80x25, 720x400 VGA)
     /// with 5 Real-Time Multi-Spectral Meteorological Map Layers:
     ///   0: SYNOPTIC ICONS   (18x16 Weather Sprites & Station Temperatures)
-    ///   1: THERMAL HEATMAP  (Continental Isotherms & Temperature Bands in °C)
-    ///   2: PRECIP RADAR     (Doppler Rain, Storm & Cloud Cover Contours)
-    ///   3: WIND STREAMLINES (Directional Wind Velocity Field & Jet Streams in km/h)
-    ///   4: PRESSURE ISOBARS (Barometric High/Low Systems & Isobar Contours in hPa)
+    ///   1: THERMAL HEATMAP  (6-Band Continental Isotherms & Temperature Gradient in °C)
+    ///   2: PRECIP RADAR     (Synoptic Rain Bands, Frontal Showers & Cloud Cover)
+    ///   3: WIND VECTORS     (Directional Wind Velocity Field & Jet Streams in km/h)
+    ///   4: WEATHER RADAR    (Animated 16-Frame Loop NEXRAD Doppler Reflectivity dBZ Sweep)
     /// </summary>
     public class WorldWeatherMapApp : IApp
     {
@@ -58,10 +58,15 @@ namespace WeatherOS.Apps
         public bool IsRealTime => false;
 
         private bool _initialized = false;
-        private int _currentZone = 0;  // 0=Europe, 1=Asia, 2=Americas, 3=Oceania, 4=Africa
-        private int _currentLayer = 0; // 0=Synoptic, 1=Thermal, 2=Radar, 3=Wind, 4=Pressure
+        private int _currentZone = 0;   // 0=Europe, 1=Asia, 2=Americas, 3=Oceania, 4=Africa
+        private int _currentLayer = 0;  // 0=Synoptic, 1=Thermal, 2=Precip, 3=Wind, 4=Weather Radar (Animated Loop)
         private int _selectedStation = 0;
         private string _statusMessage = "";
+
+        // Real-time zero-allocation animation state for Layer 4 (5/5 Weather Radar)
+        private int _radarFrame = 0;
+        private int _animTickCounter = 0;
+        private bool _radarPaused = false;
 
         private GlobalStation[][] _zones;
         private string[][] _continentMaps;
@@ -123,7 +128,7 @@ namespace WeatherOS.Apps
             "2/5 THERMAL HEATMAP",
             "3/5 PRECIP RADAR",
             "4/5 WIND VECTORS",
-            "5/5 PRESSURE ISOBARS"
+            "5/5 WEATHER RADAR"
         };
 
         public WorldWeatherMapApp()
@@ -139,6 +144,7 @@ namespace WeatherOS.Apps
             if (_currentZone < 0 || _currentZone >= 5) _currentZone = 0;
             _selectedStation = 0;
             SyncWithLiveReading(desktop);
+            WorldWeatherMapLayers.InvalidateGrid();
         }
 
         private int DetectContinentIndex(string city)
@@ -187,21 +193,21 @@ namespace WeatherOS.Apps
         {
             _zones = new GlobalStation[5][];
 
-            // 0: EUROPE (Positioned accurately on the 80x22 continental map)
+            // 0: EUROPE (Positioned accurately on the improved 80x22 continental map)
             _zones[0] = new GlobalStation[]
             {
-                new GlobalStation("Lisbon",    "38.72,-9.14",   "Portugal",       "PT", "38.72",  "-9.14",  5, 16,  15, 67, 10, 1018, "Clear"),
+                new GlobalStation("Lisbon",    "38.72,-9.14",   "Portugal",       "PT", "38.72",  "-9.14",  5, 16,  18, 74, 12, 1018, "Partly Cloudy"),
                 new GlobalStation("Madrid",    "40.42,-3.70",   "Spain",          "ES", "40.42",  "-3.70", 12, 15,  16, 49, 11, 1019, "Clear"),
                 new GlobalStation("London",    "51.51,-0.13",   "United Kingdom", "UK", "51.51",  "-0.13", 17,  8,  14, 76, 18, 1014, "Partly Cloudy"),
                 new GlobalStation("Paris",     "48.86,2.35",    "France",         "FR", "48.86",   "2.35", 22, 11,  13, 67, 12, 1016, "Partly Cloudy"),
-                new GlobalStation("Berlin",    "52.52,13.40",   "Germany",        "DE", "52.52",  "13.40", 34,  9,   9, 91, 15, 1011, "Cloudy"),
+                new GlobalStation("Berlin",    "52.52,13.40",   "Germany",        "DE", "52.52",  "13.40", 34,  9,   9, 91, 15, 1011, "Rain"),
                 new GlobalStation("Oslo",      "59.91,10.75",   "Norway",         "NO", "59.91",  "10.75", 33,  4,   6, 88, 14, 1013, "Cloudy"),
-                new GlobalStation("Rome",      "41.90,12.50",   "Italy",          "IT", "41.90",  "12.50", 35, 16,  14, 76, 10, 1017, "Clear"),
+                new GlobalStation("Rome",      "41.90,12.50",   "Italy",          "IT", "41.90",  "12.50", 33, 15,  15, 76, 10, 1017, "Clear"),
                 new GlobalStation("Vienna",    "48.21,16.37",   "Austria",        "AT", "48.21",  "16.37", 40, 12,  11, 79, 12, 1015, "Partly Cloudy"),
-                new GlobalStation("Warsaw",    "52.23,21.01",   "Poland",         "PL", "52.23",  "21.01", 45,  9,  10, 92, 14, 1012, "Cloudy"),
-                new GlobalStation("Athens",    "37.98,23.73",   "Greece",         "GR", "37.98",  "23.73", 48, 17,  15, 80, 12, 1018, "Partly Cloudy"),
-                new GlobalStation("Ankara",    "39.93,32.86",   "Turkey",         "TR", "39.93",  "32.86", 62, 17,  11, 93, 11, 1016, "Partly Cloudy"),
-                new GlobalStation("Moscow",    "55.75,37.62",   "Russia",         "RU", "55.75",  "37.62", 63,  6,   5, 53, 16, 1009, "Partly Cloudy"),
+                new GlobalStation("Warsaw",    "52.23,21.01",   "Poland",         "PL", "52.23",  "21.01", 45,  9,  10, 92, 14, 1010, "Rain"),
+                new GlobalStation("Athens",    "37.98,23.73",   "Greece",         "GR", "37.98",  "23.73", 47, 17,  16, 80, 12, 1018, "Partly Cloudy"),
+                new GlobalStation("Ankara",    "39.93,32.86",   "Turkey",         "TR", "39.93",  "32.86", 62, 16,  11, 93, 14, 1012, "Rain"),
+                new GlobalStation("Moscow",    "55.75,37.62",   "Russia",         "RU", "55.75",  "37.62", 63,  6,   5, 65, 16, 1009, "Cloudy"),
                 new GlobalStation("Rabat",     "34.02,-6.83",   "Morocco",        "MA", "34.02",  "-6.83",  8, 20,  19, 81, 12, 1019, "Partly Cloudy"),
                 new GlobalStation("Algiers",   "36.75,3.06",    "Algeria",        "DZ", "36.75",   "3.06", 22, 20,  20, 60, 11, 1018, "Clear"),
                 new GlobalStation("Cairo",     "30.04,31.24",   "Egypt",          "EG", "30.04",  "31.24", 58, 20,  23, 50, 14, 1017, "Clear")
@@ -214,38 +220,38 @@ namespace WeatherOS.Apps
                 new GlobalStation("Riyadh",    "24.71,46.68",   "Saudi Arabia",   "SA", "24.71",  "46.68", 11, 13,  26, 22, 14, 1015, "Clear"),
                 new GlobalStation("New Delhi", "28.61,77.21",   "India",          "IN", "28.61",  "77.21", 29, 11,  27, 48, 10, 1014, "Clear"),
                 new GlobalStation("Beijing",   "39.90,116.41",  "China",          "CN", "39.90", "116.41", 52,  7,  12, 45, 15, 1018, "Partly Cloudy"),
-                new GlobalStation("Bangkok",   "13.76,100.50",  "Thailand",       "TH", "13.76", "100.50", 44, 14,  29, 78, 12, 1011, "Thunderstorm"),
-                new GlobalStation("Singapore", "1.35,103.82",   "Singapore",      "SG",  "1.35", "103.82", 45, 18,  28, 82, 14, 1010, "Rain"),
-                new GlobalStation("Jakarta",   "-6.21,106.85",  "Indonesia",      "ID", "-6.21", "106.85", 52, 20,  29, 79, 12, 1010, "Rain"),
+                new GlobalStation("Bangkok",   "13.76,100.50",  "Thailand",       "TH", "13.76", "100.50", 44, 14,  29, 88, 16, 1009, "Thunderstorm"),
+                new GlobalStation("Singapore", "1.35,103.82",   "Singapore",      "SG",  "1.35", "103.82", 45, 18,  28, 86, 14, 1010, "Rain"),
+                new GlobalStation("Jakarta",   "-6.21,106.85",  "Indonesia",      "ID", "-6.21", "106.85", 50, 20,  29, 84, 12, 1010, "Rain"),
                 new GlobalStation("Seoul",     "37.57,126.98",  "South Korea",    "KR", "37.57", "126.98", 61,  8,  11, 58, 12, 1019, "Clear"),
-                new GlobalStation("Tokyo",     "35.68,139.65",  "Japan",          "JP", "35.68", "139.65", 70,  9,  15, 60, 14, 1020, "Clear")
+                new GlobalStation("Tokyo",     "35.68,139.65",  "Japan",          "JP", "35.68", "139.65", 70,  9,  16, 60, 14, 1020, "Clear")
             };
 
             // 2: AMERICAS (80x22 full-screen map)
             _zones[2] = new GlobalStation[]
             {
-                new GlobalStation("Ottawa",       "45.42,-75.70",  "Canada",         "CA",  "45.42", "-75.70", 31,  4,   9, 68, 16, 1016, "Cloudy"),
-                new GlobalStation("New York",     "40.71,-74.01",  "United States",  "US",  "40.71", "-74.01", 34,  6,  16, 59, 14, 1015, "Partly Cloudy"),
+                new GlobalStation("Ottawa",       "45.42,-75.70",  "Canada",         "CA",  "45.42", "-75.70", 31,  4,   8, 68, 16, 1016, "Cloudy"),
+                new GlobalStation("New York",     "40.71,-74.01",  "United States",  "US",  "40.71", "-74.01", 34,  6,  15, 59, 14, 1015, "Partly Cloudy"),
                 new GlobalStation("Washington",   "38.91,-77.04",  "United States",  "US",  "38.91", "-77.04", 26,  7,  17, 61, 12, 1016, "Partly Cloudy"),
                 new GlobalStation("Mexico City",  "19.43,-99.13",  "Mexico",         "MX",  "19.43", "-99.13", 19, 10,  21, 52, 10, 1018, "Clear"),
-                new GlobalStation("Havana",       "23.11,-82.37",  "Cuba",           "CU",  "23.11", "-82.37", 34, 10,  27, 76, 18, 1014, "Rain"),
-                new GlobalStation("Bogota",       "4.71,-74.07",   "Colombia",       "CO",   "4.71", "-74.07", 36, 13,  16, 81, 10, 1015, "Rain"),
+                new GlobalStation("Havana",       "23.11,-82.37",  "Cuba",           "CU",  "23.11", "-82.37", 33, 10,  27, 86, 22, 1009, "Thunderstorm"),
+                new GlobalStation("Bogota",       "4.71,-74.07",   "Colombia",       "CO",   "4.71", "-74.07", 36, 13,  16, 84, 10, 1013, "Rain"),
                 new GlobalStation("Lima",         "-12.05,-77.04", "Peru",           "PE", "-12.05", "-77.04", 35, 16,  19, 78, 12, 1014, "Cloudy"),
-                new GlobalStation("Brasilia",     "-15.79,-47.88", "Brazil",         "BR", "-15.79", "-47.88", 49, 16,  25, 64, 12, 1015, "Thunderstorm"),
-                new GlobalStation("Santiago",     "-33.45,-70.67", "Chile",          "CL", "-33.45", "-70.67", 37, 19,  22, 55, 11, 1016, "Clear"),
+                new GlobalStation("Brasilia",     "-15.79,-47.88", "Brazil",         "BR", "-15.79", "-47.88", 49, 16,  25, 85, 14, 1011, "Thunderstorm"),
+                new GlobalStation("Santiago",     "-33.45,-70.67", "Chile",          "CL", "-33.45", "-70.67", 37, 19,  14, 55, 11, 1016, "Clear"),
                 new GlobalStation("Buenos Aires", "-34.60,-58.38", "Argentina",      "AR", "-34.60", "-58.38", 45, 19,  20, 67, 16, 1016, "Partly Cloudy")
             };
 
             // 3: OCEANIA (80x22 full-screen map)
             _zones[3] = new GlobalStation[]
             {
-                new GlobalStation("Jakarta",      "-6.21,106.85",  "Indonesia",      "ID",  "-6.21", "106.85", 12,  3,  29, 79, 12, 1010, "Rain"),
-                new GlobalStation("Port Moresby", "-9.44,147.18",  "Papua N. Guinea","PG",  "-9.44", "147.18", 38,  5,  29, 82, 15, 1011, "Thunderstorm"),
-                new GlobalStation("Sydney",       "-33.87,151.21", "Australia",      "AU", "-33.87", "151.21", 43, 13,  18, 65, 16, 1020, "Partly Cloudy"),
-                new GlobalStation("Canberra",     "-35.28,149.13", "Australia",      "AU", "-35.28", "149.13", 39, 15,  12, 91, 12, 1022, "Clear"),
-                new GlobalStation("Melbourne",    "-37.81,144.96", "Australia",      "AU", "-37.81", "144.96", 31, 16,  13, 72, 15, 1021, "Cloudy"),
-                new GlobalStation("Suva",         "-18.14,178.44", "Fiji",           "FJ", "-18.14", "178.44", 64,  9,  26, 78, 18, 1013, "Rain"),
-                new GlobalStation("Wellington",   "-41.29,174.78", "New Zealand",    "NZ", "-41.29", "174.78", 61, 18,  14, 76, 22, 1014, "Cloudy")
+                new GlobalStation("Jakarta",      "-6.21,106.85",  "Indonesia",      "ID",  "-6.21", "106.85", 12,  3,  29, 84, 12, 1010, "Rain"),
+                new GlobalStation("Port Moresby", "-9.44,147.18",  "Papua N. Guinea","PG",  "-9.44", "147.18", 38,  5,  29, 88, 18, 1009, "Thunderstorm"),
+                new GlobalStation("Sydney",       "-33.87,151.21", "Australia",      "AU", "-33.87", "151.21", 43, 13,  19, 65, 16, 1020, "Partly Cloudy"),
+                new GlobalStation("Canberra",     "-35.28,149.13", "Australia",      "AU", "-35.28", "149.13", 39, 15,  14, 82, 12, 1022, "Clear"),
+                new GlobalStation("Melbourne",    "-37.81,144.96", "Australia",      "AU", "-37.81", "144.96", 31, 16,  11, 74, 15, 1021, "Cloudy"),
+                new GlobalStation("Suva",         "-18.14,178.44", "Fiji",           "FJ", "-18.14", "178.44", 64,  9,  26, 85, 18, 1011, "Rain"),
+                new GlobalStation("Wellington",   "-41.29,174.78", "New Zealand",    "NZ", "-41.29", "174.78", 61, 18,   9, 78, 22, 1014, "Cloudy")
             };
 
             // 4: AFRICA (80x22 full-screen map)
@@ -253,13 +259,13 @@ namespace WeatherOS.Apps
             {
                 new GlobalStation("Rabat",        "34.02,-6.83",   "Morocco",        "MA",  "34.02",  "-6.83", 17,  2,  19, 81, 12, 1019, "Partly Cloudy"),
                 new GlobalStation("Algiers",      "36.75,3.06",    "Algeria",        "DZ",  "36.75",   "3.06", 28,  2,  20, 60, 11, 1018, "Clear"),
-                new GlobalStation("Cairo",        "30.04,31.24",   "Egypt",          "EG",  "30.04",  "31.24", 46,  3,  23, 50, 14, 1017, "Clear"),
+                new GlobalStation("Cairo",        "30.04,31.24",   "Egypt",          "EG",  "30.04",  "31.24", 46,  3,  24, 50, 14, 1017, "Clear"),
                 new GlobalStation("Dakar",        "14.69,-17.44",  "Senegal",        "SN",  "14.69", "-17.44", 12,  7,  29, 74, 18, 1012, "Partly Cloudy"),
-                new GlobalStation("Abuja",        "9.08,7.40",     "Nigeria",        "NG",   "9.08",   "7.40", 28,  9,  28, 78, 10, 1012, "Thunderstorm"),
-                new GlobalStation("Addis Ababa",  "9.03,38.74",    "Ethiopia",       "ET",   "9.03",  "38.74", 50,  9,  19, 58, 12, 1018, "Partly Cloudy"),
-                new GlobalStation("Nairobi",      "-1.29,36.82",   "Kenya",          "KE",  "-1.29",  "36.82", 48, 12,  22, 62, 11, 1016, "Cloudy"),
-                new GlobalStation("Luanda",       "-8.84,13.23",   "Angola",         "AO",  "-8.84",  "13.23", 31, 14,  26, 77, 14, 1014, "Partly Cloudy"),
-                new GlobalStation("Cape Town",    "-33.92,18.42",  "South Africa",   "ZA", "-33.92",  "18.42", 36, 19,  18, 65, 16, 1017, "Clear")
+                new GlobalStation("Abuja",        "9.08,7.40",     "Nigeria",        "NG",   "9.08",   "7.40", 28,  9,  28, 88, 14, 1010, "Thunderstorm"),
+                new GlobalStation("Addis Ababa",  "9.03,38.74",    "Ethiopia",       "ET",   "9.03",  "38.74", 50,  9,  16, 68, 12, 1018, "Partly Cloudy"),
+                new GlobalStation("Nairobi",      "-1.29,36.82",   "Kenya",          "KE",  "-1.29",  "36.82", 48, 12,  21, 76, 11, 1015, "Rain"),
+                new GlobalStation("Luanda",       "-8.84,13.23",   "Angola",         "AO",  "-8.84",  "13.23", 31, 14,  25, 79, 14, 1014, "Partly Cloudy"),
+                new GlobalStation("Cape Town",    "-33.92,18.42",  "South Africa",   "ZA", "-33.92",  "18.42", 36, 19,  13, 65, 16, 1017, "Clear")
             };
         }
 
@@ -267,34 +273,36 @@ namespace WeatherOS.Apps
         {
             _continentMaps = new string[5][];
 
-            // 0: EUROPE
+            // 0: EUROPE (Refined Iberian Peninsula, Gibraltar Strait, Brittany, British Isles,
+            //    Italian Boot + Sicily/Sardinia/Corsica, Adriatic Sea, Greece/Crete, Crimea/Black Sea, Scandinavia)
             _continentMaps[0] = new string[]
             {
-                "                                     ###########            ####################",
-                "    #####                         ###############         ######################",
-                "   #######                       #######|#########      ########################",
-                "    #####                       ^^^^###|####  ######   #########################",
-                "                                ^^^^###|###    ###### ##########################",
-                "                  ###           #####|####     ##### ###########################",
-                "                 #####           ####|###     ###############|##################",
-                "           ###   #####            ###  ##    ################|##################",
-                "          ####  ######                ####  #################|##################",
-                "           ##   ######           #### ###################|###|##################",
-                "                  ####         ######|##########|########|###|##################",
-                "                    #########--######|##########|########|###|##################",
-                "                  #############|#####|#####-----#########|###|##################",
-                "                   ############|#####^^^^^^#####|########|######          ######",
-                "      ##############^^^^#######|####^^^^^^^^####|#########|###              ####",
-                "     ####|###########^^^^##########|#####---########|#######                 ###",
-                "    #####|#############---######### #####  #####  ##|######     ################",
-                "    #####|############     ##    #   ####   ###  ##########   ########^^^^######",
-                "     ####|##########                 ####       ######       #########^^^^######",
-                "      ###########                     ###        ####         ##################",
-                "     ##############################                        #####################",
+                "                                    ############             ###################",
+                "    #####                        ################         ######################",
+                "   #######                      ^^^^###|##########      ########################",
+                "    #####                      ^^^^^###|####  #####    #########################",
+                "                               ^^^^####|###    #####  ##########################",
+                "                  ###          #####|#####     ##### ###########################",
+                "                 #####          ####|####     ###############|##################",
+                "           ###   #####            ##  ###    ################|##################",
+                "          ####  ######               ####   #################|##################",
+                "           ##   ######          ####  ###################|###|##################",
+                "                 #####         ######|##########|########|###|##################",
+                "                ##########---########|##########|########|###|##################",
+                "               ##############|#######|#####-----#########|###|####   ###  ######",
+                "                 ############|######^^^^^^#####|########|#######           #####",
+                "     ###############^^^^#####|#####^^^^^^^^####|#########|#####             ####",
+                "    #####|###########^^^^#########|######---########|#########   ###############",
+                "    #####|############---#########  ####    ####  ##|#######    ########^^^^####",
+                "     ####|##########      ##  ##     ####    ###   ########     ########^^^^####",
+                "      ###########             ##     ###      ####   ####        ###############",
+                "                                     ###       ##    ###                        ",
+                "      ############################                         #####################",
                 "   #############################################################################"
             };
 
-            // 1: ASIA
+            // 1: ASIA (Refined Arabia, Persian Gulf, Indian Subcontinent + Sri Lanka, Himalayas,
+            //    Indochina/Malay Peninsula, Indonesian Archipelago, Taiwan, Korea & Japan)
             _continentMaps[1] = new string[]
             {
                 "           #####################################################################",
@@ -307,21 +315,22 @@ namespace WeatherOS.Apps
                 "  #####^^^#######        ##########|#########^^^^^^^^^^^#####|#######     ##### ",
                 "   ##############         #########|#######^^^^^#############|######     ###### ",
                 "      #####|#####         #########|#####^^^^^^^^^###########|#####     ######  ",
-                "      #####|######      ###########|####^^^^^^^^^^###############       #####   ",
-                "       ####|########   ################|##########|##############        ###    ",
-                "        ###|#########    ##############|##########|#############                ",
-                "         ############      ############|##########|###########                  ",
-                "          ###########        ##########|###   ####|#########      ###           ",
+                "      #####|######    #############|####^^^^^^^^^^###############       #####   ",
+                "       ####|########  #################|##########|##############        ###    ",
+                "        ###|#########   ###############|##########|#############   ##           ",
+                "         ############     #############|##########|###########                  ",
+                "          ###########       ###########|###   ####|#########      ###           ",
                 "           #########          #########       #####|#######       ####          ",
                 "            #######            #######         #####|####          ###          ",
-                "                                #####           #####                           ",
-                "                                 ###   #         ####       ######              ",
-                "                                       #       ######      ########   #####     ",
-                "                                                ##########  ######   #######    ",
-                "                                                      ############              "
+                "                                #####  ##       #####                           ",
+                "                                 ###   ##        ####       ######              ",
+                "                                                  ####     ########   #####     ",
+                "                                                #########   ######   #######    ",
+                "                                                  #############                 "
             };
 
-            // 2: AMERICAS
+            // 2: AMERICAS (Refined North America, Hudson Bay, Florida, Gulf of Mexico,
+            //    Cuba/Antilles, Central American Isthmus, Andes Spine & South American Cone)
             _continentMaps[2] = new string[]
             {
                 "     #############        ########################             ############     ",
@@ -332,13 +341,13 @@ namespace WeatherOS.Apps
                 "           ^^^^^################|###################                            ",
                 "            ^^^^^^##############|#################                              ",
                 "             ^^^^^^###############################                              ",
-                "              ^^^^^############################                                 ",
-                "               ^^^^############       ####                                      ",
-                "                 ^^^^#########          ######    #####                         ",
-                "                   ^^^########                     ###                          ",
-                "                      #########       #############                             ",
-                "                         #######    #################                           ",
-                "                           ###### ^^^^###################                       ",
+                "              ^^^^^##########################                                   ",
+                "               ^^^^###########       ###                                        ",
+                "                 ^^^^########         #   ######  #####                         ",
+                "                   ^^^#######                      ###                          ",
+                "                      ########        #############                             ",
+                "                        ########    #################                           ",
+                "                          ####### ^^^^###################                       ",
                 "                                 ^^^^^##|####################                   ",
                 "                                 ^^^^###|######################                 ",
                 "                                  ^^^###|#####################                  ",
@@ -348,7 +357,8 @@ namespace WeatherOS.Apps
                 "                                     ^^^|#######                                "
             };
 
-            // 3: OCEANIA
+            // 3: OCEANIA (Refined Indonesian Arc, New Guinea, Australia with Gulf of Carpentaria,
+            //    Great Australian Bight, Tasmania, Fiji & New Zealand North/South Islands)
             _continentMaps[3] = new string[]
             {
                 "                                                                                ",
@@ -358,28 +368,29 @@ namespace WeatherOS.Apps
                 "          ###########                ###############                            ",
                 "                       #####          ##############                            ",
                 "                                        ##########                              ",
-                "                        #######    #####                                        ",
-                "                     ###########  #######                      #####            ",
-                "                  ########################                    #######           ",
-                "                ############################                   #####            ",
+                "                       ########    #####                                        ",
+                "                    ############  #######                     #####             ",
+                "                  ########################                   #######            ",
+                "                ############################                  #####             ",
                 "               ##############################                                   ",
                 "              ####################|###########                                  ",
                 "              ####################|###########                                  ",
                 "               ###################|##########                                   ",
-                "                #########^^^^#####|#########                     ####           ",
-                "                 #######      ####|########                     ######          ",
-                "                                 #########                    ########          ",
-                "                                   #####                     ########           ",
-                "                                   #####                    #######             ",
-                "                                                            #####               ",
+                "                ########^^^^^#####|#########                     ####           ",
+                "                 ######       ####|########                     ######          ",
+                "                                  ########                    ########          ",
+                "                                  ####                        #######           ",
+                "                                                              ######            ",
+                "                                                             #####              ",
                 "                                                                                "
             };
 
-            // 4: AFRICA
+            // 4: AFRICA (Refined Atlas Mountains, Red Sea, Horn of Africa, Gulf of Guinea,
+            //    East African Highlands, Cape Peninsula & Madagascar)
             _continentMaps[4] = new string[]
             {
                 "                #########################                                       ",
-                "             ###############################      ###########                   ",
+                "             ######^^^^^####################      ###########                   ",
                 "           ##########|############|##########   ###############                 ",
                 "          ###########|############|############################                 ",
                 "         ############|############|############################                 ",
@@ -483,13 +494,18 @@ namespace WeatherOS.Apps
                 gcIdx.Byte  = 0x05; gcData.Byte  = origGc5;
                 gcIdx.Byte  = 0x06; gcData.Byte  = origGc6;
 
-                // 6. Program Authentic Television Broadcast RGB Palette (6-bit DAC values 0..63)
-                SetDacColor(dacWrite, dacData, 1,  6, 19, 35); // DarkBlue: Deep Ocean Blue
-                SetDacColor(dacWrite, dacData, 2, 17, 31, 11); // DarkGreen: Continental Landmass Green
-                SetDacColor(dacWrite, dacData, 3,  5, 23, 30); // DarkCyan: Broadcast HUD / Highlight Pill
-                SetDacColor(dacWrite, dacData, 58, 30, 35, 13); // Green: Topographical Olive / Mild Layer
-                SetDacColor(dacWrite, dacData, 59, 20, 50, 63); // Cyan: Rain / Cold Layer Cyan
-                SetDacColor(dacWrite, dacData, 62, 63, 56,  6); // Yellow: Radiant Broadcast Sun / Warm Layer
+                // 6. Program Authentic Television Broadcast & NEXRAD Doppler RGB Palette (6-bit DAC values 0..63)
+                SetDacColor(dacWrite, dacData,  1,  6, 18, 34); // DarkBlue: Deep Ocean & Radar Base Blue
+                SetDacColor(dacWrite, dacData,  2, 14, 28, 10); // DarkGreen: Continental Landmass Forest Green
+                SetDacColor(dacWrite, dacData,  3,  5, 23, 30); // DarkCyan: Broadcast HUD / Cold Isotherm Band
+                SetDacColor(dacWrite, dacData,  4, 48, 10,  8); // DarkRed: Hot Thermal Core / Doppler 55dBZ Crimson
+                SetDacColor(dacWrite, dacData, 20, 52, 28,  4); // DarkYellow (EGA 6->20): Warm Amber / Doppler 42dBZ Orange
+                SetDacColor(dacWrite, dacData, 57, 22, 34, 63); // Blue: NEXRAD Outer Virga 15dBZ Indigo-Blue
+                SetDacColor(dacWrite, dacData, 58, 26, 56, 18); // Green: Vibrant NEXRAD 30dBZ Lime / Temperate Isotherm
+                SetDacColor(dacWrite, dacData, 59, 20, 52, 63); // Cyan: Rain / Frost Cyan
+                SetDacColor(dacWrite, dacData, 60, 63, 14, 10); // Red: Intense NEXRAD Storm Core Red
+                SetDacColor(dacWrite, dacData, 61, 63, 24, 58); // Magenta: NEXRAD 62dBZ Hail Core Magenta
+                SetDacColor(dacWrite, dacData, 62, 63, 56,  6); // Yellow: Radiant Broadcast Sun / 40dBZ Gold
                 SetDacColor(dacWrite, dacData, 63, 63, 63, 63); // White: Pure Cloud & Telemetry White
 
                 _vgaCustomActive = true;
@@ -674,6 +690,65 @@ namespace WeatherOS.Apps
         }
 
         // =====================================================================
+        // REAL-TIME ZERO-ALLOCATION ANIMATION ENGINE (FOR LAYER 5: WEATHER RADAR)
+        // =====================================================================
+
+        /// <summary>
+        /// Called every 15ms from TuiDesktop's non-blocking wait loop when WorldWeatherMapApp is active
+        /// and the Main Commands modal is closed. Allocates 0 bytes on the managed heap.
+        /// </summary>
+        public void TickAnimation()
+        {
+            if (_currentLayer != 4 || _radarPaused) return;
+
+            _animTickCounter++;
+            if (_animTickCounter < 12) return; // 12 * 15ms = 180ms (~5.5 FPS smooth radar sweep)
+            _animTickCounter = 0;
+
+            _radarFrame = (_radarFrame + 1) & 15;
+            RenderWeatherRadarFrameZeroAlloc();
+        }
+
+        /// <summary>
+        /// Redraws only the animated Doppler Radar canvas, station dBZ badges, and frame counter digits
+        /// directly into 0xB8000 with ZERO string or object allocations.
+        /// </summary>
+        private void RenderWeatherRadarFrameZeroAlloc()
+        {
+            if (_zones == null || _currentZone < 0 || _currentZone >= _zones.Length) return;
+            GlobalStation[] stations = _zones[_currentZone];
+            string[] map = _continentMaps[_currentZone];
+            if (stations == null || map == null) return;
+
+            for (int my = 0; my < 22; my++)
+            {
+                int screenY = 1 + my;
+                for (int mx = 0; mx < 80; mx++)
+                {
+                    WorldWeatherMapLayers.RenderDopplerRadarCell(
+                        _currentZone, stations, map, mx, my, screenY, _radarFrame,
+                        GLYPH_COAST_NW, GLYPH_COAST_NE, GLYPH_COAST_SW, GLYPH_COAST_SE,
+                        GLYPH_COAST_NORTH, GLYPH_COAST_SOUTH, GLYPH_COAST_WEST, GLYPH_COAST_EAST,
+                        GLYPH_ISLAND);
+                }
+            }
+
+            // Draw non-selected station dBZ badges, then selected station badge on top (zero-alloc)
+            for (int i = 0; i < stations.Length; i++)
+            {
+                if (i == _selectedStation) continue;
+                WorldWeatherMapLayers.DrawRadarStationBadgeZeroAlloc(_currentZone, stations, i, false, _radarFrame);
+            }
+            if (_selectedStation >= 0 && _selectedStation < stations.Length)
+            {
+                WorldWeatherMapLayers.DrawRadarStationBadgeZeroAlloc(_currentZone, stations, _selectedStation, true, _radarFrame);
+            }
+
+            // Redraw the Row 22 Doppler Radar Legend & Frame Counter (zero-alloc)
+            DrawRadarLegendZeroAlloc();
+        }
+
+        // =====================================================================
         // FULL-SCREEN 80x25 BROADCAST & METEOROLOGICAL LAYER RENDERER
         // =====================================================================
 
@@ -694,8 +769,10 @@ namespace WeatherOS.Apps
             if (stations == null || stations.Length == 0) return;
             if (_selectedStation < 0 || _selectedStation >= stations.Length) _selectedStation = 0;
 
+            WorldWeatherMapLayers.EnsureGridComputed(_currentZone, stations);
+
             // Row 0: Full-Screen World Weather Map Top Bar (80 columns)
-            string topBar = " WORLD WEATHER MAP | SECTOR: [" + ZoneNames[_currentZone] + "] | LAYER: [" + LayerNames[_currentLayer] + "] | [F1] Main";
+            string topBar = " WORLD WEATHER MAP | SECTOR: [" + ZoneNames[_currentZone] + "] | LAYER: [" + LayerNames[_currentLayer] + "]";
             WriteFullRow(0, topBar, ConsoleColor.White, ConsoleColor.DarkCyan);
 
             // Rows 1..22: Full-Screen 80x22 Continental Map + Active Meteorological Layer Field
@@ -738,6 +815,7 @@ namespace WeatherOS.Apps
                                 _zones[z][i].Pressure = (int)cur.PressureHpa;
                                 _zones[z][i].Condition = cur.Condition;
                                 _zones[z][i].IsLive = true;
+                                WorldWeatherMapLayers.InvalidateGrid();
                                 return;
                             }
                         }
@@ -756,62 +834,6 @@ namespace WeatherOS.Apps
             return c != ' ';
         }
 
-        // Spatial Inverse-Distance Weighting (IDW) interpolation across continental stations
-        private void InterpolateTelemetryAt(GlobalStation[] stations, int mx, int my,
-            out int interpTemp, out int interpHum, out int interpWind, out int interpPress,
-            out int nearestDistSq, out int nearestIdx)
-        {
-            long numTemp = 0, numHum = 0, numWind = 0, numPress = 0, denWeight = 0;
-            nearestDistSq = 999999;
-            nearestIdx = 0;
-
-            for (int i = 0; i < stations.Length; i++)
-            {
-                int dx = mx - stations[i].MapX;
-                int dy = (my - stations[i].MapY) * 2; // Aspect ratio correction for 8x16 cells
-                int d2 = dx * dx + dy * dy;
-                if (d2 < nearestDistSq)
-                {
-                    nearestDistSq = d2;
-                    nearestIdx = i;
-                }
-                if (d2 <= 1)
-                {
-                    interpTemp = stations[i].TempC;
-                    interpHum = stations[i].Humidity;
-                    interpWind = stations[i].WindKmh;
-                    interpPress = stations[i].Pressure;
-                    return;
-                }
-
-                // Weight = 10000 / (d2 + 8)
-                long w = 10000 / (d2 + 8);
-                if (w < 1) w = 1;
-                numTemp += stations[i].TempC * w;
-                numHum += stations[i].Humidity * w;
-                numWind += stations[i].WindKmh * w;
-                numPress += stations[i].Pressure * w;
-                denWeight += w;
-            }
-
-            if (denWeight <= 0) denWeight = 1;
-            interpTemp = (int)(numTemp / denWeight);
-            interpHum = (int)(numHum / denWeight);
-            interpWind = (int)(numWind / denWeight);
-            interpPress = (int)(numPress / denWeight);
-        }
-
-        private int GetStationPrecipScore(GlobalStation st)
-        {
-            string c = (st.Condition ?? "").ToLower();
-            if (c.Contains("thunder") || c.Contains("storm")) return 4;
-            if (c.Contains("rain") || c.Contains("shower") || c.Contains("drizzle")) return 3;
-            if (c.Contains("snow") || c.Contains("sleet")) return 3;
-            if (c.Contains("cloud") || c.Contains("overcast") || c.Contains("fog") || st.Humidity >= 80) return 2;
-            if (c.Contains("part") || st.Humidity >= 68) return 1;
-            return 0;
-        }
-
         private void DrawContinentMapFullScreen(GlobalStation[] stations)
         {
             string[] map = _continentMaps[_currentZone];
@@ -824,39 +846,37 @@ namespace WeatherOS.Apps
 
                 for (int mx = 0; mx < 80; mx++)
                 {
+                    // Layer 4 (5/5 Weather Radar) uses its own full-canvas NEXRAD Doppler sweep renderer
+                    if (_currentLayer == 4)
+                    {
+                        WorldWeatherMapLayers.RenderDopplerRadarCell(
+                            _currentZone, stations, map, mx, my, screenY, _radarFrame,
+                            GLYPH_COAST_NW, GLYPH_COAST_NE, GLYPH_COAST_SW, GLYPH_COAST_SE,
+                            GLYPH_COAST_NORTH, GLYPH_COAST_SOUTH, GLYPH_COAST_WEST, GLYPH_COAST_EAST,
+                            GLYPH_ISLAND);
+                        continue;
+                    }
+
                     char c = (mx < line.Length) ? line[mx] : ' ';
 
                     if (c == ' ')
                     {
-                        // Ocean cell: in Layer 2 (Radar), Layer 3 (Wind), or Layer 4 (Pressure),
-                        // allow coastal/marine weather overlays near active stations
-                        if (_currentLayer != 0 && stations != null && stations.Length > 0)
+                        if (_currentLayer == 1)
                         {
-                            int t, h, w, p, nearDistSq, nearIdx;
-                            InterpolateTelemetryAt(stations, mx, my, out t, out h, out w, out p, out nearDistSq, out nearIdx);
-
-                            if (_currentLayer == 2 && nearDistSq <= 85)
-                            {
-                                int pScore = GetStationPrecipScore(stations[nearIdx]);
-                                if (pScore >= 3 && nearDistSq <= 45 && ((mx + my) % 2 == 0))
-                                {
-                                    PutVgaCell(mx, screenY, (byte)'/', ConsoleColor.Cyan, ConsoleColor.DarkBlue);
-                                    continue;
-                                }
-                            }
-                            else if (_currentLayer == 3 && ((mx + my * 3) % 7 == 0))
-                            {
-                                PutVgaCell(mx, screenY, (byte)'~', ConsoleColor.Cyan, ConsoleColor.DarkBlue);
-                                continue;
-                            }
-                            else if (_currentLayer == 4 && (p == 1012 || p == 1015 || p == 1018) && ((mx + my) % 3 == 0))
-                            {
-                                PutVgaCell(mx, screenY, (byte)'.', ConsoleColor.Cyan, ConsoleColor.DarkBlue);
-                                continue;
-                            }
+                            WorldWeatherMapLayers.RenderThermalCell(_currentZone, stations, mx, my, screenY, false);
                         }
-
-                        PutVgaCell(mx, screenY, (byte)' ', ConsoleColor.DarkBlue, ConsoleColor.DarkBlue);
+                        else if (_currentLayer == 2)
+                        {
+                            WorldWeatherMapLayers.RenderPrecipCell(_currentZone, stations, mx, my, screenY, false);
+                        }
+                        else if (_currentLayer == 3)
+                        {
+                            WorldWeatherMapLayers.RenderWindCell(_currentZone, stations, mx, my, screenY, false);
+                        }
+                        else
+                        {
+                            PutVgaCell(mx, screenY, (byte)' ', ConsoleColor.DarkBlue, ConsoleColor.DarkBlue);
+                        }
                         continue;
                     }
 
@@ -866,48 +886,53 @@ namespace WeatherOS.Apps
                     bool leftLand  = IsLandCell(map, mx - 1, my);
                     bool rightLand = IsLandCell(map, mx + 1, my);
 
+                    // In Layer 1 (Thermal Heatmap), color coastal bevels with the local thermal band color
+                    // so peninsulas (Italy, Greece, Iberia, UK, Japan) display the full thermal gradient!
+                    ConsoleColor coastFg = (_currentLayer == 1)
+                        ? WorldWeatherMapLayers.GetThermalCoastColor(_currentZone, stations, mx, my)
+                        : ConsoleColor.DarkGreen;
+
                     if (!upLand && !leftLand && downLand && rightLand)
                     {
-                        PutVgaCell(mx, screenY, GLYPH_COAST_NW, ConsoleColor.DarkGreen, ConsoleColor.DarkBlue);
+                        PutVgaCell(mx, screenY, GLYPH_COAST_NW, coastFg, ConsoleColor.DarkBlue);
                     }
                     else if (!upLand && !rightLand && downLand && leftLand)
                     {
-                        PutVgaCell(mx, screenY, GLYPH_COAST_NE, ConsoleColor.DarkGreen, ConsoleColor.DarkBlue);
+                        PutVgaCell(mx, screenY, GLYPH_COAST_NE, coastFg, ConsoleColor.DarkBlue);
                     }
                     else if (!downLand && !leftLand && upLand && rightLand)
                     {
-                        PutVgaCell(mx, screenY, GLYPH_COAST_SW, ConsoleColor.DarkGreen, ConsoleColor.DarkBlue);
+                        PutVgaCell(mx, screenY, GLYPH_COAST_SW, coastFg, ConsoleColor.DarkBlue);
                     }
                     else if (!downLand && !rightLand && upLand && leftLand)
                     {
-                        PutVgaCell(mx, screenY, GLYPH_COAST_SE, ConsoleColor.DarkGreen, ConsoleColor.DarkBlue);
+                        PutVgaCell(mx, screenY, GLYPH_COAST_SE, coastFg, ConsoleColor.DarkBlue);
                     }
                     else if (!upLand && !downLand && !leftLand && !rightLand)
                     {
-                        PutVgaCell(mx, screenY, GLYPH_ISLAND, ConsoleColor.DarkGreen, ConsoleColor.DarkBlue);
+                        PutVgaCell(mx, screenY, GLYPH_ISLAND, coastFg, ConsoleColor.DarkBlue);
                     }
                     else if (!upLand && downLand && leftLand && rightLand)
                     {
-                        PutVgaCell(mx, screenY, GLYPH_COAST_NORTH, ConsoleColor.DarkGreen, ConsoleColor.DarkBlue);
+                        PutVgaCell(mx, screenY, GLYPH_COAST_NORTH, coastFg, ConsoleColor.DarkBlue);
                     }
                     else if (!downLand && upLand && leftLand && rightLand)
                     {
-                        PutVgaCell(mx, screenY, GLYPH_COAST_SOUTH, ConsoleColor.DarkGreen, ConsoleColor.DarkBlue);
+                        PutVgaCell(mx, screenY, GLYPH_COAST_SOUTH, coastFg, ConsoleColor.DarkBlue);
                     }
                     else if (!leftLand && rightLand && upLand && downLand)
                     {
-                        PutVgaCell(mx, screenY, GLYPH_COAST_WEST, ConsoleColor.DarkGreen, ConsoleColor.DarkBlue);
+                        PutVgaCell(mx, screenY, GLYPH_COAST_WEST, coastFg, ConsoleColor.DarkBlue);
                     }
                     else if (!rightLand && leftLand && upLand && downLand)
                     {
-                        PutVgaCell(mx, screenY, GLYPH_COAST_EAST, ConsoleColor.DarkGreen, ConsoleColor.DarkBlue);
+                        PutVgaCell(mx, screenY, GLYPH_COAST_EAST, coastFg, ConsoleColor.DarkBlue);
                     }
                     else
                     {
-                        // Interior Continental Landmass: Render according to Active Meteorological Layer!
+                        // Interior Continental Landmass: Render according to Active Meteorological Layer
                         if (_currentLayer == 0)
                         {
-                            // Layer 0: Standard Synoptic Relief & Borders
                             if (c == '^')
                                 PutVgaCell(mx, screenY, GLYPH_HIGHLAND, ConsoleColor.Green, ConsoleColor.DarkGreen);
                             else if (c == '-')
@@ -917,124 +942,19 @@ namespace WeatherOS.Apps
                             else
                                 PutVgaCell(mx, screenY, (byte)' ', ConsoleColor.DarkGreen, ConsoleColor.DarkGreen);
                         }
-                        else
+                        else if (_currentLayer == 1)
                         {
-                            DrawInteriorLayerCell(stations, mx, my, screenY, c);
+                            WorldWeatherMapLayers.RenderThermalCell(_currentZone, stations, mx, my, screenY, true);
+                        }
+                        else if (_currentLayer == 2)
+                        {
+                            WorldWeatherMapLayers.RenderPrecipCell(_currentZone, stations, mx, my, screenY, true);
+                        }
+                        else if (_currentLayer == 3)
+                        {
+                            WorldWeatherMapLayers.RenderWindCell(_currentZone, stations, mx, my, screenY, true);
                         }
                     }
-                }
-            }
-        }
-
-        private void DrawInteriorLayerCell(GlobalStation[] stations, int mx, int my, int screenY, char terrainChar)
-        {
-            int t, h, w, p, nearDistSq, nearIdx;
-            InterpolateTelemetryAt(stations, mx, my, out t, out h, out w, out p, out nearDistSq, out nearIdx);
-
-            if (_currentLayer == 1)
-            {
-                // LAYER 1: THERMAL / TEMPERATURE HEATMAP (Isotherms & Thermal Bands)
-                if (t >= 26)
-                {
-                    // Hot Zone (>= 26C): Intense Red/Yellow Thermal Pattern
-                    byte g = ((mx + my) % 2 == 0) ? (byte)'*' : (byte)'+';
-                    PutVgaCell(mx, screenY, g, ConsoleColor.Red, ConsoleColor.DarkGreen);
-                }
-                else if (t >= 19)
-                {
-                    // Warm Zone (19..25C): Radiant Yellow Isotherm Shading
-                    byte g = ((mx + my) % 2 == 0) ? (byte)'=' : (byte)'~';
-                    PutVgaCell(mx, screenY, g, ConsoleColor.Yellow, ConsoleColor.DarkGreen);
-                }
-                else if (t >= 11)
-                {
-                    // Mild Zone (11..18C): Lush Green / Olive Isotherm Stipple
-                    PutVgaCell(mx, screenY, GLYPH_HIGHLAND, ConsoleColor.Green, ConsoleColor.DarkGreen);
-                }
-                else
-                {
-                    // Cold Zone (<= 10C): Cyan / Frost Thermal Band
-                    byte g = ((mx + my) % 2 == 0) ? (byte)':' : (byte)'.';
-                    PutVgaCell(mx, screenY, g, ConsoleColor.Cyan, ConsoleColor.DarkGreen);
-                }
-            }
-            else if (_currentLayer == 2)
-            {
-                // LAYER 2: DOPPLER PRECIPITATION & STORM RADAR
-                int nearScore = GetStationPrecipScore(stations[nearIdx]);
-                if (nearScore == 4 && nearDistSq <= 65)
-                {
-                    // Severe Storm Core Radar Echo
-                    byte g = (nearDistSq <= 24) ? (byte)'*' : (byte)'/';
-                    ConsoleColor fg = (nearDistSq <= 24) ? ConsoleColor.Yellow : ConsoleColor.Cyan;
-                    PutVgaCell(mx, screenY, g, fg, ConsoleColor.DarkGreen);
-                }
-                else if (nearScore >= 3 && nearDistSq <= 80)
-                {
-                    // Active Rain Shower Radar Echo
-                    byte g = (nearDistSq <= 35) ? (byte)'/' : (byte)':';
-                    PutVgaCell(mx, screenY, g, ConsoleColor.Cyan, ConsoleColor.DarkGreen);
-                }
-                else if (h >= 75 || nearScore == 2)
-                {
-                    // Cloud Cover / High Moisture Field
-                    byte g = ((mx + my) % 2 == 0) ? (byte)'.' : (byte)' ';
-                    PutVgaCell(mx, screenY, g, ConsoleColor.White, ConsoleColor.DarkGreen);
-                }
-                else
-                {
-                    // Clear Sky Sector
-                    PutVgaCell(mx, screenY, (byte)' ', ConsoleColor.DarkGreen, ConsoleColor.DarkGreen);
-                }
-            }
-            else if (_currentLayer == 3)
-            {
-                // LAYER 3: WIND VELOCITY & STREAMLINE VECTORS
-                bool isStreamCell = ((mx + my * 2) % 3 == 0);
-                if (!isStreamCell)
-                {
-                    PutVgaCell(mx, screenY, (byte)' ', ConsoleColor.DarkGreen, ConsoleColor.DarkGreen);
-                    return;
-                }
-
-                if (w >= 16)
-                {
-                    // High-Velocity Wind Jet (>= 16 km/h)
-                    byte g = (mx % 2 == 0) ? (byte)'>' : (byte)'=';
-                    PutVgaCell(mx, screenY, g, ConsoleColor.Yellow, ConsoleColor.DarkGreen);
-                }
-                else if (w >= 12)
-                {
-                    // Moderate Synoptic Breeze (12..15 km/h)
-                    byte g = (mx % 2 == 0) ? (byte)'~' : (byte)'>';
-                    PutVgaCell(mx, screenY, g, ConsoleColor.Cyan, ConsoleColor.DarkGreen);
-                }
-                else
-                {
-                    // Light Continental Flow (< 12 km/h)
-                    PutVgaCell(mx, screenY, (byte)'-', ConsoleColor.Green, ConsoleColor.DarkGreen);
-                }
-            }
-            else if (_currentLayer == 4)
-            {
-                // LAYER 4: BAROMETRIC PRESSURE & ISOBARS (hPa)
-                if (p == 1011 || p == 1013 || p == 1015 || p == 1017 || p == 1019)
-                {
-                    // Synoptic Isobar Contour Line
-                    ConsoleColor isoCol = (p >= 1017) ? ConsoleColor.Cyan : (p <= 1013 ? ConsoleColor.Yellow : ConsoleColor.White);
-                    PutVgaCell(mx, screenY, (byte)'~', isoCol, ConsoleColor.DarkGreen);
-                }
-                else if (p >= 1018 && ((mx + my) % 4 == 0))
-                {
-                    PutVgaCell(mx, screenY, (byte)'+', ConsoleColor.Cyan, ConsoleColor.DarkGreen);
-                }
-                else if (p <= 1012 && ((mx + my) % 4 == 0))
-                {
-                    PutVgaCell(mx, screenY, (byte)'-', ConsoleColor.Yellow, ConsoleColor.DarkGreen);
-                }
-                else
-                {
-                    PutVgaCell(mx, screenY, (byte)' ', ConsoleColor.DarkGreen, ConsoleColor.DarkGreen);
                 }
             }
         }
@@ -1046,62 +966,65 @@ namespace WeatherOS.Apps
             for (int i = 0; i < stations.Length; i++)
             {
                 if (i == _selectedStation) continue;
-                DrawStationOverlay(stations[i], false);
+                DrawStationOverlay(stations, i, false);
             }
 
             if (_selectedStation >= 0 && _selectedStation < stations.Length)
             {
-                DrawStationOverlay(stations[_selectedStation], true);
+                DrawStationOverlay(stations, _selectedStation, true);
             }
         }
 
-        private void DrawStationOverlay(GlobalStation st, bool isSelected)
+        private void DrawStationOverlay(GlobalStation[] stations, int stationIdx, bool isSelected)
         {
+            GlobalStation st = stations[stationIdx];
+
             if (_currentLayer == 0)
             {
                 DrawStationSpriteAndTemp(st, isSelected);
                 return;
             }
 
+            if (_currentLayer == 4)
+            {
+                WorldWeatherMapLayers.DrawRadarStationBadgeZeroAlloc(_currentZone, stations, stationIdx, isSelected, _radarFrame);
+                return;
+            }
+
             int x = st.MapX;
             int y = 1 + st.MapY;
-            if (y < 1 || y > 22 || x < 0 || x >= 74) return;
+            if (y < 1 || y > 22 || x < 0 || x >= 73) return;
 
             string badge;
             ConsoleColor fg;
-            ConsoleColor bg = isSelected ? ConsoleColor.DarkCyan : ConsoleColor.DarkGreen;
+            // High-contrast dark badge pill so station values are 100% readable over any dithered layer
+            ConsoleColor bg = isSelected ? ConsoleColor.DarkCyan : ConsoleColor.Black;
 
             if (_currentLayer == 1)
             {
                 // Thermal Layer: Show Temperature with Cold/Mild/Warm/Hot color coding
                 badge = st.TempC + "ºC";
                 if (isSelected) fg = ConsoleColor.Yellow;
-                else if (st.TempC >= 26) fg = ConsoleColor.Red;
-                else if (st.TempC >= 19) fg = ConsoleColor.Yellow;
-                else if (st.TempC <= 10) fg = ConsoleColor.Cyan;
-                else fg = ConsoleColor.White;
+                else if (st.TempC >= 21) fg = ConsoleColor.Red;
+                else if (st.TempC >= 15) fg = ConsoleColor.Yellow;
+                else if (st.TempC >= 11) fg = ConsoleColor.Green;
+                else fg = ConsoleColor.Cyan;
             }
             else if (_currentLayer == 2)
             {
-                // Radar Layer: Show Precipitation Type + Humidity %
-                int pScore = GetStationPrecipScore(st);
-                if (pScore == 4) { badge = "STRM " + st.Humidity + "%"; fg = ConsoleColor.Yellow; }
+                // Precip Radar Layer: Show Precipitation Tier + Relative Humidity %
+                int pScore = WorldWeatherMapLayers.GetStationPrecipScore(st);
+                if (pScore == 4)      { badge = "STRM " + st.Humidity + "%"; fg = ConsoleColor.Yellow; }
                 else if (pScore == 3) { badge = "RAIN " + st.Humidity + "%"; fg = ConsoleColor.Cyan; }
-                else if (pScore == 2) { badge = "CLD " + st.Humidity + "%"; fg = ConsoleColor.White; }
-                else { badge = "DRY " + st.Humidity + "%"; fg = isSelected ? ConsoleColor.Yellow : ConsoleColor.Green; }
-            }
-            else if (_currentLayer == 3)
-            {
-                // Wind Layer: Show Wind Vector Arrow + Speed in km/h
-                badge = ">>" + st.WindKmh + "kmh";
-                fg = isSelected ? ConsoleColor.Yellow : (st.WindKmh >= 16 ? ConsoleColor.Yellow : ConsoleColor.Cyan);
+                else if (pScore == 2) { badge = "OVC "  + st.Humidity + "%"; fg = ConsoleColor.White; }
+                else if (pScore == 1) { badge = "CLD "  + st.Humidity + "%"; fg = ConsoleColor.Green; }
+                else                  { badge = "DRY "  + st.Humidity + "%"; fg = isSelected ? ConsoleColor.Yellow : ConsoleColor.Green; }
             }
             else
             {
-                // Pressure Layer: Show High/Low Center Badge (H / L) + hPa
-                string sysType = st.Pressure >= 1017 ? "H:" : (st.Pressure <= 1013 ? "L:" : "P:");
-                badge = sysType + st.Pressure;
-                fg = isSelected ? ConsoleColor.Yellow : (st.Pressure >= 1017 ? ConsoleColor.Cyan : (st.Pressure <= 1013 ? ConsoleColor.Yellow : ConsoleColor.White));
+                // Wind Layer: Show Wind Vector Arrow + Speed in km/h
+                badge = ">>" + st.WindKmh + "kmh";
+                fg = isSelected ? ConsoleColor.Yellow : (st.WindKmh >= 15 ? ConsoleColor.Yellow : ConsoleColor.Cyan);
             }
 
             if (isSelected)
@@ -1135,51 +1058,77 @@ namespace WeatherOS.Apps
             PutVgaCell(curX,     y, glyphL, colorL, bg);
             PutVgaCell(curX + 1, y, glyphR, colorR, bg);
 
-            string tempStr = st.TempC.ToString();
-            int tx = curX + 2;
-            for (int i = 0; i < tempStr.Length && (tx + i) < 79; i++)
+            int nextX = WorldWeatherMapLayers.DirectVgaWriteInt(curX + 2, y, st.TempC, tempFg, bg);
+            if (nextX < 79)
             {
-                PutVgaCell(tx + i, y, (byte)tempStr[i], tempFg, bg);
-            }
-            int degX = tx + tempStr.Length;
-            if (degX < 79)
-            {
-                PutVgaCell(degX, y, 0xF8, tempFg, bg);
+                PutVgaCell(nextX, y, 0xF8, tempFg, bg);
             }
 
-            if (isSelected && (degX + 1) < 80)
+            if (isSelected && (nextX + 1) < 80)
             {
-                PutVgaCell(degX + 1, y, (byte)']', ConsoleColor.Yellow, bg);
+                PutVgaCell(nextX + 1, y, (byte)']', ConsoleColor.Yellow, bg);
             }
         }
 
         private void DrawActiveLayerLegend()
         {
-            string legend;
             if (_currentLayer == 0)
             {
-                legend = " LAYER 1: SYNOPTIC ICONS & TEMP (Press [L] to change layer) ";
+                const string leg0 = " SYNOPTIC OVERVIEW: [Sun]Clear  [Part]Partly  [Cloud]Cloudy  [Rain]Showers ";
+                int sx = 80 - leg0.Length;
+                DirectVgaWrite(sx, 22, leg0, ConsoleColor.White, ConsoleColor.DarkCyan);
             }
             else if (_currentLayer == 1)
             {
-                legend = " THERMAL SCALE: [:]<=10C Cold  [#]11-18C Mild  [=]19-25C Warm  [*]>=26C Hot ";
+                const string leg1 = " THERMAL SCALE: [ ]<=7C [ ]8-10C [ ]11-13C [ ]14-16C [ ]17-20C [ ]>=21C Hot ";
+                int sx = 80 - leg1.Length;
+                DirectVgaWrite(sx, 22, leg1, ConsoleColor.White, ConsoleColor.DarkCyan);
+                // Place real colored thermal band swatches inside the brackets
+                PutVgaCell(sx + 17, 22, 0xB2, ConsoleColor.Cyan,   ConsoleColor.DarkBlue);
+                PutVgaCell(sx + 25, 22, 0xB1, ConsoleColor.Cyan,   ConsoleColor.DarkCyan);
+                PutVgaCell(sx + 34, 22, 0xB1, ConsoleColor.Green,  ConsoleColor.DarkGreen);
+                PutVgaCell(sx + 44, 22, 0xB1, ConsoleColor.Yellow, ConsoleColor.DarkGreen);
+                PutVgaCell(sx + 54, 22, 0xB2, ConsoleColor.Yellow, ConsoleColor.DarkYellow);
+                PutVgaCell(sx + 64, 22, 0xB2, ConsoleColor.Yellow, ConsoleColor.DarkRed);
             }
             else if (_currentLayer == 2)
             {
-                legend = " DOPPLER RADAR: [ ]Dry  [.]Cloud Cover  [/]Rain Echo  [*]Thunderstorm Core ";
+                const string leg2 = " PRECIP RADAR: [ ]Dry  [ ]Clouds  [ ]Overcast  [/]Rain Band  [*]Storm Core ";
+                int sx = 80 - leg2.Length;
+                DirectVgaWrite(sx, 22, leg2, ConsoleColor.White, ConsoleColor.DarkCyan);
+                PutVgaCell(sx + 16, 22, (byte)' ', ConsoleColor.DarkGreen, ConsoleColor.DarkGreen);
+                PutVgaCell(sx + 24, 22, 0xB0,      ConsoleColor.Green,     ConsoleColor.DarkGreen);
+                PutVgaCell(sx + 35, 22, 0xB1,      ConsoleColor.White,     ConsoleColor.DarkGreen);
+                PutVgaCell(sx + 48, 22, (byte)'/', ConsoleColor.Cyan,      ConsoleColor.DarkCyan);
+                PutVgaCell(sx + 62, 22, (byte)'*', ConsoleColor.Yellow,    ConsoleColor.DarkBlue);
             }
             else if (_currentLayer == 3)
             {
-                legend = " WIND STREAMLINES: [-]<12km/h Calm  [~]12-15km/h Breeze  [>>]>=16km/h Strong ";
+                const string leg3 = " WIND STREAMLINES: [-]<12km/h Calm  [~]12-14km/h Breeze  [>>]>=15km/h Jet ";
+                int sx = 80 - leg3.Length;
+                DirectVgaWrite(sx, 22, leg3, ConsoleColor.White, ConsoleColor.DarkCyan);
             }
             else
             {
-                legend = " BAROMETRIC ISOBARS: [L-]<=1013hPa Low  [~]Isobar Line  [H+]>=1017hPa High ";
+                DrawRadarLegendZeroAlloc();
             }
+        }
 
-            int startX = 80 - legend.Length;
-            if (startX < 0) startX = 0;
-            DirectVgaWrite(startX, 22, legend, ConsoleColor.White, ConsoleColor.DarkCyan);
+        private void DrawRadarLegendZeroAlloc()
+        {
+            const string leg4 = " DOPPLER RADAR [LOOP 01/16]: [ ]20dBZ  [ ]32dBZ  [ ]42dBZ  [ ]52dBZ  [ ]60dBZ ";
+            int sx = 80 - leg4.Length;
+            DirectVgaWrite(sx, 22, leg4, ConsoleColor.White, ConsoleColor.DarkCyan);
+
+            // Overwrite frame counter "01" with current 1..16 frame (zero heap allocations)
+            WorldWeatherMapLayers.DirectVgaWriteTwoDigits(sx + 21, 22, _radarFrame + 1, ConsoleColor.Yellow, ConsoleColor.DarkCyan);
+
+            // Place live NEXRAD dBZ color swatches inside the legend brackets
+            PutVgaCell(sx + 30, 22, 0xB0, ConsoleColor.Cyan,    ConsoleColor.DarkBlue);
+            PutVgaCell(sx + 40, 22, 0xB1, ConsoleColor.Green,   ConsoleColor.DarkGreen);
+            PutVgaCell(sx + 50, 22, 0xB2, ConsoleColor.Yellow,  ConsoleColor.DarkYellow);
+            PutVgaCell(sx + 60, 22, 0xB2, ConsoleColor.Red,     ConsoleColor.DarkYellow);
+            PutVgaCell(sx + 70, 22, 0xDB, ConsoleColor.Magenta, ConsoleColor.DarkRed);
         }
 
         private void GetWeatherSpritePair(string condition, out byte glyphL, out byte glyphR, out ConsoleColor colorL, out ConsoleColor colorR)
@@ -1251,7 +1200,7 @@ namespace WeatherOS.Apps
             }
             WriteFullRow(23, row23, ConsoleColor.Yellow, ConsoleColor.DarkCyan);
 
-            // Row 24: Scrolling Station Selector Ribbon + Unified Main Commands Prompt
+            // Row 24: Scrolling Station Selector Ribbon + Unified Main Commands Prompt ONLY (no extra shortcuts in footer)
             string ribbon = " STATIONS: ";
             int total = stations.Length;
             int windowSize = 5;
@@ -1265,7 +1214,7 @@ namespace WeatherOS.Apps
                 else ribbon += stations[i].Name + " ";
             }
 
-            string rightHint = "[F1] Main Commands  [L] Layer  [ESC] Exit ";
+            string rightHint = "  [F1] Main Commands  [ESC] Exit ";
             int maxLeft = 80 - rightHint.Length;
             if (ribbon.Length > maxLeft) ribbon = ribbon.Substring(0, maxLeft);
             else ribbon = ribbon.PadRight(maxLeft, ' ');
@@ -1275,10 +1224,10 @@ namespace WeatherOS.Apps
 
         private void DrawBroadcastCommandsModal()
         {
-            int left = 7;
+            int left = 6;
             int top = 3;
-            int width = 66;
-            int height = 17;
+            int width = 68;
+            int height = 18;
 
             // Fill modal background and border in VGA text memory
             for (int y = top; y < top + height; y++)
@@ -1306,9 +1255,10 @@ namespace WeatherOS.Apps
 
             string[] lines = new string[]
             {
-                "[L]                  Cycle Meteorological Layer (1..5)",
+                "[L]                  Cycle Meteorological Map Layer (1..5)",
                 "[1] Synoptic Icons   [2] Thermal Heatmap   [3] Precip Radar",
-                "[4] Wind Vectors     [5] Barometric Pressure & Isobars",
+                "[4] Wind Vectors     [5] Live Doppler Weather Radar (Loop)",
+                "[Space / P]          Pause / Resume Weather Radar Animation",
                 "[Tab / C / Z]        Switch Continental Sector (5 Continents)",
                 "[Arrows Left/Right]  Select Regional Weather Station on Map",
                 "[R]                  Receive & Sync Live API for Selected City",
@@ -1331,7 +1281,7 @@ namespace WeatherOS.Apps
             byte* vga = (byte*)0xB8000;
             int offset = (y * 80 + x) * 2;
             vga[offset] = glyph;
-            vga[offset + 1] = (byte)((((byte)bg & 0x0F) << 4) | ((byte)fg & 0x0F));
+            vga[offset + 1] = (byte)((((byte)bg & 0x07) << 4) | ((byte)fg & 0x0F));
         }
 
         public static unsafe void WriteFullRow(int y, string text, ConsoleColor fg, ConsoleColor bg)
@@ -1403,6 +1353,7 @@ namespace WeatherOS.Apps
                     stations[_selectedStation].WindKmh = w;
                     stations[_selectedStation].Condition = cond;
                     stations[_selectedStation].IsLive = true;
+                    WorldWeatherMapLayers.InvalidateGrid();
                     _statusMessage = "Telemetry received: " + sel.Name + " (" + t + "ºC, " + cond + ") - Layer redrawn";
                 }
                 else
@@ -1417,6 +1368,7 @@ namespace WeatherOS.Apps
                         stations[_selectedStation].Pressure = (int)live.PressureHpa;
                         stations[_selectedStation].Condition = live.Condition;
                         stations[_selectedStation].IsLive = true;
+                        WorldWeatherMapLayers.InvalidateGrid();
                         _statusMessage = "Live API synced: " + sel.Name + " (" + stations[_selectedStation].TempC + "ºC)";
                     }
                     else
@@ -1455,6 +1407,7 @@ namespace WeatherOS.Apps
                 }
             }
 
+            WorldWeatherMapLayers.InvalidateGrid();
             _statusMessage = "Sector telemetry updated (" + syncedCount + "/" + stations.Length + " live) - Layer redrawn";
         }
 
@@ -1473,6 +1426,16 @@ namespace WeatherOS.Apps
             if (keyEvent.KeyChar == 'm' || keyEvent.KeyChar == 'M')
             {
                 desktop.IsCommandPopupOpen = true;
+                return;
+            }
+
+            if (keyEvent.Key == ConsoleKeyEx.Spacebar || keyEvent.KeyChar == 'p' || keyEvent.KeyChar == 'P')
+            {
+                if (_currentLayer == 4)
+                {
+                    _radarPaused = !_radarPaused;
+                    _statusMessage = _radarPaused ? "Weather Radar Loop: PAUSED" : "Weather Radar Loop: LIVE";
+                }
                 return;
             }
 
@@ -1502,6 +1465,7 @@ namespace WeatherOS.Apps
             {
                 _currentZone = (_currentZone + 1) % _zones.Length;
                 _selectedStation = 0;
+                WorldWeatherMapLayers.InvalidateGrid();
                 _statusMessage = "Region: " + ZoneDescriptions[_currentZone];
             }
             else if (keyEvent.KeyChar == 'r' || keyEvent.KeyChar == 'R')
@@ -1518,17 +1482,23 @@ namespace WeatherOS.Apps
                 _statusMessage = "Opening " + sel.Name + " in Weather Dashboard...";
                 Draw(desktop);
 
-                desktop.WeatherService.ApplySynopticFallback(
-                    sel.Name.ToUpper() + ", " + sel.Code,
-                    sel.TempC,
-                    sel.Humidity,
-                    sel.Pressure,
-                    sel.WindKmh,
-                    "NW",
-                    sel.Condition);
+                string dispLoc = sel.Name.ToUpper() + ", " + sel.Code;
+                desktop.DefaultCity = sel.Name;
+                desktop.WeatherService.ApplySynopticFallback(dispLoc, sel.TempC, sel.Humidity, sel.Pressure, sel.WindKmh, "WSW", sel.Condition);
 
-                desktop.WeatherService.FetchOpenWeather(sel.Name, desktop.ApiKey);
-                _statusMessage = "";
+                int t, h, w;
+                string cond;
+                if (desktop.WeatherService.FetchQuickStationWeather(sel.Lat, sel.Lon, out t, out h, out w, out cond))
+                {
+                    sel.TempC = t;
+                    sel.Humidity = h;
+                    sel.WindKmh = w;
+                    sel.Condition = cond;
+                    sel.IsLive = true;
+                    WorldWeatherMapLayers.InvalidateGrid();
+                    desktop.WeatherService.ApplySynopticFallback(dispLoc, t, h, sel.Pressure, w, "WSW", cond);
+                }
+
                 ExitFullScreenBroadcastMode();
                 desktop.SetCurrentApp("weather");
             }

@@ -308,7 +308,17 @@ namespace WeatherOS.Graphics
                             }
                             HardwareDelayMs(15);
                             TimeService.Tick(15);
-                            if (_currentApp != "world_map") DrawMiniClock(force: false);
+                            if (_currentApp == "world_map")
+                            {
+                                if (!_isCommandPopupOpen)
+                                {
+                                    (currentAppObj as WeatherOS.Apps.WorldWeatherMapApp)?.TickAnimation();
+                                }
+                            }
+                            else
+                            {
+                                DrawMiniClock(force: false);
+                            }
 
                             int curY, curM, curD, curH, curMin, curSec;
                             TimeService.GetCurrentLocalTime(out curY, out curM, out curD, out curH, out curMin, out curSec);
@@ -333,7 +343,17 @@ namespace WeatherOS.Graphics
                             }
                             HardwareDelayMs(15);
                             TimeService.Tick(15);
-                            if (_currentApp != "world_map") DrawMiniClock(force: false);
+                            if (_currentApp == "world_map")
+                            {
+                                if (!_isCommandPopupOpen)
+                                {
+                                    (currentAppObj as WeatherOS.Apps.WorldWeatherMapApp)?.TickAnimation();
+                                }
+                            }
+                            else
+                            {
+                                DrawMiniClock(force: false);
+                            }
                         }
 
                         if (_isActive && hasKey)
@@ -700,8 +720,9 @@ namespace WeatherOS.Graphics
                     appTitle = "World Weather Map";
                     commands = new string[]
                     {
-                        "[L]                  Cycle Meteorological Map Layer (5 Layers)",
-                        "[1..5]               Select Layer: 1=Icons 2=Temp 3=Rain 4=Wind 5=hPa",
+                        "[L]                  Cycle Meteorological Map Layer (1..5)",
+                        "[1..5]               1=Icons 2=Thermal 3=Precip 4=Wind 5=Weather Radar",
+                        "[Space / P]          Pause / Resume Weather Radar Animation Loop",
                         "[Tab / C / Z]        Switch Continental Sector (5 Continents)",
                         "[Left/Right/Up/Dn]   Select Regional Weather Station on Map",
                         "[R]                  Sync Live Telemetry for Selected Station",
