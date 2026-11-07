@@ -328,7 +328,7 @@ namespace WeatherOS.Apps
             }
 
             // Controls Footer
-            win.WriteFooter("[Enter/V] Preview  |  [E] Edit Note  |  [D] Delete  |  [ESC] Exit", ConsoleColor.Yellow);
+            win.WriteFooter("[F1 / H] Main Commands Menu  |  [ESC] Exit", ConsoleColor.Yellow);
 
             // Modal Preview Window overlay if active
             if (_isPreviewActive)
@@ -365,7 +365,7 @@ namespace WeatherOS.Apps
                 }
             }
 
-            pWin.WriteFooter("[Up/Dn] Scroll  |  [ESC/Enter] Close Preview", ConsoleColor.Yellow);
+            pWin.WriteFooter("[F1 / H] Main Commands Menu  |  [ESC/Enter] Close Preview", ConsoleColor.Yellow);
         }
 
         public void HandleInput(TuiDesktop desktop, KeyEvent keyEvent)

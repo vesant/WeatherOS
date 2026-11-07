@@ -83,7 +83,7 @@ namespace WeatherOS.Apps
             // Section 4: Dynamic hint
             win.WriteRow(14, "Description: Tracked git commits from GitHub branch 32bit with live sync.", ConsoleColor.DarkCyan, 2, fillRemaining: true);
 
-            win.WriteFooter("[ENTER] View Commits Log   |   [ESC] Exit", ConsoleColor.Yellow);
+            win.WriteFooter("[F1 / H] Main Commands Menu  |  [ESC] Exit", ConsoleColor.Yellow);
         }
         #endregion
 
@@ -148,7 +148,7 @@ namespace WeatherOS.Apps
             }
 
             win.WriteSeparator(17);
-            win.WriteFooter($"[Up/Dn] Select  |  [Enter] Full Notes  |  [R] Sync Live (TLS 1.2)  |  [ESC] Overview  |  Commit {_selectedCommitIndex + 1}/{commits.Count}", ConsoleColor.Yellow);
+            win.WriteFooter($"[F1 / H] Main Commands Menu  |  [ESC] Overview  |  Commit {_selectedCommitIndex + 1}/{commits.Count}", ConsoleColor.Yellow);
         }
         #endregion
 
@@ -195,7 +195,7 @@ namespace WeatherOS.Apps
 
             win.WriteSeparator(16);
             string scrollHint = totalLines > visibleRows ? $"[Up/Dn Scroll {lineIdxText(totalLines, visibleRows)}]  |  " : "";
-            win.WriteFooter($"{scrollHint}[ESC] Return to Commit List", ConsoleColor.Yellow);
+            win.WriteFooter("[F1 / H] Main Commands Menu  |  [ESC] Return to Commit List", ConsoleColor.Yellow);
         }
 
         private string lineIdxText(int total, int visible)

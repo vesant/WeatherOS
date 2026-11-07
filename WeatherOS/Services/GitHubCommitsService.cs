@@ -165,6 +165,13 @@ namespace WeatherOS.Services
         {
             var list = new List<GitHubCommit>();
             list.Add(new GitHubCommit {
+                Sha = @"v3.4.0",
+                Date = @"2026-11-07",
+                Author = @"Vicente",
+                Title = @"Add 5 meteorological map layers and global Main Commands Menu popup",
+                Description = @"Added Thermal, Radar, Wind, and Pressure layers to World Weather Map and unified [F1] Main Commands Menu popup across all OS apps."
+            });
+            list.Add(new GitHubCommit {
                 Sha = @"97e6d00",
                 Date = @"2026-10-19",
                 Author = @"vesant",

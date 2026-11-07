@@ -77,7 +77,7 @@ namespace WeatherOS.Apps
 
             string linkState = NetworkDevice.Devices.Count > 0 ? "ONLINE (100M Full-Duplex)" : "OFFLINE";
             win.WriteRow(11, $"Network Link  : {linkState}", ConsoleColor.White, 2);
-            win.WriteFooter("[ESC] Return to Desktop", ConsoleColor.Yellow);
+            win.WriteFooter("[F1 / H] Main Commands Menu  |  [ESC] Return to Desktop", ConsoleColor.Yellow);
         }
 
         public void HandleInput(TuiDesktop desktop, KeyEvent keyEvent)

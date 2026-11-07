@@ -129,7 +129,7 @@ namespace WeatherOS.Apps
             ConsoleColor msgCol = lastMsg.Contains("[SUCCESS]") ? ConsoleColor.Green : (lastMsg.Contains("[ERROR]") ? ConsoleColor.Red : ConsoleColor.Gray);
             win.WriteRow(13, "Status: " + lastMsg, msgCol, 2);
 
-            win.WriteFooter("[Up/Dn/1-3] Select Mode  |  [Enter] Confirm  |  [ESC] Desktop", ConsoleColor.Yellow);
+            win.WriteFooter("[F1] Main Commands Menu  |  [Enter] Confirm  |  [ESC] Desktop", ConsoleColor.Yellow);
         }
 
         private void DrawReceive(TuiWindow win, TuiDesktop desktop)
@@ -151,7 +151,7 @@ namespace WeatherOS.Apps
             win.WriteRow(7, "On Windows, choose option [1] Send File in 'run-transfer.bat'.", ConsoleColor.Cyan, 2, fillRemaining: true);
             win.WriteRow(8, "", ConsoleColor.Black, 2, fillRemaining: true);
             win.DrawBar(2, 9, "Listening", 0, ConsoleColor.DarkGray);
-            win.WriteFooter("[R] Restart Listener  |  [ESC] Return to Menu", ConsoleColor.Yellow);
+            win.WriteFooter("[F1] Main Commands Menu  |  [ESC] Return to Menu", ConsoleColor.Yellow);
 
             _pkgAlreadyFlashed = false;
             int lastDrawnChunk = -1;
@@ -167,6 +167,20 @@ namespace WeatherOS.Apps
                 // Non-blocking keyboard poll
                 if (TuiDesktop.TryReadDesktopKey(out var keyEvent))
                 {
+                    if (keyEvent.Key == ConsoleKeyEx.F1)
+                    {
+                        desktop.DrawCommandsPopup();
+                        while (true)
+                        {
+                            WeatherOS.Kernel.CustomNIC?.HackPoll();
+                            if (TuiDesktop.TryReadDesktopKey(out var closeKey))
+                            {
+                                break;
+                            }
+                            TuiDesktop.HardwareDelayMs(15);
+                        }
+                        break;
+                    }
                     if (keyEvent.Key == ConsoleKeyEx.Escape)
                     {
                         FileTransferService.StopListening();
@@ -394,7 +408,7 @@ namespace WeatherOS.Apps
 
             win.WriteSeparator(12);
             win.WriteRow(13, "[M] Enter Filename Manually", ConsoleColor.Cyan, 2);
-            win.WriteFooter("[Up/Dn] Navigate  |  [Enter] Select & Auto-Send  |  [ESC] Menu", ConsoleColor.Yellow);
+            win.WriteFooter("[F1] Main Commands Menu  |  [Enter] Select & Send  |  [ESC] Menu", ConsoleColor.Yellow);
         }
 
         private void DrawSendEnterIp(TuiWindow win, TuiDesktop desktop)
@@ -419,7 +433,7 @@ namespace WeatherOS.Apps
                 _ipEditor.DrawInline(win.InnerLeft + 24, win.InnerTop + 11, 16, win.Background, ConsoleColor.White);
             }
 
-            win.WriteFooter("[R] Retry Discovery  |  [Enter] Send  |  [ESC] Cancel", ConsoleColor.Yellow);
+            win.WriteFooter("[F1] Main Commands Menu  |  [Enter] Send  |  [ESC] Cancel", ConsoleColor.Yellow);
         }
 
         private void DrawSendingProgress(TuiWindow win, TuiDesktop desktop)
@@ -507,7 +521,7 @@ namespace WeatherOS.Apps
                 win.WriteRow(9, "Press [Enter] to send test UDP ping to target IP.", ConsoleColor.Gray, 2);
             }
 
-            win.WriteFooter("[Enter] Ping Host  |  [R] Rescan Network  |  [ESC] Return to Menu", ConsoleColor.Yellow);
+            win.WriteFooter("[F1] Main Commands Menu  |  [ESC] Return to Menu", ConsoleColor.Yellow);
         }
 
         public void HandleInput(TuiDesktop desktop, KeyEvent keyEvent)

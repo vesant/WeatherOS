@@ -29,7 +29,7 @@ namespace WeatherOS.Apps
                 win.WriteSelectionRow(2 + i, _options[i], i == _selectedIndex);
             }
 
-            win.WriteFooter("[Up/Dn] Move  |  [Enter] Open  |  [ESC] Exit", ConsoleColor.Yellow);
+            win.WriteFooter("[F1 / H] Main Commands Menu  |  [ESC] Exit", ConsoleColor.Yellow);
         }
 
         public void HandleInput(TuiDesktop desktop, KeyEvent keyEvent)

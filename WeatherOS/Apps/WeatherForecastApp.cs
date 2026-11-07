@@ -31,7 +31,7 @@ namespace WeatherOS.Apps
             {
                 win.WriteRow(3, "Awaiting 7-Day Telemetry from WeatherAPI / Open-Meteo...", ConsoleColor.Yellow, 2);
                 win.WriteRow(5, "Press [R] to request forecast or [C] to select another city.", ConsoleColor.White, 2);
-                win.WriteFooter("[ESC] Return  |  [R] Refresh  |  [C] Change City", ConsoleColor.Yellow);
+                win.WriteFooter("[F1 / H] Main Commands Menu  |  [ESC] Return to Desktop", ConsoleColor.Yellow);
                 return;
             }
 
@@ -169,7 +169,7 @@ namespace WeatherOS.Apps
             // Bottom telemetry status bar
             string locInfo = $" Location: {data.Location}  |  Source: OpenWeather / Open-Meteo Telemetry ";
             win.WriteRow(15, locInfo, ConsoleColor.Yellow, 1, ConsoleColor.DarkBlue, true);
-            win.WriteFooter("[ESC] Return  |  [C] Change City  |  [W] Dashboard  |  [R] Refresh", ConsoleColor.White);
+            win.WriteFooter("[F1 / H] Main Commands Menu  |  [ESC] Return to Desktop", ConsoleColor.Yellow);
         }
 
         private static string FormatDateLabel(string dateStr)

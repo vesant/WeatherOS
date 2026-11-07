@@ -100,7 +100,7 @@ namespace WeatherOS.Apps
             }
 
             // Bottom controls
-            win.WriteFooter("[< / >] Prev/Next Day  |  [1-7] Select  |  [R] Refresh  |  [ESC] Exit", ConsoleColor.White);
+            win.WriteFooter("[F1 / H] Main Commands Menu  |  [ESC] Exit", ConsoleColor.Yellow);
         }
 
         private static int ParseIllumInt(string illumStr)

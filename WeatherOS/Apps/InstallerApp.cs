@@ -104,7 +104,7 @@ namespace WeatherOS.Apps
             win.WriteRow(14, "[i] TIP: Choose internal disk (Disk 0) to boot without USB pen.", ConsoleColor.DarkCyan, 2, fillRemaining: true);
             win.WriteRow(15, "    Future updates are applied in-place without wiping data!", ConsoleColor.DarkCyan, 2, fillRemaining: true);
 
-            win.WriteFooter("[Up/Dn] Select  |  [ENTER] Next  |  [R] Refresh  |  [ESC] Exit", ConsoleColor.Yellow);
+            win.WriteFooter("[F1 / H] Main Commands Menu  |  [ESC] Exit", ConsoleColor.Yellow);
         }
 
         private void DrawConfirmWarning(TuiDesktop desktop)
@@ -154,7 +154,7 @@ namespace WeatherOS.Apps
             else
             {
                 win.WriteRow(13, "Press [Y] or [ENTER] to Install   |   [N / ESC] Cancel", ConsoleColor.Yellow, 2, fillRemaining: true);
-                win.WriteFooter("[Y / ENTER] Confirm Install   |   [N / ESC] Cancel", ConsoleColor.Yellow);
+                win.WriteFooter("[F1 / H] Main Commands Menu  |  [Y / ENTER] Confirm  |  [ESC] Cancel", ConsoleColor.Yellow);
             }
         }
 

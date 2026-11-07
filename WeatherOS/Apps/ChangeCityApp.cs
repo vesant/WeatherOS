@@ -27,7 +27,7 @@ namespace WeatherOS.Apps
             desktop.WriteInsideWindow(left, winWidth, top + 4, 2, "> ", ConsoleColor.White, winBg);
             _cityEditor.DrawInline(left + 6, top + 4, winWidth - 10, winBg, ConsoleColor.White);
 
-            desktop.WriteInsideWindow(left, winWidth, top + 6, 2, "[Enter] Search  |  [ESC] Cancel", ConsoleColor.Yellow, winBg);
+            desktop.WriteInsideWindow(left, winWidth, top + 6, 2, "[F1] Main Commands Menu  |  [ESC] Cancel", ConsoleColor.Yellow, winBg);
         }
 
         public void HandleInput(TuiDesktop desktop, KeyEvent keyEvent)

@@ -58,7 +58,7 @@ namespace WeatherOS.Apps
             }
 
             // Essential shortcut bar
-            win.WriteFooter("[R] Refresh | [M] World Map | [C] City | [F] 7-Day Forecast | [ESC] Exit", ConsoleColor.Yellow);
+            win.WriteFooter("[F1 / H] Main Commands Menu  |  [ESC] Return to Desktop", ConsoleColor.Yellow);
         }
 
         public void HandleInput(TuiDesktop desktop, KeyEvent keyEvent)

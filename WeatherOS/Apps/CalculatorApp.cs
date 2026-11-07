@@ -91,7 +91,7 @@ namespace WeatherOS.Apps
             desktop.WriteInsideWindow(left, winWidth, top + 15, 1, new string('-', winWidth - 2), ConsoleColor.DarkGray, winBg);
 
             // Footer
-            desktop.WriteInsideWindow(left, winWidth, top + 16, 2, "[Arrows] Navigate | [Enter] Select Key | [ESC] Exit", ConsoleColor.Yellow, winBg);
+            desktop.WriteInsideWindow(left, winWidth, top + 16, 2, "[F1 / H] Main Commands Menu  |  [ESC] Exit", ConsoleColor.Yellow, winBg);
         }
 
         public void HandleInput(TuiDesktop desktop, KeyEvent keyEvent)

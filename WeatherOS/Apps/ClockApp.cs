@@ -69,7 +69,7 @@ namespace WeatherOS.Apps
             string syncStatusText = TimeService.IsNetworkSynced ? "[Network Synced: OK]" : "[Hardware RTC Active]";
             win.WriteRow(11, $"  Timezone: UTC{tzLabel}  |  Format: {formatLabel}  |  Status: {syncStatusText}", ConsoleColor.DarkCyan, 2, fillRemaining: true);
 
-            win.WriteFooter("[ESC] Return to Desktop", ConsoleColor.Yellow);
+            win.WriteFooter("[F1 / H] Main Commands Menu  |  [ESC] Return to Desktop", ConsoleColor.Yellow);
         }
 
         public void HandleInput(TuiDesktop desktop, KeyEvent keyEvent)

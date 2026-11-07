@@ -26,6 +26,7 @@ namespace WeatherOS.Graphics
         private static ulong _idleTimeAccumulator = 0;
         private bool _isActive;
         private string _currentApp = "launcher";
+        private bool _isCommandPopupOpen = false;
         private WeatherService _weatherService;
         private string _apiKey = "";
 
@@ -54,6 +55,7 @@ namespace WeatherOS.Graphics
         public bool ShowDebugLogs { get => _showDebugLogs; set => _showDebugLogs = value; }
         public string CustomApiKey { get => _customApiKey; set => _customApiKey = value; }
         public string ApiKey { get => _apiKey; set => _apiKey = value; }
+        public bool IsCommandPopupOpen { get => _isCommandPopupOpen; set => _isCommandPopupOpen = value; }
 
         public TuiDesktop(WeatherService weatherService)
         {
@@ -222,6 +224,7 @@ namespace WeatherOS.Graphics
 
         public void SetCurrentApp(string appId)
         {
+            _isCommandPopupOpen = false;
             if (appId != "world_map")
             {
                 WeatherOS.Apps.WorldWeatherMapApp.ExitFullScreenBroadcastMode();
@@ -246,6 +249,7 @@ namespace WeatherOS.Graphics
 
         public void StartApp(string appId)
         {
+            _isCommandPopupOpen = false;
             _currentApp = appId;
             _isActive = true;
             RunLoop();
@@ -253,6 +257,7 @@ namespace WeatherOS.Graphics
 
         public void Start()
         {
+            _isCommandPopupOpen = false;
             if (_weatherService.GetLatestReading().Location == "UNKNOWN")
             {
                 _currentApp = "change_city";
@@ -281,7 +286,7 @@ namespace WeatherOS.Graphics
 
                     bool isRealTimeApp = false;
                     IApp currentAppObj = GetApp(_currentApp);
-                    if (currentAppObj != null && currentAppObj.IsRealTime)
+                    if (currentAppObj != null && currentAppObj.IsRealTime && !_isCommandPopupOpen)
                     {
                         isRealTimeApp = true;
                     }
@@ -353,15 +358,46 @@ namespace WeatherOS.Graphics
             System.Console.ResetColor();
         }
 
+        private bool IsTextInputApp(string appId)
+        {
+            return appId == "change_city" || appId == "notepad" || appId == "settings" || appId == "transfer";
+        }
+
         private void ProcessKeyEvent(KeyEvent keyEvent)
         {
             if (keyEvent.Key == ConsoleKeyEx.LWin || keyEvent.Key == ConsoleKeyEx.RWin)
             {
+                _isCommandPopupOpen = false;
                 if (_currentApp == "settings") SaveSettings();
                 _isActive = false;
                 DrainKeyboardBuffer();
                 HardwareDelayMs(150);
                 DrainKeyboardBuffer();
+                return;
+            }
+
+            // If the Main Commands Popup is currently open, close it on ESC / Enter / Space / F1 / H / M / ?
+            if (_isCommandPopupOpen)
+            {
+                if (keyEvent.Key == ConsoleKeyEx.Escape ||
+                    keyEvent.Key == ConsoleKeyEx.Enter ||
+                    keyEvent.Key == ConsoleKeyEx.Spacebar ||
+                    keyEvent.Key == ConsoleKeyEx.F1 ||
+                    keyEvent.KeyChar == 'h' || keyEvent.KeyChar == 'H' ||
+                    keyEvent.KeyChar == 'm' || keyEvent.KeyChar == 'M' ||
+                    keyEvent.KeyChar == '?')
+                {
+                    _isCommandPopupOpen = false;
+                }
+                return;
+            }
+
+            // Global shortcut to open the Main Commands Popup for the active application:
+            // [F1] opens it in every app; [H] or [?] also opens it in non-text-editor apps
+            if (keyEvent.Key == ConsoleKeyEx.F1 ||
+                (!IsTextInputApp(_currentApp) && (keyEvent.KeyChar == 'h' || keyEvent.KeyChar == 'H' || keyEvent.KeyChar == '?')))
+            {
+                _isCommandPopupOpen = true;
                 return;
             }
 
@@ -401,7 +437,7 @@ namespace WeatherOS.Graphics
             var list = new List<LauncherAppEntry>();
             // Category: Meteorology & Forecast (5 items)
             list.Add(new LauncherAppEntry { Id = "weather", Name = "Weather Dashboard", Description = "Real-time weather station telemetry, temp & humidity.", Category = "METEOROLOGY" });
-            list.Add(new LauncherAppEntry { Id = "world_map", Name = "World Weather Map", Description = "Visual continental weather map showing regional telemetry & icons.", Category = "METEOROLOGY" });
+            list.Add(new LauncherAppEntry { Id = "world_map", Name = "World Weather Map", Description = "Continental weather map with interactive meteorological layers.", Category = "METEOROLOGY" });
             list.Add(new LauncherAppEntry { Id = "forecast_7d", Name = "7-Day Forecast", Description = "Multi-day meteorological forecast and climate trends.", Category = "METEOROLOGY" });
             list.Add(new LauncherAppEntry { Id = "lunar_forecast", Name = "Lunar Observatory", Description = "Astronomical calculations, lunar phases and illumination.", Category = "METEOROLOGY" });
             list.Add(new LauncherAppEntry { Id = "change_city", Name = "Change Location", Description = "Configure target city and station coordinates.", Category = "METEOROLOGY" });
@@ -538,17 +574,13 @@ namespace WeatherOS.Graphics
             string topText;
             if (_currentApp == "launcher")
             {
-                topText = " WeatherOS Desktop  |  Meteorological System";
-            }
-            else if (_currentApp == "notepad")
-            {
-                topText = " WeatherOS > Notepad  |  [F2] Save Note  |  [ESC] Menu / Desktop";
+                topText = " WeatherOS Desktop  |  Meteorological System  |  [F1] Main Commands Menu";
             }
             else
             {
                 IApp curAppObj = GetApp(_currentApp);
                 string appTitle = curAppObj != null ? curAppObj.Name : _currentApp;
-                topText = $" WeatherOS > {appTitle}  |  [ESC] Return to Desktop";
+                topText = $" WeatherOS > {appTitle}  |  [F1] Main Commands Menu  |  [ESC] Desktop";
             }
             Screen.WriteClipped(0, 0, topText, Screen.Width - 1, ConsoleColor.Black, ConsoleColor.Gray, true);
 
@@ -582,21 +614,307 @@ namespace WeatherOS.Graphics
                 }
             }
 
+            // If Main Commands Popup is open, render centered modal overlay on top of the active app
+            if (_isCommandPopupOpen)
+            {
+                DrawCommandsPopup();
+            }
+
             // Bottom Bar (Row 24) - clipped to column 68 so mini digital clock stays in bottom right corner
             string btmText;
             if (_currentApp == "launcher")
             {
-                btmText = " [Arrows/Tab] Navigate  |  [Enter] Open  |  [ESC] Exit";
+                btmText = " [F1 / H] Main Commands Menu  |  [Enter] Open  |  [ESC] Exit";
             }
             else
             {
-                btmText = " WeatherOS v3.0  |  Cosmos x86 Dedicated Meteorological Kernel";
+                btmText = " WeatherOS v3.4  |  [F1] Main Commands Menu  |  [ESC] Desktop";
             }
             Screen.WriteClipped(0, Screen.Height - 1, btmText, 68, ConsoleColor.Black, ConsoleColor.Gray, true);
             System.Console.ResetColor();
 
             // Overlay Mini Digital Clock in Bottom Right Corner (Rows 23 & 24, Cols 69..79)
             DrawMiniClock(force: true);
+        }
+
+        public void DrawCommandsPopup()
+        {
+            string appTitle;
+            string[] commands;
+            GetCommandsForCurrentApp(out appTitle, out commands);
+
+            int popW = 66;
+            int popH = Math.Min(18, commands.Length + 6);
+            int popLeft = (Screen.Width - popW) / 2;
+            int popTop = (Screen.Height - popH) / 2;
+
+            ConsoleColor popBg = ConsoleColor.Black;
+            Screen.DrawBox(popLeft, popTop, popW, popH, "MAIN COMMANDS MENU  |  " + appTitle.ToUpper(), popBg, ConsoleColor.Cyan, ConsoleColor.Yellow);
+
+            Screen.WriteInsideWindow(popLeft, popW, popTop + 1, 2, "Available keyboard shortcuts & actions for this application:", ConsoleColor.Gray, popBg);
+            Screen.WriteInsideWindow(popLeft, popW, popTop + 2, 1, new string('-', popW - 4), ConsoleColor.DarkCyan, popBg);
+
+            int maxLines = popH - 6;
+            for (int i = 0; i < commands.Length && i < maxLines; i++)
+            {
+                string line = commands[i];
+                ConsoleColor lineCol = line.StartsWith("[") ? ConsoleColor.White : ConsoleColor.Cyan;
+                Screen.WriteInsideWindow(popLeft, popW, popTop + 3 + i, 3, line, lineCol, popBg);
+            }
+
+            Screen.WriteInsideWindow(popLeft, popW, popTop + popH - 3, 1, new string('-', popW - 4), ConsoleColor.DarkCyan, popBg);
+            Screen.WriteInsideWindow(popLeft, popW, popTop + popH - 2, 2, "[F1 / ESC / Enter] Close Commands Menu", ConsoleColor.Yellow, popBg);
+        }
+
+        public void GetCommandsForCurrentApp(out string appTitle, out string[] commands)
+        {
+            switch (_currentApp)
+            {
+                case "launcher":
+                    appTitle = "Application Launcher";
+                    commands = new string[]
+                    {
+                        "[Up / Down Arrows]   Move selection within active column",
+                        "[Left / Right / Tab] Switch between Left & Right columns",
+                        "[Enter]              Launch the selected application",
+                        "[F1 / H / ?]         Open or close this Main Commands Menu",
+                        "[ESC / Win Key]      Exit desktop session to system shell"
+                    };
+                    break;
+
+                case "weather":
+                    appTitle = "Weather Dashboard";
+                    commands = new string[]
+                    {
+                        "[R]                  Refresh live telemetry from Weather API",
+                        "[M]                  Open Full-Screen World Weather Map",
+                        "[C]                  Change target city / station coordinates",
+                        "[F]                  Open 7-Day Extended Weather Forecast",
+                        "[L]                  Open Lunar Observatory & Moon Phases",
+                        "[F1 / H]             Open or close this Main Commands Menu",
+                        "[ESC]                Return to Application Launcher"
+                    };
+                    break;
+
+                case "world_map":
+                    appTitle = "World Weather Map";
+                    commands = new string[]
+                    {
+                        "[L]                  Cycle Meteorological Map Layer (5 Layers)",
+                        "[1..5]               Select Layer: 1=Icons 2=Temp 3=Rain 4=Wind 5=hPa",
+                        "[Tab / C / Z]        Switch Continental Sector (5 Continents)",
+                        "[Left/Right/Up/Dn]   Select Regional Weather Station on Map",
+                        "[R]                  Sync Live Telemetry for Selected Station",
+                        "[A]                  Sync Live Telemetry for All Region Stations",
+                        "[Enter]              Open Selected Station in Weather Dashboard",
+                        "[F1 / H / M]         Open or close this Main Commands Menu",
+                        "[ESC]                Exit Broadcast Mode to Desktop Launcher"
+                    };
+                    break;
+
+                case "forecast_7d":
+                    appTitle = "7-Day Weather Forecast";
+                    commands = new string[]
+                    {
+                        "[R]                  Refresh 7-Day Open-Meteo Telemetry",
+                        "[C]                  Change Location / Target City",
+                        "[W]                  Open Weather Dashboard for Current City",
+                        "[M]                  Open World Weather Map",
+                        "[F1 / H]             Open or close this Main Commands Menu",
+                        "[ESC]                Return to Application Launcher"
+                    };
+                    break;
+
+                case "lunar_forecast":
+                    appTitle = "Lunar Observatory";
+                    commands = new string[]
+                    {
+                        "[Left / Right]       Step backward or forward by 1 day",
+                        "[Up / Down]          Jump backward or forward by 7 days",
+                        "[T / R]              Reset to Today's Live UTC Ephemeris",
+                        "[W]                  Return to Weather Dashboard",
+                        "[F1 / H]             Open or close this Main Commands Menu",
+                        "[ESC]                Return to Application Launcher"
+                    };
+                    break;
+
+                case "change_city":
+                    appTitle = "Change Location";
+                    commands = new string[]
+                    {
+                        "[A..Z / 0..9 / ,]    Type city name or Lat,Lon coordinates",
+                        "[Backspace]          Delete last character in search box",
+                        "[Enter]              Fetch live weather & open Dashboard",
+                        "[F1]                 Open or close this Main Commands Menu",
+                        "[ESC]                Cancel and return to Desktop Launcher"
+                    };
+                    break;
+
+                case "clock":
+                    appTitle = "Digital Clock";
+                    commands = new string[]
+                    {
+                        "[T]                  Toggle 24-Hour / 12-Hour (AM/PM) display",
+                        "[+ / Right Arrow]    Increase UTC Timezone Offset (+1 hour)",
+                        "[- / Left Arrow]     Decrease UTC Timezone Offset (-1 hour)",
+                        "[S]                  Open System Settings",
+                        "[F1 / H]             Open or close this Main Commands Menu",
+                        "[ESC]                Return to Application Launcher"
+                    };
+                    break;
+
+                case "calculator":
+                    appTitle = "Scientific Calculator";
+                    commands = new string[]
+                    {
+                        "[0..9 / .]           Enter numeric digits and decimal point",
+                        "[+  -  *  /]         Standard arithmetic operations",
+                        "[Enter / =]          Compute expression result",
+                        "[S / O / T]          Trigonometric sin(x), cos(x), tan(x) (deg)",
+                        "[Q / L / P]          sqrt(x), log10(x), and x^2 power",
+                        "[C / Backspace]      Clear all (AC) or delete last digit",
+                        "[F1 / H]             Open or close this Main Commands Menu",
+                        "[ESC]                Return to Application Launcher"
+                    };
+                    break;
+
+                case "notepad":
+                    appTitle = "Notepad Text Editor";
+                    commands = new string[]
+                    {
+                        "[Up / Down]          Navigate File Browser or Editor lines",
+                        "[Enter]              Open selected file / New line in editor",
+                        "[N] (Browser)        Create a new blank document",
+                        "[D] (Browser)        Delete selected note from storage",
+                        "[F2] (Editor)        Open Save File modal dialog",
+                        "[F3] (Editor)        Open Load File picker dialog",
+                        "[F1]                 Open or close this Main Commands Menu",
+                        "[ESC]                Return to File Browser / Desktop"
+                    };
+                    break;
+
+                case "diskmgr":
+                    appTitle = "File & Storage Explorer";
+                    commands = new string[]
+                    {
+                        "[Tab / Left / Right] Switch between Drives & Directory Files",
+                        "[Up / Down Arrows]   Select drive, folder, or file entry",
+                        "[Enter]              Open folder or inspect file preview",
+                        "[O]                  Open selected text file in Notepad",
+                        "[C / V]              Copy selected item / Paste from clipboard",
+                        "[N / D]              Create new folder (mkdir) / Delete item",
+                        "[R]                  Refresh storage volumes and file tree",
+                        "[F1 / H]             Open or close this Main Commands Menu",
+                        "[ESC]                Return to Application Launcher"
+                    };
+                    break;
+
+                case "about":
+                    appTitle = "System Information";
+                    commands = new string[]
+                    {
+                        "[C]                  Open System Changelog & Release Notes",
+                        "[Up / Down Arrows]   Scroll through version history in Changelog",
+                        "[I] (on Live USB)    Launch Hard Disk Installer Wizard",
+                        "[F1 / H]             Open or close this Main Commands Menu",
+                        "[ESC]                Close Changelog or return to Desktop"
+                    };
+                    break;
+
+                case "ipconfig":
+                    appTitle = "Network Configuration";
+                    commands = new string[]
+                    {
+                        "[R]                  Re-run DHCP Discover / Refresh NIC Link",
+                        "[T]                  Open Network File Transfer & OTA App",
+                        "[F1 / H]             Open or close this Main Commands Menu",
+                        "[ESC]                Return to Application Launcher"
+                    };
+                    break;
+
+                case "transfer":
+                    appTitle = "File Transfer & OTA";
+                    commands = new string[]
+                    {
+                        "[1 / R]              Enter Receive Mode (Listen on UDP 7331)",
+                        "[2 / S]              Enter Send File Mode (Transmit to PC)",
+                        "[Enter] (After Rx)   Install received .pkg update or save file",
+                        "[Tab / Arrows]       Navigate fields in Send File mode",
+                        "[F1]                 Open or close this Main Commands Menu",
+                        "[ESC]                Cancel transfer or return to Desktop"
+                    };
+                    break;
+
+                case "settings":
+                    appTitle = "System Settings";
+                    commands = new string[]
+                    {
+                        "[Up / Down Arrows]   Select configuration setting row",
+                        "[Enter / Space]      Toggle boolean option or edit text field",
+                        "[Left / Right]       Adjust UTC Timezone Offset (-12 to +14)",
+                        "[F5]                 Reset API Key to built-in default",
+                        "[F1]                 Open or close this Main Commands Menu",
+                        "[ESC]                Save settings and return to Desktop"
+                    };
+                    break;
+
+                case "resources":
+                    appTitle = "System Resources";
+                    commands = new string[]
+                    {
+                        "[G / C]              Trigger manual memory heap collection",
+                        "[R]                  Refresh telemetry counters",
+                        "[F1 / H]             Open or close this Main Commands Menu",
+                        "[ESC]                Return to Application Launcher"
+                    };
+                    break;
+
+                case "battery":
+                    appTitle = "Battery & Power";
+                    commands = new string[]
+                    {
+                        "[R]                  Refresh ACPI / EC power status registers",
+                        "[F1 / H]             Open or close this Main Commands Menu",
+                        "[ESC]                Return to Application Launcher"
+                    };
+                    break;
+
+                case "debug_menu":
+                    appTitle = "Debug Menu & Logs";
+                    commands = new string[]
+                    {
+                        "[Left / Right / Tab] Switch diagnostic tab (1..4)",
+                        "[Up / Down Arrows]   Scroll logs or select diagnostic test",
+                        "[Enter]              Execute selected hardware/network test",
+                        "[C]                  Clear diagnostic logs",
+                        "[F1 / H]             Open or close this Main Commands Menu",
+                        "[ESC]                Return to Application Launcher"
+                    };
+                    break;
+
+                case "installer":
+                    appTitle = "Hard Disk Installer";
+                    commands = new string[]
+                    {
+                        "[Up / Down Arrows]   Select target physical ATA/IDE disk",
+                        "[Enter]              Confirm selection / Start installation",
+                        "[R]                  Retry installation after an error",
+                        "[F1 / H]             Open or close this Main Commands Menu",
+                        "[ESC]                Cancel setup and return to Desktop"
+                    };
+                    break;
+
+                default:
+                    appTitle = "WeatherOS Application";
+                    commands = new string[]
+                    {
+                        "[Arrows / Tab]       Navigate interface controls",
+                        "[Enter]              Confirm / Activate selection",
+                        "[F1 / H]             Open or close this Main Commands Menu",
+                        "[ESC]                Return to Application Launcher"
+                    };
+                    break;
+            }
         }
 
         private void DrawLauncher()
@@ -617,7 +935,7 @@ namespace WeatherOS.Graphics
             System.Console.BackgroundColor = winBg;
 
             // Subheader
-            WriteInsideWindow(left, width, top + 1, 1, "Select an application by category or press [Tab / Arrows] to navigate:", ConsoleColor.White, winBg);
+            WriteInsideWindow(left, width, top + 1, 1, "Select an application by category (Press [F1] for Main Commands Menu):", ConsoleColor.White, winBg);
 
             // Vertical middle divider
             for (int y = top + 2; y <= top + 14; y++)
@@ -725,8 +1043,8 @@ namespace WeatherOS.Graphics
             System.Console.ForegroundColor = ConsoleColor.DarkCyan;
             System.Console.Write(new string('-', width - 2));
 
-            // Bottom Navigation Help (clean ASCII, perfectly clipped)
-            WriteInsideWindow(left, width, top + 19, 1, "[Up/Dn] Move  |  [Tab] Switch Col  |  [Enter] Launch  |  [ESC] Exit", ConsoleColor.Yellow, winBg);
+            // Unified Main Commands Menu Footer
+            WriteInsideWindow(left, width, top + 19, 1, "[F1 / H] Main Commands Menu  |  [Enter] Launch App  |  [ESC] Exit", ConsoleColor.Yellow, winBg);
         }
 
         private void DrawLauncherItemRow(int x, int y, string text, bool isSelected, int maxWidth, ConsoleColor defaultBg)
@@ -816,7 +1134,7 @@ namespace WeatherOS.Graphics
             string cond = (condition ?? "").ToLower();
             string phase = (moonPhase ?? "").ToLower();
 
-            // 1. Thunderstorm / Tempestade
+            // 1. Thunderstorm
             if (cond.Contains("thunder") || cond.Contains("storm") || cond.Contains("lightning"))
             {
                 System.Console.ForegroundColor = ConsoleColor.DarkGray;
@@ -826,7 +1144,7 @@ namespace WeatherOS.Graphics
                 System.Console.SetCursorPosition(left, top + 2); System.Console.Write("       / _/     ");
                 System.Console.SetCursorPosition(left, top + 3); System.Console.Write("        /       ");
             }
-            // 2. Rain / Aguaceiros
+            // 2. Rain / Showers
             else if (cond.Contains("rain") || cond.Contains("drizzle") || cond.Contains("shower"))
             {
                 System.Console.ForegroundColor = ConsoleColor.DarkGray;
@@ -836,7 +1154,7 @@ namespace WeatherOS.Graphics
                 System.Console.SetCursorPosition(left, top + 2); System.Console.Write("     /  /  /    ");
                 System.Console.SetCursorPosition(left, top + 3); System.Console.Write("    /  /  /     ");
             }
-            // 3. Snow / Neve
+            // 3. Snow
             else if (cond.Contains("snow") || cond.Contains("sleet") || cond.Contains("ice") || cond.Contains("blizzard"))
             {
                 System.Console.ForegroundColor = ConsoleColor.DarkGray;
@@ -846,7 +1164,7 @@ namespace WeatherOS.Graphics
                 System.Console.SetCursorPosition(left, top + 2); System.Console.Write("     *   *   *  ");
                 System.Console.SetCursorPosition(left, top + 3); System.Console.Write("       *   *    ");
             }
-            // 4. Fog / Mist / Neblina
+            // 4. Fog / Mist
             else if (cond.Contains("fog") || cond.Contains("mist") || cond.Contains("haze"))
             {
                 System.Console.ForegroundColor = ConsoleColor.Gray;
@@ -897,7 +1215,7 @@ namespace WeatherOS.Graphics
                 System.Console.SetCursorPosition(left, top + 2); System.Console.Write("  (___.__)__)   ");
                 System.Console.SetCursorPosition(left, top + 3); System.Console.Write("  (__________)  ");
             }
-            // 10. Day - Sunny / Clear Sky (Sol Radiante)
+            // 10. Day - Sunny / Clear Sky
             else
             {
                 System.Console.ForegroundColor = ConsoleColor.Yellow;
@@ -913,7 +1231,7 @@ namespace WeatherOS.Graphics
         {
             string p = (moonPhase ?? "").ToLower();
 
-            // 1. New Moon (Lua Nova)
+            // 1. New Moon
             if (p.Contains("new") || p.Contains("nova"))
             {
                 System.Console.ForegroundColor = ConsoleColor.DarkGray;
@@ -923,7 +1241,7 @@ namespace WeatherOS.Graphics
                 System.Console.SetCursorPosition(left, top + 3); System.Console.Write("   \\ . . . /  * ");
                 System.Console.SetCursorPosition(left, top + 4); System.Console.Write(" *  `-----'     ");
             }
-            // 2. Waxing Crescent (Lua Crescente)
+            // 2. Waxing Crescent
             else if (p.Contains("waxing crescent") || (p.Contains("crescent") && !p.Contains("waning")) || p.Contains("crescente"))
             {
                 System.Console.ForegroundColor = ConsoleColor.Cyan;
@@ -933,7 +1251,7 @@ namespace WeatherOS.Graphics
                 System.Console.SetCursorPosition(left, top + 3); System.Console.Write("    \\   \\       ");
                 System.Console.SetCursorPosition(left, top + 4); System.Console.Write("  *  `---)   .  ");
             }
-            // 3. First Quarter (Quarto Crescente)
+            // 3. First Quarter
             else if (p.Contains("first quarter") || p.Contains("first") || p.Contains("1st"))
             {
                 System.Console.ForegroundColor = ConsoleColor.Cyan;
@@ -943,7 +1261,7 @@ namespace WeatherOS.Graphics
                 System.Console.SetCursorPosition(left, top + 3); System.Console.Write("    \\ . .|##    ");
                 System.Console.SetCursorPosition(left, top + 4); System.Console.Write("     `---|   .  ");
             }
-            // 4. Waxing Gibbous (Gibosa Crescente)
+            // 4. Waxing Gibbous
             else if (p.Contains("waxing gibbous") || (p.Contains("gibbous") && !p.Contains("waning")))
             {
                 System.Console.ForegroundColor = ConsoleColor.Yellow;
@@ -953,7 +1271,7 @@ namespace WeatherOS.Graphics
                 System.Console.SetCursorPosition(left, top + 3); System.Console.Write("   \\ (#####/  * ");
                 System.Console.SetCursorPosition(left, top + 4); System.Console.Write(" *  `-----'     ");
             }
-            // 5. Full Moon (Lua Cheia)
+            // 5. Full Moon
             else if (p.Contains("full") || p.Contains("cheia"))
             {
                 System.Console.ForegroundColor = ConsoleColor.Yellow;
@@ -963,7 +1281,7 @@ namespace WeatherOS.Graphics
                 System.Console.SetCursorPosition(left, top + 3); System.Console.Write("    \\       / * ");
                 System.Console.SetCursorPosition(left, top + 4); System.Console.Write("     `-----'    ");
             }
-            // 6. Waning Gibbous (Gibosa Minguante)
+            // 6. Waning Gibbous
             else if (p.Contains("waning gibbous"))
             {
                 System.Console.ForegroundColor = ConsoleColor.Yellow;
@@ -973,7 +1291,7 @@ namespace WeatherOS.Graphics
                 System.Console.SetCursorPosition(left, top + 3); System.Console.Write("   \\#####) /  * ");
                 System.Console.SetCursorPosition(left, top + 4); System.Console.Write("    `-----'     ");
             }
-            // 7. Last Quarter / Third Quarter (Quarto Minguante)
+            // 7. Last Quarter / Third Quarter
             else if (p.Contains("last quarter") || p.Contains("third quarter") || p.Contains("last") || p.Contains("third"))
             {
                 System.Console.ForegroundColor = ConsoleColor.Cyan;
@@ -983,7 +1301,7 @@ namespace WeatherOS.Graphics
                 System.Console.SetCursorPosition(left, top + 3); System.Console.Write("     \\###|. /   ");
                 System.Console.SetCursorPosition(left, top + 4); System.Console.Write("      `---'     ");
             }
-            // 8. Waning Crescent (Lua Minguante)
+            // 8. Waning Crescent
             else
             {
                 System.Console.ForegroundColor = ConsoleColor.Cyan;
@@ -1131,7 +1449,7 @@ namespace WeatherOS.Graphics
                                     case 0x1C: key = ConsoleKeyEx.Enter; keyChar = '\r'; break;
                                     case 0x5B: key = ConsoleKeyEx.LWin; break;
                                     case 0x5C: key = ConsoleKeyEx.RWin; break;
-                                                                    }
+                                }
                             }
                             else
                             {
@@ -1148,6 +1466,8 @@ namespace WeatherOS.Graphics
                                     case 0x09: key = ConsoleKeyEx.D8; keyChar = '8'; break;
                                     case 0x0A: key = ConsoleKeyEx.D9; keyChar = '9'; break;
                                     case 0x0B: key = ConsoleKeyEx.D0; keyChar = '0'; break;
+                                    case 0x0C: key = ConsoleKeyEx.Minus; keyChar = '-'; break;
+                                    case 0x0D: key = ConsoleKeyEx.Equal; keyChar = '+'; break;
                                     case 0x0E: key = ConsoleKeyEx.Backspace; keyChar = '\b'; break;
                                     case 0x0F: key = ConsoleKeyEx.Tab; keyChar = '\t'; break;
                                     case 0x10: key = ConsoleKeyEx.Q; keyChar = 'q'; break;
@@ -1177,7 +1497,21 @@ namespace WeatherOS.Graphics
                                     case 0x30: key = ConsoleKeyEx.B; keyChar = 'b'; break;
                                     case 0x31: key = ConsoleKeyEx.N; keyChar = 'n'; break;
                                     case 0x32: key = ConsoleKeyEx.M; keyChar = 'm'; break;
+                                    case 0x33: key = ConsoleKeyEx.Comma; keyChar = ','; break;
+                                    case 0x34: key = ConsoleKeyEx.Period; keyChar = '.'; break;
+                                    case 0x35: key = ConsoleKeyEx.Slash; keyChar = '/'; break;
+                                    case 0x37: key = ConsoleKeyEx.D8; keyChar = '*'; break;
                                     case 0x39: key = ConsoleKeyEx.Spacebar; keyChar = ' '; break;
+                                    case 0x3B: key = ConsoleKeyEx.F1; break;
+                                    case 0x3C: key = ConsoleKeyEx.F2; break;
+                                    case 0x3D: key = ConsoleKeyEx.F3; break;
+                                    case 0x3E: key = ConsoleKeyEx.F4; break;
+                                    case 0x3F: key = ConsoleKeyEx.F5; break;
+                                    case 0x40: key = ConsoleKeyEx.F6; break;
+                                    case 0x41: key = ConsoleKeyEx.F7; break;
+                                    case 0x42: key = ConsoleKeyEx.F8; break;
+                                    case 0x43: key = ConsoleKeyEx.F9; break;
+                                    case 0x44: key = ConsoleKeyEx.F10; break;
                                     case 0x48: key = ConsoleKeyEx.UpArrow; break;
                                     case 0x4B: key = ConsoleKeyEx.LeftArrow; break;
                                     case 0x4D: key = ConsoleKeyEx.RightArrow; break;

@@ -89,7 +89,7 @@ namespace WeatherOS.Apps
             win.WriteSeparator(MainSettingsCount + 1);
             win.WriteRow(MainSettingsCount + 2, $"  System Time: {TimeService.GetFormattedTime()} (UTC{(TimeService.TimezoneOffset >= 0 ? "+" + TimeService.TimezoneOffset : TimeService.TimezoneOffset.ToString())})  |  Engine: {TimeService.SyncSource}", ConsoleColor.DarkCyan, 2, fillRemaining: true);
 
-            win.WriteFooter("[Up/Dn] Select  |  [Enter] Toggle/Open  |  [ESC] Exit & Save");
+            win.WriteFooter("[F1] Main Commands Menu  |  [ESC] Exit & Save");
         }
 
         private void DrawClockSubmenu(TuiDesktop desktop)
@@ -117,7 +117,7 @@ namespace WeatherOS.Apps
             win.WriteSeparator(ClockSubmenuCount + 1);
             win.WriteRow(ClockSubmenuCount + 2, $"  Active Time Engine: {TimeService.SyncSource}  |  CMOS RTC Hardware: Ports 0x70/0x71", ConsoleColor.DarkCyan, 2, fillRemaining: true);
 
-            win.WriteFooter("[Up/Dn] Select  |  [Enter] Toggle/Action  |  [Left/Right, +/-] Adjust  |  [ESC] Back");
+            win.WriteFooter("[F1] Main Commands Menu  |  [ESC] Back");
         }
 
         public void HandleInput(TuiDesktop desktop, KeyEvent keyEvent)

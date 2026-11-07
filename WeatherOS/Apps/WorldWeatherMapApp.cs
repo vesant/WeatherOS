@@ -43,12 +43,13 @@ namespace WeatherOS.Apps
     }
 
     /// <summary>
-    /// Dedicated Full-Screen Meteorological Broadcast Mode (80x25, 720x400 VGA).
-    /// Takes over the entire screen without TUI window chrome and programs custom
-    /// 8x16 pixel-slope coastline tiles, topographical relief textures, and 18x16
-    /// two-cell graphical weather sprites directly into VGA Plane 2 Font RAM,
-    /// paired with a custom broadcast RGB DAC palette.
-    /// Restores the standard BIOS font and palette cleanly upon exit.
+    /// Dedicated Full-Screen Meteorological Broadcast Mode (80x25, 720x400 VGA)
+    /// with 5 Real-Time Multi-Spectral Meteorological Map Layers:
+    ///   0: SYNOPTIC ICONS   (18x16 Weather Sprites & Station Temperatures)
+    ///   1: THERMAL HEATMAP  (Continental Isotherms & Temperature Bands in °C)
+    ///   2: PRECIP RADAR     (Doppler Rain, Storm & Cloud Cover Contours)
+    ///   3: WIND STREAMLINES (Directional Wind Velocity Field & Jet Streams in km/h)
+    ///   4: PRESSURE ISOBARS (Barometric High/Low Systems & Isobar Contours in hPa)
     /// </summary>
     public class WorldWeatherMapApp : IApp
     {
@@ -57,7 +58,8 @@ namespace WeatherOS.Apps
         public bool IsRealTime => false;
 
         private bool _initialized = false;
-        private int _currentZone = 0; // 0=Europe, 1=Asia, 2=Americas, 3=Oceania, 4=Africa
+        private int _currentZone = 0;  // 0=Europe, 1=Asia, 2=Americas, 3=Oceania, 4=Africa
+        private int _currentLayer = 0; // 0=Synoptic, 1=Thermal, 2=Radar, 3=Wind, 4=Pressure
         private int _selectedStation = 0;
         private string _statusMessage = "";
 
@@ -113,6 +115,15 @@ namespace WeatherOS.Apps
             "North & South American Sector",
             "Australian & Pacific Sector",
             "African Continental Sector"
+        };
+
+        private static readonly string[] LayerNames = new string[]
+        {
+            "1/5 SYNOPTIC ICONS",
+            "2/5 THERMAL HEATMAP",
+            "3/5 PRECIP RADAR",
+            "4/5 WIND VECTORS",
+            "5/5 PRESSURE ISOBARS"
         };
 
         public WorldWeatherMapApp()
@@ -256,13 +267,7 @@ namespace WeatherOS.Apps
         {
             _continentMaps = new string[5][];
 
-            // Legend for the 80x22 continental templates:
-            // ' ' = Deep Ocean
-            // '#' = Solid Continental Landmass (auto-beveled with pixel slopes at all coastlines!)
-            // '^' = Highland / Mountain Relief (pixel-stippled topographical olive texture on green land)
-            // '-' / '|' = Internal Country Borders on green land
-
-            // 0: EUROPE (80 columns x 22 rows - Refined Iberian Peninsula, Britain/Ireland, Jutland, Scandinavia, Italy, Balkans, Anatolia, North Africa)
+            // 0: EUROPE
             _continentMaps[0] = new string[]
             {
                 "                                     ###########            ####################",
@@ -289,7 +294,7 @@ namespace WeatherOS.Apps
                 "   #############################################################################"
             };
 
-            // 1: ASIA (80 columns x 22 rows - Refined Middle East, India, Indochina, Korea, Japan, Indonesia)
+            // 1: ASIA
             _continentMaps[1] = new string[]
             {
                 "           #####################################################################",
@@ -316,7 +321,7 @@ namespace WeatherOS.Apps
                 "                                                      ############              "
             };
 
-            // 2: AMERICAS (80 columns x 22 rows - Refined North America, Florida, Mexico, Caribbean, Andes & Brazil)
+            // 2: AMERICAS
             _continentMaps[2] = new string[]
             {
                 "     #############        ########################             ############     ",
@@ -343,7 +348,7 @@ namespace WeatherOS.Apps
                 "                                     ^^^|#######                                "
             };
 
-            // 3: OCEANIA (80 columns x 22 rows - Refined Indonesia, New Guinea, Australia with Gulf of Carpentaria, Tasmania & NZ)
+            // 3: OCEANIA
             _continentMaps[3] = new string[]
             {
                 "                                                                                ",
@@ -370,7 +375,7 @@ namespace WeatherOS.Apps
                 "                                                                                "
             };
 
-            // 4: AFRICA (80 columns x 22 rows - Refined West African bulge, Horn of Africa, Nile/Red Sea, Southern Cape & Madagascar)
+            // 4: AFRICA
             _continentMaps[4] = new string[]
             {
                 "                #########################                                       ",
@@ -439,7 +444,7 @@ namespace WeatherOS.Apps
                 gcIdx.Byte  = 0x05; byte origGc5  = gcData.Byte;
                 gcIdx.Byte  = 0x06; byte origGc6  = gcData.Byte;
 
-                // 3. Unlock VGA Plane 2 (Font RAM) mapped at 0xB8000
+                // 3. Unlock VGA Plane 2 (Font RAM) mapped at 0xA0000
                 seqIdx.Byte = 0x00; seqData.Byte = 0x01; // Sync reset
                 seqIdx.Byte = 0x02; seqData.Byte = 0x04; // Write enable Plane 2 only
                 seqIdx.Byte = 0x04; seqData.Byte = 0x07; // Sequential addressing, extended mem
@@ -447,7 +452,7 @@ namespace WeatherOS.Apps
 
                 gcIdx.Byte  = 0x04; gcData.Byte  = 0x02; // Read Plane 2
                 gcIdx.Byte  = 0x05; gcData.Byte  = 0x00; // Linear read/write mode 0
-                gcIdx.Byte  = 0x06; gcData.Byte  = 0x04; // Map Plane 2 window at 0xA0000 (IBM VGA BIOS standard)
+                gcIdx.Byte  = 0x06; gcData.Byte  = 0x04; // Map Plane 2 window at 0xA0000
 
                 byte* fontRam = (byte*)0xA0000;
 
@@ -479,20 +484,13 @@ namespace WeatherOS.Apps
                 gcIdx.Byte  = 0x06; gcData.Byte  = origGc6;
 
                 // 6. Program Authentic Television Broadcast RGB Palette (6-bit DAC values 0..63)
-                // DarkBlue (DAC 1)  -> Deep Ocean Blue (#1A4C8A -> 6, 19, 35)
-                SetDacColor(dacWrite, dacData, 1,  6, 19, 35);
-                // DarkGreen (DAC 2) -> Lush Continental Landmass Green (#447A2C -> 17, 31, 11)
-                SetDacColor(dacWrite, dacData, 2, 17, 31, 11);
-                // DarkCyan (DAC 3)  -> Broadcast HUD / Highlight Pill (#145A78 -> 5, 23, 30)
-                SetDacColor(dacWrite, dacData, 3,  5, 23, 30);
-                // Green (DAC 58)    -> Topographical Olive Highland / Country Border (#788A32 -> 30, 35, 13)
-                SetDacColor(dacWrite, dacData, 58, 30, 35, 13);
-                // Cyan (DAC 59)     -> Rain / Sky Cyan (#50C8FF -> 20, 50, 63)
-                SetDacColor(dacWrite, dacData, 59, 20, 50, 63);
-                // Yellow (DAC 62)   -> Radiant Broadcast Sun Gold (#FFE018 -> 63, 56, 6)
-                SetDacColor(dacWrite, dacData, 62, 63, 56,  6);
-                // White (DAC 63)    -> Pure Cloud & Temperature White (#FFFFFF -> 63, 63, 63)
-                SetDacColor(dacWrite, dacData, 63, 63, 63, 63);
+                SetDacColor(dacWrite, dacData, 1,  6, 19, 35); // DarkBlue: Deep Ocean Blue
+                SetDacColor(dacWrite, dacData, 2, 17, 31, 11); // DarkGreen: Continental Landmass Green
+                SetDacColor(dacWrite, dacData, 3,  5, 23, 30); // DarkCyan: Broadcast HUD / Highlight Pill
+                SetDacColor(dacWrite, dacData, 58, 30, 35, 13); // Green: Topographical Olive / Mild Layer
+                SetDacColor(dacWrite, dacData, 59, 20, 50, 63); // Cyan: Rain / Cold Layer Cyan
+                SetDacColor(dacWrite, dacData, 62, 63, 56,  6); // Yellow: Radiant Broadcast Sun / Warm Layer
+                SetDacColor(dacWrite, dacData, 63, 63, 63, 63); // White: Pure Cloud & Telemetry White
 
                 _vgaCustomActive = true;
             }
@@ -514,7 +512,6 @@ namespace WeatherOS.Apps
 
                 if (_backupsCaptured)
                 {
-                    // 1. Restore original glyphs 0xC0..0xDF in Plane 2
                     seqIdx.Byte = 0x02; byte origSeq2 = seqData.Byte;
                     seqIdx.Byte = 0x04; byte origSeq4 = seqData.Byte;
                     gcIdx.Byte  = 0x04; byte origGc4  = gcData.Byte;
@@ -549,7 +546,6 @@ namespace WeatherOS.Apps
                     gcIdx.Byte  = 0x05; gcData.Byte  = origGc5;
                     gcIdx.Byte  = 0x06; gcData.Byte  = origGc6;
 
-                    // 2. Restore original 64 DAC palette entries
                     dacWrite.Byte = 0;
                     for (int i = 0; i < 64 * 3; i++)
                     {
@@ -583,53 +579,44 @@ namespace WeatherOS.Apps
 
         private static unsafe void ProgramCustomGlyphs(byte* fontRam)
         {
-            // 1. Smooth 45-degree & curved coastal edge slopes (Fg = Land Green, Bg = Ocean Blue)
-            // NW Coastline '/' (Top-Left Ocean, Bottom-Right Land; Bit 0 = 1 joins seamlessly to Land on right)
+            // 1. Smooth 45-degree & curved coastal edge slopes
             WriteGlyph(fontRam, GLYPH_COAST_NW,
                 0x01, 0x03, 0x03, 0x07, 0x07, 0x0F, 0x0F, 0x1F,
                 0x1F, 0x3F, 0x3F, 0x7F, 0x7F, 0xFF, 0xFF, 0xFF);
 
-            // NE Coastline '\' (Top-Right Ocean, Bottom-Left Land; Bit 0 = 0 joins seamlessly to Ocean on right)
             WriteGlyph(fontRam, GLYPH_COAST_NE,
                 0x80, 0xC0, 0xC0, 0xE0, 0xE0, 0xF0, 0xF0, 0xF8,
                 0xF8, 0xFC, 0xFC, 0xFE, 0xFE, 0xFE, 0xFF, 0xFF);
 
-            // SW Coastline '\' (Bottom-Left Ocean, Top-Right Land; Bit 0 = 1 joins seamlessly to Land on right)
             WriteGlyph(fontRam, GLYPH_COAST_SW,
                 0xFF, 0xFF, 0xFF, 0x7F, 0x7F, 0x3F, 0x3F, 0x1F,
                 0x1F, 0x0F, 0x0F, 0x07, 0x07, 0x03, 0x03, 0x01);
 
-            // SE Coastline '/' (Bottom-Right Ocean, Top-Left Land; Bit 0 = 0 joins seamlessly to Ocean on right)
             WriteGlyph(fontRam, GLYPH_COAST_SE,
                 0xFF, 0xFF, 0xFE, 0xFE, 0xFC, 0xFC, 0xF8, 0xF8,
                 0xF0, 0xF0, 0xE0, 0xE0, 0xC0, 0xC0, 0x80, 0x80);
 
-            // North Coastline (Upper 5px Ocean, Lower 11px Land)
             WriteGlyph(fontRam, GLYPH_COAST_NORTH,
                 0x00, 0x00, 0x00, 0x00, 0x00, 0x3F, 0xFF, 0xFF,
                 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF);
 
-            // South Coastline (Upper 11px Land, Lower 5px Ocean)
             WriteGlyph(fontRam, GLYPH_COAST_SOUTH,
                 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
                 0xFF, 0xFF, 0xFC, 0x00, 0x00, 0x00, 0x00, 0x00);
 
-            // West Coastline (Left 2px Ocean, Right 7px Rounded Land)
             WriteGlyph(fontRam, GLYPH_COAST_WEST,
                 0x1F, 0x3F, 0x3F, 0x7F, 0x7F, 0x7F, 0x7F, 0x7F,
                 0x7F, 0x7F, 0x7F, 0x7F, 0x7F, 0x3F, 0x3F, 0x1F);
 
-            // East Coastline (Left 7px Rounded Land, Right 2px Ocean)
             WriteGlyph(fontRam, GLYPH_COAST_EAST,
                 0xF8, 0xFC, 0xFC, 0xFE, 0xFE, 0xFE, 0xFE, 0xFE,
                 0xFE, 0xFE, 0xFE, 0xFE, 0xFE, 0xFC, 0xFC, 0xF8);
 
-            // Rounded Island / Peninsula Tip
             WriteGlyph(fontRam, GLYPH_ISLAND,
                 0x00, 0x00, 0x18, 0x3C, 0x7E, 0x7E, 0xFF, 0xFF,
                 0xFF, 0xFF, 0x7E, 0x7E, 0x3C, 0x18, 0x00, 0x00);
 
-            // 2. Internal Country Borders & Mountain Highland Relief (Fg = Olive Green, Bg = Land Green)
+            // 2. Internal Country Borders & Mountain Highland Relief
             WriteGlyph(fontRam, GLYPH_BORDER_HORIZ,
                 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xAA,
                 0x55, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00);
@@ -643,7 +630,6 @@ namespace WeatherOS.Apps
                 0x22, 0x55, 0x88, 0x55, 0x22, 0x55, 0x88, 0x55);
 
             // 3. 18x16 Two-Cell Broadcast Weather Icon Sprites
-            // RADIANT SUN (0xD0 Left + 0xD1 Right)
             WriteGlyph(fontRam, GLYPH_SUN_L,
                 0x01, 0x21, 0x10, 0x07, 0x0F, 0x1F, 0x1F, 0xDF,
                 0xDF, 0x1F, 0x1F, 0x0F, 0x07, 0x10, 0x21, 0x01);
@@ -651,7 +637,6 @@ namespace WeatherOS.Apps
                 0x80, 0x84, 0x08, 0xE0, 0xF0, 0xF8, 0xF8, 0xFB,
                 0xFB, 0xF8, 0xF8, 0xF0, 0xE0, 0x08, 0x84, 0x80);
 
-            // PARTLY CLOUDY: Left Sun in Yellow (0xD2) + Right Cloud in White (0xD3)
             WriteGlyph(fontRam, GLYPH_PARTCLOUD_L,
                 0x02, 0x22, 0x10, 0x0F, 0x1F, 0x3F, 0xFF, 0x3F,
                 0x3F, 0x1F, 0x0F, 0x00, 0x00, 0x00, 0x00, 0x00);
@@ -659,7 +644,6 @@ namespace WeatherOS.Apps
                 0x00, 0x00, 0x00, 0x1C, 0x3E, 0x7F, 0xFF, 0xFF,
                 0xFF, 0xFF, 0xFF, 0xFE, 0x7C, 0x00, 0x00, 0x00);
 
-            // CLOUDY / OVERCAST: Sculpted Two-Cell Cloud (0xD4 Left + 0xD5 Right)
             WriteGlyph(fontRam, GLYPH_CLOUD_L,
                 0x00, 0x00, 0x00, 0x03, 0x07, 0x1F, 0x3F, 0x7F,
                 0xFF, 0xFF, 0xFF, 0x7F, 0x3F, 0x00, 0x00, 0x00);
@@ -667,7 +651,6 @@ namespace WeatherOS.Apps
                 0x00, 0x00, 0x38, 0x7C, 0xFE, 0xFF, 0xFF, 0xFF,
                 0xFF, 0xFF, 0xFF, 0xFE, 0xFC, 0x00, 0x00, 0x00);
 
-            // RAIN SHOWERS: Cloud + Diagonal Raindrops (0xD6 Left + 0xD7 Right)
             WriteGlyph(fontRam, GLYPH_RAIN_L,
                 0x00, 0x03, 0x07, 0x1F, 0x3F, 0x7F, 0xFF, 0xFF,
                 0x7F, 0x00, 0x11, 0x22, 0x44, 0x11, 0x22, 0x00);
@@ -675,7 +658,6 @@ namespace WeatherOS.Apps
                 0x1C, 0x3E, 0x7F, 0xFF, 0xFF, 0xFF, 0xFF, 0xFE,
                 0xFC, 0x00, 0x44, 0x88, 0x10, 0x44, 0x88, 0x00);
 
-            // THUNDERSTORM: Cloud (0xD8 Left) + Lightning Bolt (0xD9 Right)
             WriteGlyph(fontRam, GLYPH_STORM_L,
                 0x00, 0x03, 0x07, 0x1F, 0x3F, 0x7F, 0xFF, 0xFF,
                 0x7F, 0x00, 0x08, 0x10, 0x20, 0x00, 0x00, 0x00);
@@ -683,7 +665,6 @@ namespace WeatherOS.Apps
                 0x1C, 0x3E, 0x7F, 0xFF, 0xFF, 0xFE, 0x1C, 0x38,
                 0x70, 0x3E, 0x1C, 0x38, 0x70, 0x60, 0xC0, 0x00);
 
-            // SNOW: Cloud + Snowflakes (0xDA Left + 0xDB Right)
             WriteGlyph(fontRam, GLYPH_SNOW_L,
                 0x00, 0x03, 0x07, 0x1F, 0x3F, 0x7F, 0xFF, 0xFF,
                 0x7F, 0x00, 0x2A, 0x14, 0x2A, 0x00, 0x00, 0x00);
@@ -693,7 +674,7 @@ namespace WeatherOS.Apps
         }
 
         // =====================================================================
-        // FULL-SCREEN 80x25 BROADCAST RENDERER
+        // FULL-SCREEN 80x25 BROADCAST & METEOROLOGICAL LAYER RENDERER
         // =====================================================================
 
         public void Draw(TuiDesktop desktop)
@@ -708,22 +689,32 @@ namespace WeatherOS.Apps
 
             if (_zones == null || _zones.Length == 0) return;
             if (_currentZone < 0 || _currentZone >= _zones.Length) _currentZone = 0;
+            if (_currentLayer < 0 || _currentLayer >= LayerNames.Length) _currentLayer = 0;
             var stations = _zones[_currentZone];
             if (stations == null || stations.Length == 0) return;
             if (_selectedStation < 0 || _selectedStation >= stations.Length) _selectedStation = 0;
 
             // Row 0: Full-Screen World Weather Map Top Bar (80 columns)
-            string topBar = " WORLD WEATHER MAP  |  REGION: [" + ZoneNames[_currentZone] + "]  |  [Tab/C] Continent  [<>] Station  [R] Sync";
+            string topBar = " WORLD WEATHER MAP | SECTOR: [" + ZoneNames[_currentZone] + "] | LAYER: [" + LayerNames[_currentLayer] + "] | [F1] Main";
             WriteFullRow(0, topBar, ConsoleColor.White, ConsoleColor.DarkCyan);
 
-            // Rows 1..22: Full-Screen 80x22 Continental Map with Pixel-Sloped Coastlines
-            DrawContinentMapFullScreen();
+            // Rows 1..22: Full-Screen 80x22 Continental Map + Active Meteorological Layer Field
+            DrawContinentMapFullScreen(stations);
 
-            // Overlay 18x16 Pixel Weather Icon Sprites + Temperatures directly on the Map
-            DrawStationsFullScreen();
+            // Overlay Station Telemetry Markers / Sprites according to Active Layer
+            DrawStationsFullScreen(stations);
 
-            // Rows 23..24: Bottom Broadcast Telemetry & Station Ribbon Bar
+            // Draw Layer Scale Legend Pill in Row 22 (Bottom-Right of Map Canvas)
+            DrawActiveLayerLegend();
+
+            // Rows 23..24: Bottom Broadcast Telemetry & Unified Main Commands Prompt
             DrawBottomBroadcastHud();
+
+            // If Main Commands Popup is open, render Broadcast Modal Overlay in VGA memory
+            if (desktop.IsCommandPopupOpen)
+            {
+                DrawBroadcastCommandsModal();
+            }
         }
 
         private void SyncWithLiveReading(TuiDesktop desktop)
@@ -765,7 +756,63 @@ namespace WeatherOS.Apps
             return c != ' ';
         }
 
-        private void DrawContinentMapFullScreen()
+        // Spatial Inverse-Distance Weighting (IDW) interpolation across continental stations
+        private void InterpolateTelemetryAt(GlobalStation[] stations, int mx, int my,
+            out int interpTemp, out int interpHum, out int interpWind, out int interpPress,
+            out int nearestDistSq, out int nearestIdx)
+        {
+            long numTemp = 0, numHum = 0, numWind = 0, numPress = 0, denWeight = 0;
+            nearestDistSq = 999999;
+            nearestIdx = 0;
+
+            for (int i = 0; i < stations.Length; i++)
+            {
+                int dx = mx - stations[i].MapX;
+                int dy = (my - stations[i].MapY) * 2; // Aspect ratio correction for 8x16 cells
+                int d2 = dx * dx + dy * dy;
+                if (d2 < nearestDistSq)
+                {
+                    nearestDistSq = d2;
+                    nearestIdx = i;
+                }
+                if (d2 <= 1)
+                {
+                    interpTemp = stations[i].TempC;
+                    interpHum = stations[i].Humidity;
+                    interpWind = stations[i].WindKmh;
+                    interpPress = stations[i].Pressure;
+                    return;
+                }
+
+                // Weight = 10000 / (d2 + 8)
+                long w = 10000 / (d2 + 8);
+                if (w < 1) w = 1;
+                numTemp += stations[i].TempC * w;
+                numHum += stations[i].Humidity * w;
+                numWind += stations[i].WindKmh * w;
+                numPress += stations[i].Pressure * w;
+                denWeight += w;
+            }
+
+            if (denWeight <= 0) denWeight = 1;
+            interpTemp = (int)(numTemp / denWeight);
+            interpHum = (int)(numHum / denWeight);
+            interpWind = (int)(numWind / denWeight);
+            interpPress = (int)(numPress / denWeight);
+        }
+
+        private int GetStationPrecipScore(GlobalStation st)
+        {
+            string c = (st.Condition ?? "").ToLower();
+            if (c.Contains("thunder") || c.Contains("storm")) return 4;
+            if (c.Contains("rain") || c.Contains("shower") || c.Contains("drizzle")) return 3;
+            if (c.Contains("snow") || c.Contains("sleet")) return 3;
+            if (c.Contains("cloud") || c.Contains("overcast") || c.Contains("fog") || st.Humidity >= 80) return 2;
+            if (c.Contains("part") || st.Humidity >= 68) return 1;
+            return 0;
+        }
+
+        private void DrawContinentMapFullScreen(GlobalStation[] stations)
         {
             string[] map = _continentMaps[_currentZone];
             if (map == null) return;
@@ -781,7 +828,34 @@ namespace WeatherOS.Apps
 
                     if (c == ' ')
                     {
-                        // Deep Broadcast Ocean
+                        // Ocean cell: in Layer 2 (Radar), Layer 3 (Wind), or Layer 4 (Pressure),
+                        // allow coastal/marine weather overlays near active stations
+                        if (_currentLayer != 0 && stations != null && stations.Length > 0)
+                        {
+                            int t, h, w, p, nearDistSq, nearIdx;
+                            InterpolateTelemetryAt(stations, mx, my, out t, out h, out w, out p, out nearDistSq, out nearIdx);
+
+                            if (_currentLayer == 2 && nearDistSq <= 85)
+                            {
+                                int pScore = GetStationPrecipScore(stations[nearIdx]);
+                                if (pScore >= 3 && nearDistSq <= 45 && ((mx + my) % 2 == 0))
+                                {
+                                    PutVgaCell(mx, screenY, (byte)'/', ConsoleColor.Cyan, ConsoleColor.DarkBlue);
+                                    continue;
+                                }
+                            }
+                            else if (_currentLayer == 3 && ((mx + my * 3) % 7 == 0))
+                            {
+                                PutVgaCell(mx, screenY, (byte)'~', ConsoleColor.Cyan, ConsoleColor.DarkBlue);
+                                continue;
+                            }
+                            else if (_currentLayer == 4 && (p == 1012 || p == 1015 || p == 1018) && ((mx + my) % 3 == 0))
+                            {
+                                PutVgaCell(mx, screenY, (byte)'.', ConsoleColor.Cyan, ConsoleColor.DarkBlue);
+                                continue;
+                            }
+                        }
+
                         PutVgaCell(mx, screenY, (byte)' ', ConsoleColor.DarkBlue, ConsoleColor.DarkBlue);
                         continue;
                     }
@@ -794,103 +868,260 @@ namespace WeatherOS.Apps
 
                     if (!upLand && !leftLand && downLand && rightLand)
                     {
-                        // NW 45-degree diagonal coastline '/'
                         PutVgaCell(mx, screenY, GLYPH_COAST_NW, ConsoleColor.DarkGreen, ConsoleColor.DarkBlue);
                     }
                     else if (!upLand && !rightLand && downLand && leftLand)
                     {
-                        // NE 45-degree diagonal coastline '\'
                         PutVgaCell(mx, screenY, GLYPH_COAST_NE, ConsoleColor.DarkGreen, ConsoleColor.DarkBlue);
                     }
                     else if (!downLand && !leftLand && upLand && rightLand)
                     {
-                        // SW 45-degree diagonal coastline '\'
                         PutVgaCell(mx, screenY, GLYPH_COAST_SW, ConsoleColor.DarkGreen, ConsoleColor.DarkBlue);
                     }
                     else if (!downLand && !rightLand && upLand && leftLand)
                     {
-                        // SE 45-degree diagonal coastline '/'
                         PutVgaCell(mx, screenY, GLYPH_COAST_SE, ConsoleColor.DarkGreen, ConsoleColor.DarkBlue);
                     }
                     else if (!upLand && !downLand && !leftLand && !rightLand)
                     {
-                        // Isolated small island
                         PutVgaCell(mx, screenY, GLYPH_ISLAND, ConsoleColor.DarkGreen, ConsoleColor.DarkBlue);
                     }
                     else if (!upLand && downLand && leftLand && rightLand)
                     {
-                        // Gentle horizontal North coast
                         PutVgaCell(mx, screenY, GLYPH_COAST_NORTH, ConsoleColor.DarkGreen, ConsoleColor.DarkBlue);
                     }
                     else if (!downLand && upLand && leftLand && rightLand)
                     {
-                        // Gentle horizontal South coast
                         PutVgaCell(mx, screenY, GLYPH_COAST_SOUTH, ConsoleColor.DarkGreen, ConsoleColor.DarkBlue);
                     }
                     else if (!leftLand && rightLand && upLand && downLand)
                     {
-                        // Rounded vertical West coast
                         PutVgaCell(mx, screenY, GLYPH_COAST_WEST, ConsoleColor.DarkGreen, ConsoleColor.DarkBlue);
                     }
                     else if (!rightLand && leftLand && upLand && downLand)
                     {
-                        // Rounded vertical East coast
                         PutVgaCell(mx, screenY, GLYPH_COAST_EAST, ConsoleColor.DarkGreen, ConsoleColor.DarkBlue);
                     }
                     else
                     {
-                        // Solid Interior Landmass (with optional highland relief or subtle country borders)
-                        if (c == '^')
+                        // Interior Continental Landmass: Render according to Active Meteorological Layer!
+                        if (_currentLayer == 0)
                         {
-                            PutVgaCell(mx, screenY, GLYPH_HIGHLAND, ConsoleColor.Green, ConsoleColor.DarkGreen);
-                        }
-                        else if (c == '-')
-                        {
-                            PutVgaCell(mx, screenY, GLYPH_BORDER_HORIZ, ConsoleColor.Green, ConsoleColor.DarkGreen);
-                        }
-                        else if (c == '|')
-                        {
-                            PutVgaCell(mx, screenY, GLYPH_BORDER_VERT, ConsoleColor.Green, ConsoleColor.DarkGreen);
+                            // Layer 0: Standard Synoptic Relief & Borders
+                            if (c == '^')
+                                PutVgaCell(mx, screenY, GLYPH_HIGHLAND, ConsoleColor.Green, ConsoleColor.DarkGreen);
+                            else if (c == '-')
+                                PutVgaCell(mx, screenY, GLYPH_BORDER_HORIZ, ConsoleColor.Green, ConsoleColor.DarkGreen);
+                            else if (c == '|')
+                                PutVgaCell(mx, screenY, GLYPH_BORDER_VERT, ConsoleColor.Green, ConsoleColor.DarkGreen);
+                            else
+                                PutVgaCell(mx, screenY, (byte)' ', ConsoleColor.DarkGreen, ConsoleColor.DarkGreen);
                         }
                         else
                         {
-                            PutVgaCell(mx, screenY, (byte)' ', ConsoleColor.DarkGreen, ConsoleColor.DarkGreen);
+                            DrawInteriorLayerCell(stations, mx, my, screenY, c);
                         }
                     }
                 }
             }
         }
 
-        private void DrawStationsFullScreen()
+        private void DrawInteriorLayerCell(GlobalStation[] stations, int mx, int my, int screenY, char terrainChar)
         {
-            var stations = _zones[_currentZone];
+            int t, h, w, p, nearDistSq, nearIdx;
+            InterpolateTelemetryAt(stations, mx, my, out t, out h, out w, out p, out nearDistSq, out nearIdx);
+
+            if (_currentLayer == 1)
+            {
+                // LAYER 1: THERMAL / TEMPERATURE HEATMAP (Isotherms & Thermal Bands)
+                if (t >= 26)
+                {
+                    // Hot Zone (>= 26C): Intense Red/Yellow Thermal Pattern
+                    byte g = ((mx + my) % 2 == 0) ? (byte)'*' : (byte)'+';
+                    PutVgaCell(mx, screenY, g, ConsoleColor.Red, ConsoleColor.DarkGreen);
+                }
+                else if (t >= 19)
+                {
+                    // Warm Zone (19..25C): Radiant Yellow Isotherm Shading
+                    byte g = ((mx + my) % 2 == 0) ? (byte)'=' : (byte)'~';
+                    PutVgaCell(mx, screenY, g, ConsoleColor.Yellow, ConsoleColor.DarkGreen);
+                }
+                else if (t >= 11)
+                {
+                    // Mild Zone (11..18C): Lush Green / Olive Isotherm Stipple
+                    PutVgaCell(mx, screenY, GLYPH_HIGHLAND, ConsoleColor.Green, ConsoleColor.DarkGreen);
+                }
+                else
+                {
+                    // Cold Zone (<= 10C): Cyan / Frost Thermal Band
+                    byte g = ((mx + my) % 2 == 0) ? (byte)':' : (byte)'.';
+                    PutVgaCell(mx, screenY, g, ConsoleColor.Cyan, ConsoleColor.DarkGreen);
+                }
+            }
+            else if (_currentLayer == 2)
+            {
+                // LAYER 2: DOPPLER PRECIPITATION & STORM RADAR
+                int nearScore = GetStationPrecipScore(stations[nearIdx]);
+                if (nearScore == 4 && nearDistSq <= 65)
+                {
+                    // Severe Storm Core Radar Echo
+                    byte g = (nearDistSq <= 24) ? (byte)'*' : (byte)'/';
+                    ConsoleColor fg = (nearDistSq <= 24) ? ConsoleColor.Yellow : ConsoleColor.Cyan;
+                    PutVgaCell(mx, screenY, g, fg, ConsoleColor.DarkGreen);
+                }
+                else if (nearScore >= 3 && nearDistSq <= 80)
+                {
+                    // Active Rain Shower Radar Echo
+                    byte g = (nearDistSq <= 35) ? (byte)'/' : (byte)':';
+                    PutVgaCell(mx, screenY, g, ConsoleColor.Cyan, ConsoleColor.DarkGreen);
+                }
+                else if (h >= 75 || nearScore == 2)
+                {
+                    // Cloud Cover / High Moisture Field
+                    byte g = ((mx + my) % 2 == 0) ? (byte)'.' : (byte)' ';
+                    PutVgaCell(mx, screenY, g, ConsoleColor.White, ConsoleColor.DarkGreen);
+                }
+                else
+                {
+                    // Clear Sky Sector
+                    PutVgaCell(mx, screenY, (byte)' ', ConsoleColor.DarkGreen, ConsoleColor.DarkGreen);
+                }
+            }
+            else if (_currentLayer == 3)
+            {
+                // LAYER 3: WIND VELOCITY & STREAMLINE VECTORS
+                bool isStreamCell = ((mx + my * 2) % 3 == 0);
+                if (!isStreamCell)
+                {
+                    PutVgaCell(mx, screenY, (byte)' ', ConsoleColor.DarkGreen, ConsoleColor.DarkGreen);
+                    return;
+                }
+
+                if (w >= 16)
+                {
+                    // High-Velocity Wind Jet (>= 16 km/h)
+                    byte g = (mx % 2 == 0) ? (byte)'>' : (byte)'=';
+                    PutVgaCell(mx, screenY, g, ConsoleColor.Yellow, ConsoleColor.DarkGreen);
+                }
+                else if (w >= 12)
+                {
+                    // Moderate Synoptic Breeze (12..15 km/h)
+                    byte g = (mx % 2 == 0) ? (byte)'~' : (byte)'>';
+                    PutVgaCell(mx, screenY, g, ConsoleColor.Cyan, ConsoleColor.DarkGreen);
+                }
+                else
+                {
+                    // Light Continental Flow (< 12 km/h)
+                    PutVgaCell(mx, screenY, (byte)'-', ConsoleColor.Green, ConsoleColor.DarkGreen);
+                }
+            }
+            else if (_currentLayer == 4)
+            {
+                // LAYER 4: BAROMETRIC PRESSURE & ISOBARS (hPa)
+                if (p == 1011 || p == 1013 || p == 1015 || p == 1017 || p == 1019)
+                {
+                    // Synoptic Isobar Contour Line
+                    ConsoleColor isoCol = (p >= 1017) ? ConsoleColor.Cyan : (p <= 1013 ? ConsoleColor.Yellow : ConsoleColor.White);
+                    PutVgaCell(mx, screenY, (byte)'~', isoCol, ConsoleColor.DarkGreen);
+                }
+                else if (p >= 1018 && ((mx + my) % 4 == 0))
+                {
+                    PutVgaCell(mx, screenY, (byte)'+', ConsoleColor.Cyan, ConsoleColor.DarkGreen);
+                }
+                else if (p <= 1012 && ((mx + my) % 4 == 0))
+                {
+                    PutVgaCell(mx, screenY, (byte)'-', ConsoleColor.Yellow, ConsoleColor.DarkGreen);
+                }
+                else
+                {
+                    PutVgaCell(mx, screenY, (byte)' ', ConsoleColor.DarkGreen, ConsoleColor.DarkGreen);
+                }
+            }
+        }
+
+        private void DrawStationsFullScreen(GlobalStation[] stations)
+        {
             if (stations == null) return;
 
-            // Draw all unselected stations first, then draw the selected station on top
             for (int i = 0; i < stations.Length; i++)
             {
                 if (i == _selectedStation) continue;
-                DrawStationSpriteAndTemp(stations[i], false);
+                DrawStationOverlay(stations[i], false);
             }
 
             if (_selectedStation >= 0 && _selectedStation < stations.Length)
             {
-                DrawStationSpriteAndTemp(stations[_selectedStation], true);
+                DrawStationOverlay(stations[_selectedStation], true);
             }
+        }
+
+        private void DrawStationOverlay(GlobalStation st, bool isSelected)
+        {
+            if (_currentLayer == 0)
+            {
+                DrawStationSpriteAndTemp(st, isSelected);
+                return;
+            }
+
+            int x = st.MapX;
+            int y = 1 + st.MapY;
+            if (y < 1 || y > 22 || x < 0 || x >= 74) return;
+
+            string badge;
+            ConsoleColor fg;
+            ConsoleColor bg = isSelected ? ConsoleColor.DarkCyan : ConsoleColor.DarkGreen;
+
+            if (_currentLayer == 1)
+            {
+                // Thermal Layer: Show Temperature with Cold/Mild/Warm/Hot color coding
+                badge = st.TempC + "ºC";
+                if (isSelected) fg = ConsoleColor.Yellow;
+                else if (st.TempC >= 26) fg = ConsoleColor.Red;
+                else if (st.TempC >= 19) fg = ConsoleColor.Yellow;
+                else if (st.TempC <= 10) fg = ConsoleColor.Cyan;
+                else fg = ConsoleColor.White;
+            }
+            else if (_currentLayer == 2)
+            {
+                // Radar Layer: Show Precipitation Type + Humidity %
+                int pScore = GetStationPrecipScore(st);
+                if (pScore == 4) { badge = "STRM " + st.Humidity + "%"; fg = ConsoleColor.Yellow; }
+                else if (pScore == 3) { badge = "RAIN " + st.Humidity + "%"; fg = ConsoleColor.Cyan; }
+                else if (pScore == 2) { badge = "CLD " + st.Humidity + "%"; fg = ConsoleColor.White; }
+                else { badge = "DRY " + st.Humidity + "%"; fg = isSelected ? ConsoleColor.Yellow : ConsoleColor.Green; }
+            }
+            else if (_currentLayer == 3)
+            {
+                // Wind Layer: Show Wind Vector Arrow + Speed in km/h
+                badge = ">>" + st.WindKmh + "kmh";
+                fg = isSelected ? ConsoleColor.Yellow : (st.WindKmh >= 16 ? ConsoleColor.Yellow : ConsoleColor.Cyan);
+            }
+            else
+            {
+                // Pressure Layer: Show High/Low Center Badge (H / L) + hPa
+                string sysType = st.Pressure >= 1017 ? "H:" : (st.Pressure <= 1013 ? "L:" : "P:");
+                badge = sysType + st.Pressure;
+                fg = isSelected ? ConsoleColor.Yellow : (st.Pressure >= 1017 ? ConsoleColor.Cyan : (st.Pressure <= 1013 ? ConsoleColor.Yellow : ConsoleColor.White));
+            }
+
+            if (isSelected)
+            {
+                badge = "[" + badge + "]";
+            }
+
+            DirectVgaWrite(x, y, badge, fg, bg);
         }
 
         private void DrawStationSpriteAndTemp(GlobalStation st, bool isSelected)
         {
             int x = st.MapX;
-            int y = 1 + st.MapY; // Map starts at screen row 1
+            int y = 1 + st.MapY;
             if (y < 1 || y > 22 || x < 0 || x >= 75) return;
 
             byte glyphL, glyphR;
             ConsoleColor colorL, colorR;
             GetWeatherSpritePair(st.Condition, out glyphL, out glyphR, out colorL, out colorR);
 
-            // Unselected stations sit directly on the lush green landmass (zero black boxes!)
-            // Selected station uses a high-contrast broadcast highlight pill
             ConsoleColor bg = isSelected ? ConsoleColor.DarkCyan : ConsoleColor.DarkGreen;
             ConsoleColor tempFg = isSelected ? ConsoleColor.Yellow : ConsoleColor.White;
 
@@ -901,11 +1132,9 @@ namespace WeatherOS.Apps
                 PutVgaCell(curX - 1, y, (byte)'[', ConsoleColor.Yellow, bg);
             }
 
-            // 18x16 Two-Cell Graphical Weather Icon Sprite
             PutVgaCell(curX,     y, glyphL, colorL, bg);
             PutVgaCell(curX + 1, y, glyphR, colorR, bg);
 
-            // Temperature string (e.g. "15°") right next to the icon
             string tempStr = st.TempC.ToString();
             int tx = curX + 2;
             for (int i = 0; i < tempStr.Length && (tx + i) < 79; i++)
@@ -915,13 +1144,42 @@ namespace WeatherOS.Apps
             int degX = tx + tempStr.Length;
             if (degX < 79)
             {
-                PutVgaCell(degX, y, 0xF8, tempFg, bg); // CP437 degree symbol '°'
+                PutVgaCell(degX, y, 0xF8, tempFg, bg);
             }
 
             if (isSelected && (degX + 1) < 80)
             {
                 PutVgaCell(degX + 1, y, (byte)']', ConsoleColor.Yellow, bg);
             }
+        }
+
+        private void DrawActiveLayerLegend()
+        {
+            string legend;
+            if (_currentLayer == 0)
+            {
+                legend = " LAYER 1: SYNOPTIC ICONS & TEMP (Press [L] to change layer) ";
+            }
+            else if (_currentLayer == 1)
+            {
+                legend = " THERMAL SCALE: [:]<=10C Cold  [#]11-18C Mild  [=]19-25C Warm  [*]>=26C Hot ";
+            }
+            else if (_currentLayer == 2)
+            {
+                legend = " DOPPLER RADAR: [ ]Dry  [.]Cloud Cover  [/]Rain Echo  [*]Thunderstorm Core ";
+            }
+            else if (_currentLayer == 3)
+            {
+                legend = " WIND STREAMLINES: [-]<12km/h Calm  [~]12-15km/h Breeze  [>>]>=16km/h Strong ";
+            }
+            else
+            {
+                legend = " BAROMETRIC ISOBARS: [L-]<=1013hPa Low  [~]Isobar Line  [H+]>=1017hPa High ";
+            }
+
+            int startX = 80 - legend.Length;
+            if (startX < 0) startX = 0;
+            DirectVgaWrite(startX, 22, legend, ConsoleColor.White, ConsoleColor.DarkCyan);
         }
 
         private void GetWeatherSpritePair(string condition, out byte glyphL, out byte glyphR, out ConsoleColor colorL, out ConsoleColor colorR)
@@ -951,7 +1209,6 @@ namespace WeatherOS.Apps
             }
             else if (c.Contains("part") || c.Contains("scattered"))
             {
-                // Multi-color 2-tone icon: Yellow Sun on Left + White Cloud on Right!
                 glyphL = GLYPH_PARTCLOUD_L;
                 glyphR = GLYPH_PARTCLOUD_R;
                 colorL = ConsoleColor.Yellow;
@@ -966,7 +1223,6 @@ namespace WeatherOS.Apps
             }
             else
             {
-                // Radiant Broadcast Sun
                 glyphL = GLYPH_SUN_L;
                 glyphR = GLYPH_SUN_R;
                 colorL = ConsoleColor.Yellow;
@@ -980,7 +1236,7 @@ namespace WeatherOS.Apps
             if (stations == null || _selectedStation < 0 || _selectedStation >= stations.Length) return;
 
             var sel = stations[_selectedStation];
-            string liveBadge = sel.IsLive ? "[LIVE API]" : "[SYNOPTIC]";
+            string liveBadge = sel.IsLive ? "[LIVE]" : "[SYNOPTIC]";
 
             // Row 23: Complete Selected Station Telemetry Bar
             string row23;
@@ -990,15 +1246,15 @@ namespace WeatherOS.Apps
             }
             else
             {
-                row23 = " > " + sel.Name.ToUpper() + " (" + sel.Country + ") [" + sel.Lat + "," + sel.Lon + "] | " +
+                row23 = " > " + sel.Name.ToUpper() + " (" + sel.Country + ") | " +
                         sel.TempC + "ºC " + sel.Condition + " | Hum:" + sel.Humidity + "% Wind:" + sel.WindKmh + "km/h " + sel.Pressure + "hPa " + liveBadge;
             }
             WriteFullRow(23, row23, ConsoleColor.Yellow, ConsoleColor.DarkCyan);
 
-            // Row 24: Scrolling Station Selector Ribbon + Exit/Dashboard Shortcuts
+            // Row 24: Scrolling Station Selector Ribbon + Unified Main Commands Prompt
             string ribbon = " STATIONS: ";
             int total = stations.Length;
-            int windowSize = 6;
+            int windowSize = 5;
             int startIdx = _selectedStation - (windowSize / 2);
             if (startIdx < 0) startIdx = 0;
             if (startIdx + windowSize > total) startIdx = Math.Max(0, total - windowSize);
@@ -1009,12 +1265,64 @@ namespace WeatherOS.Apps
                 else ribbon += stations[i].Name + " ";
             }
 
-            string rightHint = "[Enter] Open  [ESC] Exit ";
+            string rightHint = "[F1] Main Commands  [L] Layer  [ESC] Exit ";
             int maxLeft = 80 - rightHint.Length;
             if (ribbon.Length > maxLeft) ribbon = ribbon.Substring(0, maxLeft);
             else ribbon = ribbon.PadRight(maxLeft, ' ');
 
             WriteFullRow(24, ribbon + rightHint, ConsoleColor.White, ConsoleColor.Black);
+        }
+
+        private void DrawBroadcastCommandsModal()
+        {
+            int left = 7;
+            int top = 3;
+            int width = 66;
+            int height = 17;
+
+            // Fill modal background and border in VGA text memory
+            for (int y = top; y < top + height; y++)
+            {
+                for (int x = left; x < left + width; x++)
+                {
+                    byte ch = (byte)' ';
+                    ConsoleColor fg = ConsoleColor.White;
+                    if (y == top || y == top + height - 1)
+                    {
+                        ch = (x == left || x == left + width - 1) ? (byte)'+' : (byte)'-';
+                        fg = ConsoleColor.Cyan;
+                    }
+                    else if (x == left || x == left + width - 1)
+                    {
+                        ch = (byte)'|';
+                        fg = ConsoleColor.Cyan;
+                    }
+                    PutVgaCell(x, y, ch, fg, ConsoleColor.Black);
+                }
+            }
+
+            DirectVgaWrite(left + 3, top, " MAIN COMMANDS MENU  |  WORLD WEATHER MAP & LAYERS ", ConsoleColor.Yellow, ConsoleColor.Black);
+            DirectVgaWrite(left + 3, top + 2, "METEOROLOGICAL MAP LAYER & TELEMETRY CONTROLS:", ConsoleColor.Cyan, ConsoleColor.Black);
+
+            string[] lines = new string[]
+            {
+                "[L]                  Cycle Meteorological Layer (1..5)",
+                "[1] Synoptic Icons   [2] Thermal Heatmap   [3] Precip Radar",
+                "[4] Wind Vectors     [5] Barometric Pressure & Isobars",
+                "[Tab / C / Z]        Switch Continental Sector (5 Continents)",
+                "[Arrows Left/Right]  Select Regional Weather Station on Map",
+                "[R]                  Receive & Sync Live API for Selected City",
+                "[A]                  Receive & Sync Live API for All Continent",
+                "[Enter]              Open Selected Station in Weather Dashboard",
+                "[ESC]                Exit Full-Screen Map to Desktop Launcher"
+            };
+
+            for (int i = 0; i < lines.Length; i++)
+            {
+                DirectVgaWrite(left + 3, top + 4 + i, lines[i], ConsoleColor.White, ConsoleColor.Black);
+            }
+
+            DirectVgaWrite(left + 3, top + height - 2, "[F1 / H / M / Enter / ESC] Close Commands Menu", ConsoleColor.Yellow, ConsoleColor.Black);
         }
 
         public static unsafe void PutVgaCell(int x, int y, byte glyph, ConsoleColor fg, ConsoleColor bg)
@@ -1081,36 +1389,35 @@ namespace WeatherOS.Apps
             if (stations == null || _selectedStation < 0 || _selectedStation >= stations.Length) return;
 
             var sel = stations[_selectedStation];
-            _statusMessage = "Syncing live API for " + sel.Name + "...";
+            _statusMessage = "Receiving live telemetry for " + sel.Name + "...";
             Draw(desktop);
 
             try
             {
-                desktop.WeatherService.FetchOpenWeather(sel.Name, desktop.ApiKey);
-                var live = desktop.WeatherService.GetLatestReading();
-
-                if (live.Condition != null && !live.Condition.Contains("Failure") && !live.Condition.Contains("Timeout") && !live.Condition.Contains("Offline"))
+                int t, h, w;
+                string cond;
+                if (desktop.WeatherService.FetchQuickStationWeather(sel.Lat, sel.Lon, out t, out h, out w, out cond))
                 {
-                    stations[_selectedStation].TempC = (int)live.TemperatureCelsius;
-                    stations[_selectedStation].Humidity = (int)live.HumidityPercent;
-                    stations[_selectedStation].WindKmh = (int)live.WindSpeedKmh;
-                    stations[_selectedStation].Pressure = (int)live.PressureHpa;
-                    stations[_selectedStation].Condition = live.Condition;
+                    stations[_selectedStation].TempC = t;
+                    stations[_selectedStation].Humidity = h;
+                    stations[_selectedStation].WindKmh = w;
+                    stations[_selectedStation].Condition = cond;
                     stations[_selectedStation].IsLive = true;
-                    _statusMessage = "Live API synced: " + sel.Name + " (" + stations[_selectedStation].TempC + "ºC, " + live.Condition + ")";
+                    _statusMessage = "Telemetry received: " + sel.Name + " (" + t + "ºC, " + cond + ") - Layer redrawn";
                 }
                 else
                 {
-                    int t, h, w;
-                    string cond;
-                    if (desktop.WeatherService.FetchQuickStationWeather(sel.Lat, sel.Lon, out t, out h, out w, out cond))
+                    desktop.WeatherService.FetchOpenWeather(sel.Name, desktop.ApiKey);
+                    var live = desktop.WeatherService.GetLatestReading();
+                    if (live.Condition != null && !live.Condition.Contains("Failure") && !live.Condition.Contains("Timeout") && !live.Condition.Contains("Offline"))
                     {
-                        stations[_selectedStation].TempC = t;
-                        stations[_selectedStation].Humidity = h;
-                        stations[_selectedStation].WindKmh = w;
-                        stations[_selectedStation].Condition = cond;
+                        stations[_selectedStation].TempC = (int)live.TemperatureCelsius;
+                        stations[_selectedStation].Humidity = (int)live.HumidityPercent;
+                        stations[_selectedStation].WindKmh = (int)live.WindSpeedKmh;
+                        stations[_selectedStation].Pressure = (int)live.PressureHpa;
+                        stations[_selectedStation].Condition = live.Condition;
                         stations[_selectedStation].IsLive = true;
-                        _statusMessage = "Open-Meteo synced: " + sel.Name + " (" + t + "ºC, " + cond + ")";
+                        _statusMessage = "Live API synced: " + sel.Name + " (" + stations[_selectedStation].TempC + "ºC)";
                     }
                     else
                     {
@@ -1124,6 +1431,33 @@ namespace WeatherOS.Apps
             }
         }
 
+        private void FetchAllContinentStations(TuiDesktop desktop)
+        {
+            var stations = _zones[_currentZone];
+            if (stations == null || stations.Length == 0) return;
+
+            int syncedCount = 0;
+            for (int i = 0; i < stations.Length; i++)
+            {
+                _statusMessage = "Receiving telemetry [" + (i + 1) + "/" + stations.Length + "]: " + stations[i].Name + "...";
+                Draw(desktop);
+
+                int t, h, w;
+                string cond;
+                if (desktop.WeatherService.FetchQuickStationWeather(stations[i].Lat, stations[i].Lon, out t, out h, out w, out cond))
+                {
+                    stations[i].TempC = t;
+                    stations[i].Humidity = h;
+                    stations[i].WindKmh = w;
+                    stations[i].Condition = cond;
+                    stations[i].IsLive = true;
+                    syncedCount++;
+                }
+            }
+
+            _statusMessage = "Sector telemetry updated (" + syncedCount + "/" + stations.Length + " live) - Layer redrawn";
+        }
+
         public void HandleInput(TuiDesktop desktop, KeyEvent keyEvent)
         {
             var stations = _zones[_currentZone];
@@ -1133,6 +1467,12 @@ namespace WeatherOS.Apps
             {
                 ExitFullScreenBroadcastMode();
                 desktop.SetCurrentApp("launcher");
+                return;
+            }
+
+            if (keyEvent.KeyChar == 'm' || keyEvent.KeyChar == 'M')
+            {
+                desktop.IsCommandPopupOpen = true;
                 return;
             }
 
@@ -1148,6 +1488,16 @@ namespace WeatherOS.Apps
                 if (_selectedStation < 0) _selectedStation = stations.Length - 1;
                 _statusMessage = "";
             }
+            else if (keyEvent.KeyChar == 'l' || keyEvent.KeyChar == 'L')
+            {
+                _currentLayer = (_currentLayer + 1) % LayerNames.Length;
+                _statusMessage = "Active Layer: " + LayerNames[_currentLayer];
+            }
+            else if (keyEvent.KeyChar >= '1' && keyEvent.KeyChar <= '5')
+            {
+                _currentLayer = keyEvent.KeyChar - '1';
+                _statusMessage = "Active Layer: " + LayerNames[_currentLayer];
+            }
             else if (keyEvent.Key == ConsoleKeyEx.Tab || keyEvent.KeyChar == 'c' || keyEvent.KeyChar == 'C' || keyEvent.KeyChar == 'z' || keyEvent.KeyChar == 'Z')
             {
                 _currentZone = (_currentZone + 1) % _zones.Length;
@@ -1158,14 +1508,16 @@ namespace WeatherOS.Apps
             {
                 FetchLiveStation(desktop);
             }
+            else if (keyEvent.KeyChar == 'a' || keyEvent.KeyChar == 'A')
+            {
+                FetchAllContinentStations(desktop);
+            }
             else if (keyEvent.Key == ConsoleKeyEx.Enter)
             {
                 var sel = stations[_selectedStation];
                 _statusMessage = "Opening " + sel.Name + " in Weather Dashboard...";
                 Draw(desktop);
 
-                // Pre-load the selected station's telemetry into WeatherService before network fetch,
-                // then fetch live API while still in full-screen custom VGA mode so glyphs never corrupt!
                 desktop.WeatherService.ApplySynopticFallback(
                     sel.Name.ToUpper() + ", " + sel.Code,
                     sel.TempC,

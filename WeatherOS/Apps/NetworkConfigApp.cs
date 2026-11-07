@@ -24,7 +24,7 @@ namespace WeatherOS.Apps
             win.WriteRow(4, "Gateway    : " + gwText, ConsoleColor.Cyan, 2);
 
             win.WriteRow(5, "Subnet Mask: 255.255.255.0", ConsoleColor.Cyan, 2);
-            win.WriteFooter("[ESC] Return to Desktop", ConsoleColor.Yellow);
+            win.WriteFooter("[F1 / H] Main Commands Menu  |  [ESC] Return to Desktop", ConsoleColor.Yellow);
         }
 
         public void HandleInput(TuiDesktop desktop, KeyEvent keyEvent)

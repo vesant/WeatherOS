@@ -48,7 +48,7 @@ namespace WeatherOS.Apps
             desktop.WriteInsideWindow(left, winWidth, top + 13, 2, _lastActionStatus, ConsoleColor.Yellow, winBg);
 
             // Footer controls
-            desktop.WriteInsideWindow(left, winWidth, top + winHeight - 2, 2, "[T] Toggle AC/Battery  |  [F5] Re-Scan  |  [ESC] Exit", ConsoleColor.Yellow, winBg);
+            desktop.WriteInsideWindow(left, winWidth, top + winHeight - 2, 2, "[F1 / H] Main Commands Menu  |  [ESC] Exit", ConsoleColor.Yellow, winBg);
         }
 
         private void DrawMiniBar(int percent, int totalWidth)
