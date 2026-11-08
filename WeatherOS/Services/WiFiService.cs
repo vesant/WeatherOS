@@ -27,6 +27,7 @@ namespace WeatherOS.Services
         {
             if (Driver != null && Driver.IsInitialized)
             {
+                Driver.EnsureRadioActive();
                 Driver.ScanAllChannels();
             }
         }
@@ -68,6 +69,7 @@ namespace WeatherOS.Services
                 return false;
             }
 
+            Driver.EnsureRadioActive();
             bool connected = Driver.Connect(ap, password, statusCallback);
             if (connected)
             {

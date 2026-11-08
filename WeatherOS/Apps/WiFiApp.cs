@@ -25,6 +25,12 @@ namespace WeatherOS.Apps
         {
             var win = desktop.CreateWindow("WI-FI WIRELESS NETWORK MANAGER", WindowSize.Large);
 
+            // Ensure Atheros radio is active when viewing Wi-Fi Manager
+            if (WiFiService.Driver != null && WiFiService.Driver.IsInitialized && !WiFiService.Driver.IsRadioActive)
+            {
+                WiFiService.Driver.EnsureRadioActive();
+            }
+
             // 1. Adapter & Connection Status Ribbon
             string devSummary = WiFiService.IsHardwareAvailable
                 ? "Atheros AR2425 802.11b/g (" + WiFiService.Driver.GetMacString() + ")"

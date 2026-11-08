@@ -52,11 +52,11 @@ namespace WeatherOS
             try
             {
                 var ath = new Cosmos.HAL.Network.AtherosAR2425Driver();
-                if (ath.FindAndInitialize())
+                if (ath.ProbeDevice())
                 {
                     CustomWifi = ath;
                     Cosmos.HAL.NetworkDevice.Devices.Add(CustomWifi);
-                    System.Console.WriteLine("Custom Atheros AR2425 802.11b/g Wi-Fi Driver Loaded!");
+                    System.Console.WriteLine("Custom Atheros AR2425 802.11b/g Wi-Fi Driver Loaded (Standby)!");
                 }
                 else { CustomWifi = null; }
             }
@@ -80,48 +80,33 @@ namespace WeatherOS
                 _isVfsMounted = false;
             }
 
-            // 4. Auto-Connect Wi-Fi or Fall Back to Ethernet
+            // 4. Default Network Initialization (Non-blocking Ethernet DHCP or Wi-Fi Standby)
             try
             {
-                bool wifiConnected = false;
-                if (CustomWifi != null && CustomWifi.IsInitialized)
+                if (CustomNIC != null && CustomNIC.Ready)
                 {
-                    System.Console.WriteLine("[net] Probing saved Wi-Fi networks in wifi.ini...");
-                    wifiConnected = WeatherOS.Services.WiFiService.AttemptAutoConnect(msg => System.Console.WriteLine(msg));
-                    if (wifiConnected)
+                    System.Console.WriteLine("[net] Initializing Realtek Ethernet NIC (DHCP)...");
+                    ActiveNetDevice = CustomNIC;
+                    WeatherOS.Services.RawTcpHttp.DoAutoConfig(CustomNIC);
+                    if (WeatherOS.Services.RawTcpHttp.GetAssignedIp() != "0.0.0.0")
                     {
-                        ActiveNetDevice = CustomWifi;
                         _isNetworkConfigured = true;
-                    }
-                }
-
-                if (!wifiConnected)
-                {
-                    if (CustomNIC != null && CustomNIC.Ready)
-                    {
-                        System.Console.WriteLine("[net] Initializing Realtek Ethernet NIC (DHCP)...");
-                        ActiveNetDevice = CustomNIC;
-                        WeatherOS.Services.RawTcpHttp.DoAutoConfig(CustomNIC);
-                        if (WeatherOS.Services.RawTcpHttp.GetAssignedIp() != "0.0.0.0")
-                        {
-                            _isNetworkConfigured = true;
-                        }
-                        else
-                        {
-                            _isNetworkConfigured = false;
-                        }
-                    }
-                    else if (CustomWifi != null && CustomWifi.Ready)
-                    {
-                        ActiveNetDevice = CustomWifi;
-                        System.Console.WriteLine("[net] Wi-Fi adapter ready. Launch 'wifi' to scan and connect.");
-                        _isNetworkConfigured = false;
                     }
                     else
                     {
-                        System.Console.WriteLine("[net] No active network device found.");
                         _isNetworkConfigured = false;
                     }
+                }
+                else if (CustomWifi != null && CustomWifi.Ready)
+                {
+                    ActiveNetDevice = CustomWifi;
+                    System.Console.WriteLine("[net] Wi-Fi adapter detected. Launch 'wifi' to scan and connect.");
+                    _isNetworkConfigured = false;
+                }
+                else
+                {
+                    System.Console.WriteLine("[net] No active network device found.");
+                    _isNetworkConfigured = false;
                 }
             }
             catch (Exception ex)

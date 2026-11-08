@@ -1344,6 +1344,10 @@ namespace WeatherOS.Services
                                 mbrBlock[460] = (byte)((totalSec >> 16) & 0xFF);
                                 mbrBlock[461] = (byte)((totalSec >> 24) & 0xFF);
                                 SafeWriteSectors(dev, 0, 1, mbrBlock, 0);
+                                if (dev is CustomPciAtaBlockDevice ataDev)
+                                {
+                                    CustomPciAtaBlockDevice.FlushPio(ataDev.CmdBase, ataDev.DriveSelect, ataDev.IsLba48);
+                                }
                             }
                             catch { }
                         }

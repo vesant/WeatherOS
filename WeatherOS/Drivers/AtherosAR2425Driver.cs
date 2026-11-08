@@ -42,6 +42,9 @@ namespace Cosmos.HAL.Network
         public override string Name => "Atheros-AR2425";
         public override bool Ready => IsInitialized;
 
+        public bool IsHardwareDetected { get; private set; } = false;
+        public bool IsRadioActive { get; private set; } = false;
+
         public bool IsConnected { get; set; } = false;
         public WifiAccessPoint ConnectedAp { get; set; } = null;
         private ushort _dataSeq = 1;
@@ -61,7 +64,7 @@ namespace Cosmos.HAL.Network
 
         public override bool QueueBytes(byte[] buffer, int offset, int length)
         {
-            if (!IsInitialized || buffer == null || length < 14) return false;
+            if (!IsInitialized || !IsRadioActive || buffer == null || length < 14) return false;
             
             byte[] apBssid = null;
             if (Wpa2Engine != null && Wpa2Engine.ApBssid != null)
@@ -121,6 +124,7 @@ namespace Cosmos.HAL.Network
         public bool Connect(WifiAccessPoint ap, string password, Action<string> statusCallback)
         {
             if (!IsInitialized || ap == null) return false;
+            EnsureRadioActive();
 
             ConnectedAp = ap;
             statusCallback?.Invoke("[1/4] Tuning RF Synthesizer to Channel " + ap.Channel + " (" + ap.FrequencyMHz + " MHz)...");
@@ -311,9 +315,14 @@ namespace Cosmos.HAL.Network
         private const uint AR5K_PHY_FAST_ADC = 0xA24C;
         private const uint AR5K_PHY_CHIP_ID = 0x9818;
 
+        public bool ProbeDevice()
+        {
+            return FindAndInitialize();
+        }
+
         public bool FindAndInitialize()
         {
-            Console.WriteLine("ath5k: searching for Atheros 802.11 Wireless LAN device on PCI bus...");
+            Console.WriteLine("ath5k: probing Atheros 802.11 Wireless LAN device on PCI bus...");
             PCIDevice foundDev = null;
 
             foreach (var dev in PCI.Devices)
@@ -342,7 +351,7 @@ namespace Cosmos.HAL.Network
             // Set PCI latency timer and cache line size for DMA
             PciDev.WriteRegister8(0x0C, 16); // Cache line size = 16 dwords (64B)
             PciDev.WriteRegister8(0x0D, 0xA8); // Latency timer
-            PciDev.WriteRegister8(0x41, 0); // Disable retry timeout
+            // Note: Register 0x41 write omitted to prevent corrupting PCIe capabilities
 
             // Read BAR0 (MMIO base)
             uint bar0 = PciDev.ReadRegister32(0x10);
@@ -357,25 +366,9 @@ namespace Cosmos.HAL.Network
             Console.WriteLine($"ath5k: MMIO base mapped at 0x{MmioBase:X8}");
             Mmio = new MemoryBlock(MmioBase, 0x10000);
 
-            // Program PCIe SerDes if PCIe device (e.g. AR2425 DID 0x001C)
-            if (PciDev.DeviceID == 0x001C || PciDev.DeviceID == 0x0023 || PciDev.DeviceID == 0x0024)
-            {
-                Console.WriteLine("ath5k: configuring PCIe SerDes PLL and power settings...");
-                WriteReg(AR5K_PCIE_SERDES, 0x9248fc00);
-                WriteReg(AR5K_PCIE_SERDES, 0x24924924);
-                WriteReg(AR5K_PCIE_SERDES, 0x28000039);
-                WriteReg(AR5K_PCIE_SERDES, 0x53160824);
-                WriteReg(AR5K_PCIE_SERDES, 0xe5980579);
-                WriteReg(AR5K_PCIE_SERDES, 0x001defff);
-                WriteReg(AR5K_PCIE_SERDES, 0x1aaabe40);
-                WriteReg(AR5K_PCIE_SERDES, 0xbe105554);
-                WriteReg(AR5K_PCIE_SERDES, 0x000e3007);
-                WriteReg(AR5K_PCIE_SERDES_RESET, 0);
-                DelayMicroseconds(1000);
-            }
-
-            // Wake up NIC & soft reset
-            NicWakeup();
+            // Immediately mask all hardware interrupts and stop DMA engines to keep radio in quiet standby during boot
+            WriteReg(AR5K_IER, 0);
+            WriteReg(AR5K_CR, AR5K_CR_RXD | AR5K_CR_TXD);
 
             // Read SREV & PHY IDs
             MacSrev = ReadReg(0x0020); // AR5K_SREV
@@ -387,25 +380,65 @@ namespace Cosmos.HAL.Network
 
             HardwareSummary = $"Atheros AR2425/AR5212 [PCI {PciDev.bus}:{PciDev.slot}:{PciDev.function}] MAC {GetMacString()} SREV 0x{MacSrev:X2}";
 
-            // Allocate and setup RX / TX DMA Descriptors
-            SetupDmaDescriptors();
-
-            // Reset and tune to Channel 1 (2412 MHz)
-            ResetAndTuneChannel(1);
-
+            IsHardwareDetected = true;
             IsInitialized = true;
-            Console.WriteLine("ath5k: Atheros 802.11 driver initialized and actively listening for Beacons!");
+            Console.WriteLine("ath5k: Atheros 802.11 adapter detected and placed in standby mode.");
             return true;
         }
 
-        private void WriteReg(uint reg, uint val)
+        public bool EnsureRadioActive()
         {
-            Mmio.DWords[reg] = val;
+            if (!IsHardwareDetected || !IsInitialized) return false;
+            if (IsRadioActive) return true;
+
+            try
+            {
+                // Program PCIe SerDes if PCIe device (e.g. AR2425 DID 0x001C)
+                if (PciDev.DeviceID == 0x001C || PciDev.DeviceID == 0x0023 || PciDev.DeviceID == 0x0024)
+                {
+                    Console.WriteLine("ath5k: configuring PCIe SerDes PLL and power settings...");
+                    WriteReg(AR5K_PCIE_SERDES, 0x9248fc00);
+                    WriteReg(AR5K_PCIE_SERDES, 0x24924924);
+                    WriteReg(AR5K_PCIE_SERDES, 0x28000039);
+                    WriteReg(AR5K_PCIE_SERDES, 0x53160824);
+                    WriteReg(AR5K_PCIE_SERDES, 0xe5980579);
+                    WriteReg(AR5K_PCIE_SERDES, 0x001defff);
+                    WriteReg(AR5K_PCIE_SERDES, 0x1aaabe40);
+                    WriteReg(AR5K_PCIE_SERDES, 0xbe105554);
+                    WriteReg(AR5K_PCIE_SERDES, 0x000e3007);
+                    WriteReg(AR5K_PCIE_SERDES_RESET, 0);
+                    DelayMicroseconds(1000);
+                }
+
+                // Wake up NIC & soft reset
+                NicWakeup();
+
+                // Allocate and setup RX / TX DMA Descriptors
+                if (_rxDescMem == null)
+                {
+                    SetupDmaDescriptors();
+                }
+
+                // Reset and tune to Channel 1 (2412 MHz)
+                ResetAndTuneChannel(1);
+
+                IsRadioActive = true;
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
         }
 
-        private uint ReadReg(uint reg)
+        private unsafe void WriteReg(uint reg, uint val)
         {
-            return Mmio.DWords[reg];
+            *(uint*)(MmioBase + reg) = val;
+        }
+
+        private unsafe uint ReadReg(uint reg)
+        {
+            return *(uint*)(MmioBase + reg);
         }
 
         private void DelayMicroseconds(int us)
@@ -514,13 +547,16 @@ namespace Cosmos.HAL.Network
                 uint nextDAddr = (uint)(_rxDescPhys + ((i + 1) % RX_DESC_COUNT) * 32);
                 uint bAddr = (uint)(_rxBufferPhys + i * RX_BUF_SIZE);
 
-                MemoryBlock descBlock = new MemoryBlock(dAddr, 32);
-                descBlock.DWords[0] = nextDAddr; // ds_link
-                descBlock.DWords[4] = bAddr;    // ds_data
-                descBlock.DWords[8] = 0;        // rx_ctl0
-                descBlock.DWords[12] = (uint)(RX_BUF_SIZE & 0x0FFF); // rx_ctl1: buf_len
-                descBlock.DWords[16] = 0;       // rx_stat0
-                descBlock.DWords[20] = 0;       // rx_stat1
+                unsafe
+                {
+                    uint* desc = (uint*)dAddr;
+                    desc[0] = nextDAddr; // ds_link
+                    desc[1] = bAddr;     // ds_data
+                    desc[2] = 0;         // rx_ctl0
+                    desc[3] = (uint)(RX_BUF_SIZE & 0x0FFF); // rx_ctl1: buf_len
+                    desc[4] = 0;         // rx_stat0
+                    desc[5] = 0;         // rx_stat1
+                }
             }
 
             // Allocate TX Descriptors & Buffers
@@ -538,15 +574,18 @@ namespace Cosmos.HAL.Network
                 uint dAddr = (uint)(_txDescPhys + i * 32);
                 uint bAddr = (uint)(_txBufferPhys + i * TX_BUF_SIZE);
 
-                MemoryBlock descBlock = new MemoryBlock(dAddr, 32);
-                descBlock.DWords[0] = 0;        // ds_link
-                descBlock.DWords[4] = bAddr;    // ds_data
-                descBlock.DWords[8] = 0;        // tx_ctl0
-                descBlock.DWords[12] = 0;       // tx_ctl1
-                descBlock.DWords[16] = 0;       // tx_ctl2
-                descBlock.DWords[20] = 0;       // tx_ctl3
-                descBlock.DWords[24] = 0;       // tx_stat0
-                descBlock.DWords[28] = 0;       // tx_stat1
+                unsafe
+                {
+                    uint* desc = (uint*)dAddr;
+                    desc[0] = 0;     // ds_link
+                    desc[1] = bAddr; // ds_data
+                    desc[2] = 0;     // tx_ctl0
+                    desc[3] = 0;     // tx_ctl1
+                    desc[4] = 0;     // tx_ctl2
+                    desc[5] = 0;     // tx_ctl3
+                    desc[6] = 0;     // tx_stat0
+                    desc[7] = 0;     // tx_stat1
+                }
             }
         }
 
@@ -644,7 +683,7 @@ namespace Cosmos.HAL.Network
             WriteReg(AR5K_MCAST_FILTER1, 0xFFFFFFFF);
 
             // RX Filter: Accept Unicast, Broadcast, Multicast, Control, Beacons, Probe Requests, Promiscuous
-            WriteReg(AR5K_RX_FILTER, 0x000000FF);
+            WriteReg(AR5K_RX_FILTER, 0x0000001F);
             WriteReg(AR5K_DIAG_SW_5211, 0); // Ensure RX is NOT disabled
 
             // DMA Config
@@ -756,54 +795,57 @@ namespace Cosmos.HAL.Network
         /// </summary>
         public void PollRx()
         {
-            if (!IsInitialized) return;
+            if (!IsInitialized || !IsRadioActive) return;
 
             for (int step = 0; step < RX_DESC_COUNT; step++)
             {
                 uint dAddr = (uint)(_rxDescPhys + _rxHead * 32);
-                MemoryBlock descBlock = new MemoryBlock(dAddr, 32);
-                uint stat1 = descBlock.DWords[20];
-
-                // Check AR5K_5212_RX_DESC_STATUS1_DONE (Bit 0)
-                if ((stat1 & 0x01) == 0)
+                unsafe
                 {
-                    break; // No new packet at this descriptor
-                }
+                    uint* desc = (uint*)dAddr;
+                    uint stat1 = desc[5]; // offset 20
 
-                // AR5K_5212_RX_DESC_STATUS1_FRAME_RECEIVE_OK is Bit 1 (0x02)
-                // Filter out bad packets (CRC error 0x04, Decrypt CRC 0x08, PHY error 0x10, MIC error 0x20)
-                bool rxOk = (stat1 & 0x02) != 0;
-                bool hasErr = (stat1 & 0x3C) != 0;
-
-                if (rxOk && !hasErr)
-                {
-                    uint stat0 = descBlock.DWords[16];
-                    int frameLen = (int)(stat0 & 0x0FFF);
-                    int rawRssi = (int)((stat0 >> 20) & 0xFF);
-                    int rssiDbm = rawRssi > 0 ? (rawRssi - 95) : -95;
-                    if (rssiDbm > -10) rssiDbm = -40; // clamp
-                    int antenna = (int)((stat0 >> 28) & 0x07);
-
-                    if (frameLen > 24 && frameLen < RX_BUF_SIZE)
+                    // Check AR5K_5212_RX_DESC_STATUS1_DONE (Bit 0)
+                    if ((stat1 & 0x01) == 0)
                     {
-                        uint bAddr = (uint)(_rxBufferPhys + _rxHead * RX_BUF_SIZE);
-                        MemoryBlock bufBlock = new MemoryBlock(bAddr, (uint)frameLen);
-                        byte[] packet = new byte[frameLen];
-                        for (int b = 0; b < frameLen; b++)
-                        {
-                            packet[b] = bufBlock.Bytes[(uint)b];
-                        }
-
-                        RxPacketsCount++;
-                        Parse80211Frame(packet, rssiDbm, antenna);
+                        break; // No new packet at this descriptor
                     }
-                }
 
-                // Reset descriptor for reuse
-                descBlock.DWords[16] = 0; // stat0 = 0
-                descBlock.DWords[20] = 0; // stat1 = 0
-                descBlock.DWords[8] = 0;  // ctl0 = 0
-                descBlock.DWords[12] = (uint)(RX_BUF_SIZE & 0x0FFF); // ctl1
+                    // AR5K_5212_RX_DESC_STATUS1_FRAME_RECEIVE_OK is Bit 1 (0x02)
+                    // Filter out bad packets (CRC error 0x04, Decrypt CRC 0x08, PHY error 0x10, MIC error 0x20)
+                    bool rxOk = (stat1 & 0x02) != 0;
+                    bool hasErr = (stat1 & 0x3C) != 0;
+
+                    if (rxOk && !hasErr)
+                    {
+                        uint stat0 = desc[4]; // offset 16
+                        int frameLen = (int)(stat0 & 0x0FFF);
+                        int rawRssi = (int)((stat0 >> 20) & 0xFF);
+                        int rssiDbm = rawRssi > 0 ? (rawRssi - 95) : -95;
+                        if (rssiDbm > -10) rssiDbm = -40; // clamp
+                        int antenna = (int)((stat0 >> 28) & 0x07);
+
+                        if (frameLen > 24 && frameLen < RX_BUF_SIZE)
+                        {
+                            uint bAddr = (uint)(_rxBufferPhys + _rxHead * RX_BUF_SIZE);
+                            byte* buf = (byte*)bAddr;
+                            byte[] packet = new byte[frameLen];
+                            for (int b = 0; b < frameLen; b++)
+                            {
+                                packet[b] = buf[b];
+                            }
+
+                            RxPacketsCount++;
+                            Parse80211Frame(packet, rssiDbm, antenna);
+                        }
+                    }
+
+                    // Reset descriptor for reuse
+                    desc[4] = 0; // stat0 = 0
+                    desc[5] = 0; // stat1 = 0
+                    desc[2] = 0; // ctl0 = 0
+                    desc[3] = (uint)(RX_BUF_SIZE & 0x0FFF); // ctl1
+                }
 
                 _rxHead = (_rxHead + 1) % RX_DESC_COUNT;
             }
@@ -1130,7 +1172,7 @@ namespace Cosmos.HAL.Network
 
         public void SendRawFrame(byte[] frame, bool isUnicast)
         {
-            if (!IsInitialized || frame == null || frame.Length == 0) return;
+            if (!IsInitialized || !IsRadioActive || frame == null || frame.Length == 0) return;
 
             // Ensure previous TX on Queue 0 is complete
             for (int w = 0; w < 1000; w++)
@@ -1141,41 +1183,44 @@ namespace Cosmos.HAL.Network
 
             // Write frame to TX buffer
             uint bAddr = (uint)(_txBufferPhys + _txHead * TX_BUF_SIZE);
-            MemoryBlock bufBlock = new MemoryBlock(bAddr, (uint)frame.Length);
-            for (int i = 0; i < frame.Length; i++)
+            unsafe
             {
-                bufBlock.Bytes[(uint)i] = frame[i];
+                byte* buf = (byte*)bAddr;
+                for (int i = 0; i < frame.Length; i++)
+                {
+                    buf[i] = frame[i];
+                }
+
+                // Setup 5212 4-word TX Descriptor
+                uint dAddr = (uint)(_txDescPhys + _txHead * 32);
+                uint* desc = (uint*)dAddr;
+
+                desc[0] = 0;     // ds_link = 0 (offset 0)
+                desc[1] = bAddr; // ds_data (offset 4)
+
+                // Frame length in tx_ctl0 includes 4 bytes of hardware-generated FCS
+                uint frameLenWithFcs = (uint)((frame.Length + 4) & 0x0FFF);
+                // tx_ctl0: frame_len | xmit_power(60) | clrdmask(0x01000000)
+                desc[2] = frameLenWithFcs | (60u << 16) | 0x01000000u; // offset 8
+
+                // tx_ctl1: buf_len | (isUnicast ? 0 : NOACK 0x01000000)
+                uint noAckFlag = isUnicast ? 0u : 0x01000000u;
+                desc[3] = (uint)(frame.Length & 0x0FFF) | noAckFlag;  // offset 12
+
+                // tx_ctl2: xmit_tries0 = 4 hardware retries (bits 16-19: 0x00040000)
+                desc[4] = 0x00040000u; // offset 16
+
+                // tx_ctl3: xmit_rate0 = 0x1B (1 Mbps CCK for 802.11 management frames)
+                desc[5] = 0x1B;        // offset 20
+                desc[6] = 0;           // tx_stat0 (offset 24)
+                desc[7] = 0;           // tx_stat1 (offset 28)
+
+                // Trigger TX DMA on Queue 0
+                WriteReg(AR5K_QUEUE_TXDP_0, dAddr);
+                WriteReg(AR5K_QCU_TXE, 0x01);
             }
 
-            // Setup 5212 4-word TX Descriptor
-            uint dAddr = (uint)(_txDescPhys + _txHead * 32);
-            MemoryBlock descBlock = new MemoryBlock(dAddr, 32);
-
-            descBlock.DWords[0] = 0;     // ds_link = 0
-            descBlock.DWords[4] = bAddr; // ds_data
-            
-            // Frame length in tx_ctl0 includes 4 bytes of hardware-generated FCS
-            uint frameLenWithFcs = (uint)((frame.Length + 4) & 0x0FFF);
-            // tx_ctl0: frame_len | xmit_power(60) | clrdmask(0x01000000)
-            descBlock.DWords[8] = frameLenWithFcs | (60u << 16) | 0x01000000u;
-            
-            // tx_ctl1: buf_len | (isUnicast ? 0 : NOACK 0x01000000)
-            uint noAckFlag = isUnicast ? 0u : 0x01000000u;
-            descBlock.DWords[12] = (uint)(frame.Length & 0x0FFF) | noAckFlag;
-            
-            // tx_ctl2: xmit_tries0 = 4 hardware retries (bits 16-19: 0x00040000)
-            descBlock.DWords[16] = 0x00040000u;
-            
-            // tx_ctl3: xmit_rate0 = 0x1B (1 Mbps CCK for 802.11 management frames)
-            descBlock.DWords[20] = 0x1B;
-            descBlock.DWords[24] = 0;    // tx_stat0
-            descBlock.DWords[28] = 0;    // tx_stat1
-
-            // Trigger TX DMA on Queue 0
-            WriteReg(AR5K_QUEUE_TXDP_0, dAddr);
-            WriteReg(AR5K_QCU_TXE, 0x01);
             TxPacketsCount++;
-
             _txHead = (_txHead + 1) % TX_DESC_COUNT;
         }
 
@@ -1184,7 +1229,7 @@ namespace Cosmos.HAL.Network
         /// </summary>
         public void SendProbeRequest()
         {
-            if (!IsInitialized) return;
+            if (!IsInitialized || !IsRadioActive) return;
 
             byte[] frame = new byte[] {
                 0x40, 0x00, // Frame Control (Probe Request)
@@ -1449,6 +1494,7 @@ namespace Cosmos.HAL.Network
         public void ScanAllChannels()
         {
             if (!IsInitialized) return;
+            EnsureRadioActive();
 
             for (int ch = 1; ch <= 13; ch++)
             {
