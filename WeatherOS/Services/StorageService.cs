@@ -682,7 +682,11 @@ namespace WeatherOS.Services
         }
         public static bool SaveFile(string filename, string content, out string status)
         {
-            return SaveFileToLocation(filename, content, "ram", out status);
+            if (IsVfsAvailable())
+            {
+                return SaveFileToLocation(filename, content, "vfs0", out status);
+            }
+            return SaveFileToLocation(filename, content, "disk0", out status);
         }
         public static bool LoadFile(string filename, out string content, out string status)
         {

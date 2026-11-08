@@ -51,7 +51,7 @@ namespace WeatherOS.Apps
             var aps = WiFiService.GetDetectedNetworks();
 
             // Auto-scan on app entry so networks appear immediately without pressing [R]
-            if (!_initialScanDone && WiFiService.IsHardwareAvailable)
+            if ((!_initialScanDone || aps.Count == 0) && WiFiService.IsHardwareAvailable)
             {
                 _initialScanDone = true;
                 WiFiService.ScanNetworks();
@@ -93,6 +93,12 @@ namespace WeatherOS.Apps
                     if (sec.Length > 11) sec = sec.Substring(0, 11);
                     string bssid = (ap.Bssid ?? "").PadRight(18);
                     string ssid = ap.Ssid ?? "<Hidden>";
+                    string savedSsid, savedPwd; bool autoConn;
+                    WiFiService.LoadSavedCredentials(out savedSsid, out savedPwd, out autoConn);
+                    if (string.Equals(savedSsid, ap.Ssid, StringComparison.OrdinalIgnoreCase))
+                    {
+                        ssid += " [Saved]";
+                    }
                     if (ap.IsConnected) ssid += " [CONNECTED]";
 
                     string row = cursor + bars + " " + rssi + " " + ch + " " + sec + " " + bssid + " " + ssid;

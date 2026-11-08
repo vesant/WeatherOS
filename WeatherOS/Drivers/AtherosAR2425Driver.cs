@@ -47,7 +47,8 @@ namespace Cosmos.HAL.Network
 
         public bool IsConnected { get; set; } = false;
         public WifiAccessPoint ConnectedAp { get; set; } = null;
-        private ushort _dataSeq = 1;
+        private ushort _dataSeq = 1;
+
         private ulong _ccmpTxPn = 1;
 
         public override byte[] ReceivePacket() { return null; }
@@ -82,8 +83,9 @@ namespace Cosmos.HAL.Network
             if (Wpa2Engine != null && Wpa2Engine.State == Wpa2HandshakeState.Completed && Wpa2Engine.Tk != null)
             {
                 byte[] encFrame = PureCcmp.Encrypt(Wpa2Engine.Tk, MacAddress, apBssid, ref _ccmpTxPn, buffer, offset, length, (ushort)(_dataSeq++ & 0x0FFF));
-                bool isU = (buffer[offset] & 1) == 0;
-                SendRawFrame(encFrame, isU);
+                // All To-DS data frames (including DHCP & ARP) are transmitted over the air to apBssid (unicast).
+                // Always require 802.11 ACK from the AP so hardware retries are active and packets are delivered reliably!
+                SendRawFrame(encFrame, true);
                 return true;
             }
 

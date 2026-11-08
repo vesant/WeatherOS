@@ -1046,8 +1046,11 @@ public static class PureAes128
 
             int aadLen = isQos ? 24 : 22;
             byte[] aad = new byte[aadLen];
-            aad[0] = (byte)(fc0 & 0xC7);
-            aad[1] = (byte)(fc1 & 0x8F);
+            // Standard IEEE 802.11i CCMP AAD Frame Control masks:
+            // Byte 0: Subtype bits 4,5,6 masked to 0 for non-QoS (0x8F)
+            // Byte 1: Retry, PwrMgt, MoreData, Protected masked to 0 (0x87 for non-QoS, 0x07 for QoS)
+            aad[0] = isQos ? fc0 : (byte)(fc0 & 0x8F);
+            aad[1] = isQos ? (byte)(fc1 & 0x07) : (byte)(fc1 & 0x87);
             Array.Copy(a1, 0, aad, 2, 6);
             Array.Copy(a2, 0, aad, 8, 6);
             Array.Copy(a3, 0, aad, 14, 6);

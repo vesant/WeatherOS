@@ -79,8 +79,8 @@ namespace WeatherOS.Services
                 statusCallback?.Invoke("[5/5] Settle router bridge and negotiate DHCP over 802.11...");
                 Kernel.ActiveNetDevice = Driver;
 
-                // Settle delay (250ms) to allow home router to open 802.1X port authorization
-                for (int s = 0; s < 10; s++)
+                // Settle delay (500ms) to allow home router to open 802.1X bridge port to FORWARDING
+                for (int s = 0; s < 20; s++)
                 {
                     Driver.PollRx();
                     RawTcpHttp.HardwareDelayMs(25);
@@ -92,9 +92,9 @@ namespace WeatherOS.Services
                 string assignedIp = RawTcpHttp.GetAssignedIp();
                 if (assignedIp == "0.0.0.0")
                 {
-                    // If DHCP was slow on first attempt, retry once
-                    statusCallback?.Invoke("[5/5] Re-requesting DHCP lease from router...");
-                    for (int s = 0; s < 10; s++)
+                    // If DHCP was slow on first attempt, retry with extra settle time
+                    statusCallback?.Invoke("[5/5] Re-requesting DHCP lease from router bridge...");
+                    for (int s = 0; s < 20; s++)
                     {
                         Driver.PollRx();
                         RawTcpHttp.HardwareDelayMs(25);
@@ -105,14 +105,14 @@ namespace WeatherOS.Services
 
                 if (assignedIp != "0.0.0.0")
                 {
-                    statusCallback?.Invoke($"[OK] Bound to IP {assignedIp} (Gateway: {RawTcpHttp.GetGatewayIp()})!");
+                    statusCallback?.Invoke($"[OK] Online! Bound to IP {assignedIp} (Gateway: {RawTcpHttp.GetGatewayIp()})!");
+                    return true;
                 }
                 else
                 {
-                    statusCallback?.Invoke("[!] Warning: DHCP lease not acquired. Router did not assign an IP address.");
+                    statusCallback?.Invoke("[!] Associated with Wi-Fi, but router did not offer a DHCP lease.");
+                    return false;
                 }
-
-                return true;
             }
 
             return false;
@@ -141,9 +141,28 @@ namespace WeatherOS.Services
 
             try
             {
-                string content;
-                string stat;
-                if (StorageService.LoadFile(WIFI_CONFIG_FILE, out content, out stat) && !string.IsNullOrEmpty(content))
+                string content = "";
+                // 1. Check direct VFS filesystem
+                if (StorageService.IsVfsAvailable())
+                {
+                    try
+                    {
+                        if (System.IO.File.Exists("0:\\" + WIFI_CONFIG_FILE))
+                        {
+                            content = System.IO.File.ReadAllText("0:\\" + WIFI_CONFIG_FILE);
+                        }
+                    }
+                    catch { }
+                }
+
+                // 2. Check StorageService (RAM + FAT32 fallback)
+                if (string.IsNullOrEmpty(content))
+                {
+                    string stat;
+                    StorageService.LoadFile(WIFI_CONFIG_FILE, out content, out stat);
+                }
+
+                if (!string.IsNullOrEmpty(content))
                 {
                     string[] lines = content.Split('\n');
                     foreach (var rawLine in lines)
@@ -177,7 +196,17 @@ namespace WeatherOS.Services
                                  "Password=" + (password ?? "") + "\n" +
                                  "SavedDate=" + DateTime.Now.ToString("yyyy-MM-dd HH:mm") + "\n";
                 string stat;
-                StorageService.SaveFile(WIFI_CONFIG_FILE, content, out stat);
+
+                // 1. Write to VFS if mounted
+                if (StorageService.IsVfsAvailable())
+                {
+                    try { System.IO.File.WriteAllText("0:\\" + WIFI_CONFIG_FILE, content); } catch { }
+                }
+
+                // 2. Write to disk0 physical partition
+                StorageService.SaveFileToLocation(WIFI_CONFIG_FILE, content, "disk0", out stat);
+                // 3. Keep RAM in sync
+                StorageService.PutMemoryFile(WIFI_CONFIG_FILE, content);
             }
             catch { }
         }

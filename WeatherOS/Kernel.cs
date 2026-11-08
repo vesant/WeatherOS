@@ -97,11 +97,33 @@ namespace WeatherOS
                         _isNetworkConfigured = false;
                     }
                 }
-                else if (CustomWifi != null && CustomWifi.Ready)
+                // If Ethernet is not connected or timed out, and Wi-Fi adapter is present:
+                if (!_isNetworkConfigured && CustomWifi != null && CustomWifi.Ready)
                 {
                     ActiveNetDevice = CustomWifi;
-                    System.Console.WriteLine("[net] Wi-Fi adapter detected. Launch 'wifi' to scan and connect.");
-                    _isNetworkConfigured = false;
+                    string savedSsid, savedPwd;
+                    bool autoConn;
+                    WiFiService.LoadSavedCredentials(out savedSsid, out savedPwd, out autoConn);
+                    if (autoConn && !string.IsNullOrEmpty(savedSsid))
+                    {
+                        System.Console.WriteLine($"[net] Found saved Wi-Fi '{savedSsid}'. Auto-connecting...");
+                        bool wifiOk = WiFiService.AttemptAutoConnect(msg => System.Console.WriteLine("      " + msg));
+                        if (wifiOk && WeatherOS.Services.RawTcpHttp.GetAssignedIp() != "0.0.0.0")
+                        {
+                            _isNetworkConfigured = true;
+                            System.Console.WriteLine($"[net] Wi-Fi connected to '{savedSsid}' (IP: {WeatherOS.Services.RawTcpHttp.GetAssignedIp()})!");
+                        }
+                        else
+                        {
+                            System.Console.WriteLine("[net] Wi-Fi auto-connect notice: DHCP lease not acquired.");
+                            _isNetworkConfigured = false;
+                        }
+                    }
+                    else
+                    {
+                        System.Console.WriteLine("[net] Wi-Fi adapter standby. Launch 'wifi' to scan and connect.");
+                        _isNetworkConfigured = false;
+                    }
                 }
                 else
                 {

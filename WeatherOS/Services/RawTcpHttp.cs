@@ -191,13 +191,15 @@ namespace WeatherOS.Services
             byte[] dhcp = BuildDhcpPacket(1, null, null); // Discover
             nic.QueueBytes(dhcp);
 
-            for (int i = 0; i < 40 && !_dhcpOfferReceived; i++)
+            bool isWifiNic = (nic is Cosmos.HAL.Network.AtherosAR2425Driver) || (Kernel.CustomWifi != null && nic == Kernel.CustomWifi);
+            int maxDiscoverTicks = isWifiNic ? 80 : 40;
+            for (int i = 0; i < maxDiscoverTicks && !_dhcpOfferReceived; i++)
             {
                 PollNetwork();
-                HardwareDelayMs(25);
-                if (i == 10 || i == 24)
+                HardwareDelayMs(30);
+                if (i == 10 || i == 24 || i == 45 || i == 65)
                 {
-                    nic.QueueBytes(dhcp); // Retransmit Discover at 250ms and 600ms
+                    nic.QueueBytes(dhcp); // Retransmit Discover
                 }
                 if (!isGui && (i % 8 == 0)) System.Console.Write(".");
             }
@@ -205,14 +207,15 @@ namespace WeatherOS.Services
             
             if (_dhcpOfferReceived)
             {
-                // 1b. DHCP Request (up to ~600ms)
+                // 1b. DHCP Request (up to ~1.5s on Wi-Fi)
                 byte[] dhcpReq = BuildDhcpPacket(3, _ipSource, _dhcpServerIp);
                 nic.QueueBytes(dhcpReq);
-                for (int i = 0; i < 24 && !_dhcpAckReceived; i++)
+                int maxReqTicks = isWifiNic ? 50 : 24;
+                for (int i = 0; i < maxReqTicks && !_dhcpAckReceived; i++)
                 {
                     PollNetwork();
-                    HardwareDelayMs(25);
-                    if (i == 8) nic.QueueBytes(dhcpReq);
+                    HardwareDelayMs(30);
+                    if (i == 10 || i == 25) nic.QueueBytes(dhcpReq);
                 }
 
                 if (!isGui)
