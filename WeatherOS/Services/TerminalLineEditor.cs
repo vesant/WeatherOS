@@ -24,6 +24,7 @@ namespace WeatherOS.Services
                 KeyEvent keyEvent;
                 while (!WeatherOS.Graphics.TuiDesktop.TryReadDesktopKey(out keyEvent))
                 {
+                    RawTcpHttp.PollNetwork();
                     WeatherOS.Graphics.TuiDesktop.HardwareDelayMs(10);
                 }
 

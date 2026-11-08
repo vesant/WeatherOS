@@ -652,7 +652,7 @@ namespace WeatherOS.Graphics
             }
             else
             {
-                btmText = " WeatherOS v3.5  |  [F1] Main Commands Menu  |  [ESC] Desktop";
+                btmText = " WeatherOS v3.0  |  [F1] Main Commands Menu  |  [ESC] Desktop";
             }
             Screen.WriteClipped(0, Screen.Height - 1, btmText, 68, ConsoleColor.Black, ConsoleColor.Gray, true);
             System.Console.ResetColor();

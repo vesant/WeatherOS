@@ -20,6 +20,7 @@ namespace WeatherOS.Apps
         private string _passwordInput = "";
         private TextEditorState _passwordEditor = new TextEditorState { AllowMultiline = false, MaxLength = 63 };
         private uint _autoScanTick = 0;
+        private bool _initialScanDone = false;
 
         public void Draw(TuiDesktop desktop)
         {
@@ -48,6 +49,14 @@ namespace WeatherOS.Apps
 
             // 2. Wi-Fi Access Points Table
             var aps = WiFiService.GetDetectedNetworks();
+
+            // Auto-scan on app entry so networks appear immediately without pressing [R]
+            if (!_initialScanDone && WiFiService.IsHardwareAvailable)
+            {
+                _initialScanDone = true;
+                WiFiService.ScanNetworks();
+                aps = WiFiService.GetDetectedNetworks();
+            }
 
             if (aps.Count == 0)
             {

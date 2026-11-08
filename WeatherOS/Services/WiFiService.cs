@@ -76,13 +76,33 @@ namespace WeatherOS.Services
                 // Commit credentials to non-volatile wifi.ini
                 SaveCredentials(ap.Ssid, password, true);
 
-                statusCallback?.Invoke("[5/5] Negotiating IP Address via DHCP over 802.11...");
+                statusCallback?.Invoke("[5/5] Settle router bridge and negotiate DHCP over 802.11...");
                 Kernel.ActiveNetDevice = Driver;
+
+                // Settle delay (250ms) to allow home router to open 802.1X port authorization
+                for (int s = 0; s < 10; s++)
+                {
+                    Driver.PollRx();
+                    RawTcpHttp.HardwareDelayMs(25);
+                }
 
                 // Execute DHCP over Wi-Fi
                 RawTcpHttp.DoAutoConfig(Driver);
 
                 string assignedIp = RawTcpHttp.GetAssignedIp();
+                if (assignedIp == "0.0.0.0" || assignedIp == "192.168.1.180")
+                {
+                    // If DHCP was slow on first attempt, retry once
+                    statusCallback?.Invoke("[5/5] Re-requesting DHCP lease from router...");
+                    for (int s = 0; s < 10; s++)
+                    {
+                        Driver.PollRx();
+                        RawTcpHttp.HardwareDelayMs(25);
+                    }
+                    RawTcpHttp.DoAutoConfig(Driver);
+                    assignedIp = RawTcpHttp.GetAssignedIp();
+                }
+
                 if (assignedIp != "0.0.0.0")
                 {
                     statusCallback?.Invoke($"[OK] Bound to IP {assignedIp} (Gateway: {RawTcpHttp.GetGatewayIp()})!");

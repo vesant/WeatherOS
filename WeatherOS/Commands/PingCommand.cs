@@ -25,6 +25,14 @@ namespace WeatherOS.Commands
                 int successCount = 0;
                 for (int i = 0; i < 4; i++)
                 {
+                    if (i > 0)
+                    {
+                        for (int p = 0; p < 8; p++)
+                        {
+                            RawTcpHttp.PollNetwork();
+                            RawTcpHttp.HardwareDelayMs(25);
+                        }
+                    }
                     int rtt = 0;
                     bool ok = RawTcpHttp.Ping(address, out rtt);
                     if (ok)
