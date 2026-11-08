@@ -18,7 +18,7 @@ namespace WeatherOS.Services
 
         public static void PollNetwork()
         {
-            PollNetwork();
+            WeatherOS.Kernel.CustomNIC?.HackPoll();
             WeatherOS.Kernel.CustomWifi?.PollRx();
         }
 
