@@ -30,6 +30,19 @@ namespace WeatherOS.Commands
             _weatherService.FetchOpenWeather(city, _getApiKey?.Invoke() ?? "");
             var data = _weatherService.GetLatestReading();
 
+            if (data.Condition != null && (data.Condition.Contains("Timeout") || data.Condition.Contains("Offline") || data.Condition.Contains("Error")))
+            {
+                System.Console.ForegroundColor = ConsoleColor.Yellow;
+                System.Console.WriteLine($"\n  -> [!] TELEMETRY NOTICE: {data.Location} live data could not be retrieved (Network Timeout).");
+                System.Console.WriteLine($"  -> Showing offline synoptic baseline: {data.TemperatureCelsius} C, {data.Condition}");
+                System.Console.ForegroundColor = ConsoleColor.White;
+                System.Console.WriteLine($"  -> Humidity: {data.HumidityPercent}%, Pressure: {data.PressureHpa} hPa, Wind: {data.WindSpeedKmh} km/h, Precip: {data.PrecipitationMm} mm");
+                System.Console.ForegroundColor = ConsoleColor.Red;
+                System.Console.WriteLine($"  [!] STATUS: Telemetry Offline. Please verify network/gateway connectivity.");
+                System.Console.ResetColor();
+                return;
+            }
+
             System.Console.WriteLine($"\n  -> {data.Location}: {data.TemperatureCelsius} C, {data.Condition}");
             System.Console.WriteLine($"  -> Humidity: {data.HumidityPercent}%, Pressure: {data.PressureHpa} hPa, Wind: {data.WindSpeedKmh} km/h, Precip: {data.PrecipitationMm} mm");
             

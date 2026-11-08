@@ -47,7 +47,8 @@ namespace Cosmos.HAL.Network
 
         public bool IsConnected { get; set; } = false;
         public WifiAccessPoint ConnectedAp { get; set; } = null;
-        private ushort _dataSeq = 1;
+        private ushort _dataSeq = 1;
+        private ulong _ccmpTxPn = 1;
 
         public override byte[] ReceivePacket() { return null; }
         public override int BytesAvailable() { return 0; }
@@ -77,6 +78,14 @@ namespace Cosmos.HAL.Network
             }
 
             if (apBssid == null) return false;
+
+            if (Wpa2Engine != null && Wpa2Engine.State == Wpa2HandshakeState.Completed && Wpa2Engine.Tk != null)
+            {
+                byte[] encFrame = PureCcmp.Encrypt(Wpa2Engine.Tk, MacAddress, apBssid, ref _ccmpTxPn, buffer, offset, length, (ushort)(_dataSeq++ & 0x0FFF));
+                bool isU = (buffer[offset] & 1) == 0;
+                SendRawFrame(encFrame, isU);
+                return true;
+            }
 
             int payloadLen = length - 14;
             int frameLen = 24 + 8 + payloadLen;
@@ -814,7 +823,7 @@ namespace Cosmos.HAL.Network
                     // AR5K_5212_RX_DESC_STATUS1_FRAME_RECEIVE_OK is Bit 1 (0x02)
                     // Filter out bad packets (CRC error 0x04, Decrypt CRC 0x08, PHY error 0x10, MIC error 0x20)
                     bool rxOk = (stat1 & 0x02) != 0;
-                    bool hasErr = (stat1 & 0x3C) != 0;
+                    bool hasErr = (stat1 & 0x04) != 0; // Ignore hw decrypt/MIC errors (Linux ath5k nohwcrypt mode)
 
                     if (rxOk && !hasErr)
                     {
@@ -1043,6 +1052,20 @@ namespace Cosmos.HAL.Network
                         if (pkt[10 + m] != apB[m]) { fromAp = false; break; }
                     }
                     if (!fromAp) return;
+                }
+
+                // If frame is protected (WPA2 CCMP encrypted)
+                if ((pkt[1] & 0x40) != 0)
+                {
+                    if (Wpa2Engine != null && Wpa2Engine.State == Wpa2HandshakeState.Completed && Wpa2Engine.Tk != null)
+                    {
+                        byte[] ethFrame = PureCcmp.Decrypt(Wpa2Engine.Tk, pkt);
+                        if (ethFrame != null && ethFrame.Length >= 14)
+                        {
+                            DataReceived?.Invoke(ethFrame);
+                        }
+                    }
+                    return;
                 }
 
                 // Scan for LLC/SNAP: AA AA 03 00 00 00 [EtherType]

@@ -634,8 +634,11 @@ namespace WeatherOS.Services
                     float fbT, fbH, fbP, fbW; string fbDir, fbCond;
                     GetRegionalSynopticBaseline(displayLocation, out fbT, out fbH, out fbP, out fbW, out fbDir, out fbCond);
                     ApplySynopticFallback(displayLocation, fbT, fbH, fbP, fbW, fbDir, fbCond);
+                    _cachedReading.Condition = "Offline (Telemetry Timeout)";
+                    _cachedReading.AlertMessage = "Network timeout: Telemetry station unreachable.";
+                    _cachedReading.AlertLevel = "AMBER";
                     if (!WeatherOS.Graphics.TuiDesktop.IsGuiActive)
-                        System.Console.WriteLine("[net] Telemetry fetch timed out; using regional synoptic baseline.");
+                        System.Console.WriteLine("[net] Telemetry fetch timed out; station unreachable.");
                 }
             }
             catch (Exception ex)
@@ -645,6 +648,9 @@ namespace WeatherOS.Services
                 float fbT, fbH, fbP, fbW; string fbDir, fbCond;
                 GetRegionalSynopticBaseline(fbDisp, out fbT, out fbH, out fbP, out fbW, out fbDir, out fbCond);
                 ApplySynopticFallback(fbDisp, fbT, fbH, fbP, fbW, fbDir, fbCond);
+                _cachedReading.Condition = "Offline (Telemetry Error)";
+                _cachedReading.AlertMessage = "Network error: " + ex.Message;
+                _cachedReading.AlertLevel = "AMBER";
                 if (_debugMode && !WeatherOS.Graphics.TuiDesktop.IsGuiActive)
                     System.Console.WriteLine("[net] raw_tcp: critical failure: " + ex.Message);
             }

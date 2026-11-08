@@ -90,7 +90,7 @@ namespace WeatherOS.Services
                 RawTcpHttp.DoAutoConfig(Driver);
 
                 string assignedIp = RawTcpHttp.GetAssignedIp();
-                if (assignedIp == "0.0.0.0" || assignedIp == "192.168.1.180")
+                if (assignedIp == "0.0.0.0")
                 {
                     // If DHCP was slow on first attempt, retry once
                     statusCallback?.Invoke("[5/5] Re-requesting DHCP lease from router...");
@@ -109,7 +109,7 @@ namespace WeatherOS.Services
                 }
                 else
                 {
-                    statusCallback?.Invoke("[!] Warning: DHCP silent. Using default link fallback.");
+                    statusCallback?.Invoke("[!] Warning: DHCP lease not acquired. Router did not assign an IP address.");
                 }
 
                 return true;

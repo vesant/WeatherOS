@@ -225,10 +225,20 @@ namespace WeatherOS.Services
             }
             else
             {
-                // 2. DHCP silent: Instant fallback to static IP for direct PC-to-laptop cable link
-                _ipSource = new byte[] { 192, 168, 1, 180 };
-                _gatewayIp = new byte[] { 192, 168, 1, 1 };
-                if (!isGui) System.Console.WriteLine("[net] raw_tcp: Direct cable link (Static IP: 192.168.1.180). Ready.");
+                bool isWifi = (nic is Cosmos.HAL.Network.AtherosAR2425Driver) || (Kernel.CustomWifi != null && nic == Kernel.CustomWifi);
+                if (isWifi)
+                {
+                    _ipSource = new byte[] { 0, 0, 0, 0 };
+                    _gatewayIp = new byte[] { 0, 0, 0, 0 };
+                    if (!isGui) System.Console.WriteLine("[net] raw_tcp: Wi-Fi DHCP negotiation timed out (no lease received).");
+                }
+                else
+                {
+                    // 2. DHCP silent: Instant fallback to static IP for direct PC-to-laptop cable link
+                    _ipSource = new byte[] { 192, 168, 1, 180 };
+                    _gatewayIp = new byte[] { 192, 168, 1, 1 };
+                    if (!isGui) System.Console.WriteLine("[net] raw_tcp: Direct cable link (Static IP: 192.168.1.180). Ready.");
+                }
             }
 
             // Sync with Cosmos NetworkStack if IP was resolved
