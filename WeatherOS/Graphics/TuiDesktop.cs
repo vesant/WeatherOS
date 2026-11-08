@@ -78,6 +78,7 @@ namespace WeatherOS.Graphics
             RegisterApp(new DiskManagerApp());
             RegisterApp(new SystemInfoApp());
             RegisterApp(new NetworkConfigApp());
+            RegisterApp(new WiFiApp());
             RegisterApp(new NetTransferApp());
             
             var settingsApp = new SettingsApp();
@@ -300,6 +301,7 @@ namespace WeatherOS.Graphics
                         {
                             // Actively poll network hardware in real time
                             WeatherOS.Kernel.CustomNIC?.HackPoll();
+                            WeatherOS.Kernel.CustomWifi?.PollRx();
 
                             if (TryReadDesktopKey(out var keyEvent))
                             {
@@ -336,6 +338,7 @@ namespace WeatherOS.Graphics
                         while (_isActive && !hasKey)
                         {
                             WeatherOS.Kernel.CustomNIC?.HackPoll();
+                            WeatherOS.Kernel.CustomWifi?.PollRx();
                             if (TryReadDesktopKey(out keyEvent))
                             {
                                 hasKey = true;
@@ -463,6 +466,7 @@ namespace WeatherOS.Graphics
             list.Add(new LauncherAppEntry { Id = "change_city", Name = "Change Location", Description = "Configure target city and station coordinates.", Category = "METEOROLOGY" });
 
             // Category: Dedicated Networking & File Sync (2 items)
+            list.Add(new LauncherAppEntry { Id = "wifi", Name = "Wi-Fi Manager", Description = "Scan and connect to Atheros 802.11 wireless networks.", Category = "NETWORKING" });
             list.Add(new LauncherAppEntry { Id = "transfer", Name = "File Transfer & OTA", Description = "Send/Receive files and OS updates over network (UDP 7331).", Category = "NETWORKING" });
             list.Add(new LauncherAppEntry { Id = "ipconfig", Name = "Network Config", Description = "Ethernet NIC configuration, IP, gateway and DNS info.", Category = "NETWORKING" });
 
@@ -648,7 +652,7 @@ namespace WeatherOS.Graphics
             }
             else
             {
-                btmText = " WeatherOS v3.4  |  [F1] Main Commands Menu  |  [ESC] Desktop";
+                btmText = " WeatherOS v3.5  |  [F1] Main Commands Menu  |  [ESC] Desktop";
             }
             Screen.WriteClipped(0, Screen.Height - 1, btmText, 68, ConsoleColor.Black, ConsoleColor.Gray, true);
             System.Console.ResetColor();
@@ -699,6 +703,19 @@ namespace WeatherOS.Graphics
                         "[Enter]              Launch the selected application",
                         "[F1 / H / ?]         Open or close this Main Commands Menu",
                         "[ESC / Win Key]      Exit desktop session to system shell"
+                    };
+                    break;
+
+                                case "wifi":
+                    appTitle = "Wi-Fi Wireless Manager";
+                    commands = new string[]
+                    {
+                        "[Up / Down Arrows]   Navigate detected wireless networks",
+                        "[Enter / C]         Connect to highlighted network (WPA2/Open)",
+                        "[R]                  Perform active RF sweep across Ch 1..13",
+                        "[D]                  Disconnect current Wi-Fi connection",
+                        "[F1 / H]             Open or close this Main Commands Menu",
+                        "[ESC]                Return to Application Launcher"
                     };
                     break;
 

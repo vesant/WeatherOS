@@ -6,6 +6,22 @@ namespace WeatherOS.Services
 {
     public static class RawTcpHttp
     {
+        public static Cosmos.HAL.NetworkDevice GetActiveNic()
+        {
+            if (WeatherOS.Kernel.ActiveNetDevice != null) return WeatherOS.Kernel.ActiveNetDevice;
+            if (WeatherOS.Kernel.CustomWifi != null && WeatherOS.Kernel.CustomWifi.IsConnected) return WeatherOS.Kernel.CustomWifi;
+            if (WeatherOS.Kernel.CustomNIC != null && WeatherOS.Kernel.CustomNIC.Ready) return WeatherOS.Kernel.CustomNIC;
+            if (Cosmos.HAL.NetworkDevice.Devices != null && Cosmos.HAL.NetworkDevice.Devices.Count > 0)
+                return Cosmos.HAL.NetworkDevice.Devices[0];
+            return null;
+        }
+
+        public static void PollNetwork()
+        {
+            PollNetwork();
+            WeatherOS.Kernel.CustomWifi?.PollRx();
+        }
+
         private static byte[] _macSource = new byte[6];
         private static byte[] _macDest = new byte[6];
         private static byte[] _ipSource = new byte[4];
@@ -111,7 +127,7 @@ namespace WeatherOS.Services
             {
                 if (Cosmos.HAL.NetworkDevice.Devices != null && Cosmos.HAL.NetworkDevice.Devices.Count > 0)
                 {
-                    var nic = Cosmos.HAL.NetworkDevice.Devices[0];
+                    var nic = GetActiveNic();
                     if (nic.DataReceived != CustomDataReceived)
                     {
                         nic.DataReceived = CustomDataReceived;
@@ -177,7 +193,7 @@ namespace WeatherOS.Services
 
             for (int i = 0; i < 40 && !_dhcpOfferReceived; i++)
             {
-                WeatherOS.Kernel.CustomNIC?.HackPoll();
+                PollNetwork();
                 HardwareDelayMs(25);
                 if (i == 10 || i == 24)
                 {
@@ -194,7 +210,7 @@ namespace WeatherOS.Services
                 nic.QueueBytes(dhcpReq);
                 for (int i = 0; i < 24 && !_dhcpAckReceived; i++)
                 {
-                    WeatherOS.Kernel.CustomNIC?.HackPoll();
+                    PollNetwork();
                     HardwareDelayMs(25);
                     if (i == 8) nic.QueueBytes(dhcpReq);
                 }
@@ -330,7 +346,7 @@ namespace WeatherOS.Services
             int elapsed = 0;
             while (!_arpReplyReceived && elapsed < timeoutMs)
             {
-                WeatherOS.Kernel.CustomNIC?.HackPoll();
+                PollNetwork();
                 HardwareDelayMs(5);
                 elapsed += 5;
                 if (elapsed == 150 || elapsed == 350)
@@ -364,8 +380,8 @@ namespace WeatherOS.Services
         public static void SendArpRequest(byte[] targetIp)
         {
             if (targetIp == null || targetIp.Length != 4) return;
-            if (Cosmos.HAL.NetworkDevice.Devices.Count == 0) return;
-            var nic = Cosmos.HAL.NetworkDevice.Devices[0];
+            if (GetActiveNic() == null) return;
+            var nic = GetActiveNic();
             _pendingArpIp = targetIp;
             _arpReplyReceived = false;
             byte[] arp = new byte[42];
@@ -401,7 +417,7 @@ namespace WeatherOS.Services
 
         private static void SendArpReply(byte[] reqPacket)
         {
-            var nic = Cosmos.HAL.NetworkDevice.Devices[0];
+            var nic = GetActiveNic();
             byte[] reply = new byte[42];
             Array.Copy(reqPacket, 22, reply, 0, 6); // Dest MAC = sender of request
             Array.Copy(_macSource, 0, reply, 6, 6);  // Src MAC = our MAC
@@ -424,7 +440,7 @@ namespace WeatherOS.Services
             if (_ipSource[0] == 0) return false;
 
             EnsurePacketHandlerActive();
-            var nic = Cosmos.HAL.NetworkDevice.Devices[0];
+            var nic = GetActiveNic();
 
             byte[] targetBytes = targetAddress.ToByteArray();
 
@@ -499,7 +515,7 @@ namespace WeatherOS.Services
                 int elapsedMs = 0;
                 while (!_pingReplyReceived && elapsedMs < 1200)
                 {
-                    WeatherOS.Kernel.CustomNIC?.HackPoll();
+                    PollNetwork();
                     HardwareDelayMs(2);
                     elapsedMs += 2;
                 }
@@ -521,8 +537,8 @@ namespace WeatherOS.Services
         public static bool QueryNtp(byte[] ntpServerIp, out uint unixEpochSeconds)
         {
             unixEpochSeconds = 0;
-            if (NetworkDevice.Devices.Count == 0) return false;
-            var nic = WeatherOS.Kernel.CustomNIC ?? NetworkDevice.Devices[0];
+            if (GetActiveNic() == null) return false;
+            var nic = GetActiveNic();
             if (nic == null || _ipSource[0] == 0) return false;
 
             byte[] targetIp = ntpServerIp;
@@ -573,7 +589,7 @@ namespace WeatherOS.Services
                 nic.QueueBytes(ntpFrame);
                 for (int i = 0; i < 60; i++)
                 {
-                    WeatherOS.Kernel.CustomNIC?.HackPoll();
+                    PollNetwork();
                     if (_ntpReplyReceived)
                     {
                         unixEpochSeconds = _lastNtpEpochSeconds;
@@ -589,8 +605,8 @@ namespace WeatherOS.Services
 
         public static string FetchGet(Address destIp, Address gatewayIp, string requestString)
         {
-            if (NetworkDevice.Devices.Count == 0) return null;
-            var nic = NetworkDevice.Devices[0];
+            if (GetActiveNic() == null) return null;
+            var nic = GetActiveNic();
 
             // If IP not configured yet, attempt auto-config
             if (_ipSource[0] == 0 && _ipSource[1] == 0)
@@ -623,7 +639,7 @@ namespace WeatherOS.Services
             // Flush any residual incoming packets from previous session
             for (int drain = 0; drain < 20; drain++)
             {
-                WeatherOS.Kernel.CustomNIC?.HackPoll();
+                PollNetwork();
                 HardwareDelayMs(1);
             }
 
@@ -648,7 +664,7 @@ namespace WeatherOS.Services
                     int synTimeout = 0;
                     while (!_synAckReceived && synTimeout < 60) // 60 * 10ms = 600ms
                     {
-                        WeatherOS.Kernel.CustomNIC?.HackPoll();
+                        PollNetwork();
                         HardwareDelayMs(10);
                         synTimeout++;
                     }
@@ -679,7 +695,7 @@ namespace WeatherOS.Services
                 int quietMs = 0;
                 while (!_finReceived && dataMs < 4000)
                 {
-                    WeatherOS.Kernel.CustomNIC?.HackPoll();
+                    PollNetwork();
                     HardwareDelayMs(10);
                     dataMs += 10;
 
@@ -873,8 +889,8 @@ namespace WeatherOS.Services
 
         public static bool StartTcpSession(Address destIp, ushort destPort, int timeoutMs = 2500)
         {
-            if (NetworkDevice.Devices.Count == 0) return false;
-            var nic = NetworkDevice.Devices[0];
+            if (GetActiveNic() == null) return false;
+            var nic = GetActiveNic();
 
             if (_ipSource[0] == 0 && _ipSource[1] == 0)
             {
@@ -896,7 +912,7 @@ namespace WeatherOS.Services
             // Drain any lingering packets
             for (int drain = 0; drain < 25; drain++)
             {
-                WeatherOS.Kernel.CustomNIC?.HackPoll();
+                PollNetwork();
                 HardwareDelayMs(1);
             }
 
@@ -915,7 +931,7 @@ namespace WeatherOS.Services
                 int synTimeout = 0;
                 while (!_synAckReceived && synTimeout < 50)
                 {
-                    WeatherOS.Kernel.CustomNIC?.HackPoll();
+                    PollNetwork();
                     HardwareDelayMs(10);
                     synTimeout++;
                 }
@@ -932,8 +948,8 @@ namespace WeatherOS.Services
         public static bool SendTcpData(byte[] data)
         {
             if (!_synAckReceived || data == null || data.Length == 0) return false;
-            if (NetworkDevice.Devices.Count == 0) return false;
-            var nic = NetworkDevice.Devices[0];
+            if (GetActiveNic() == null) return false;
+            var nic = GetActiveNic();
 
             SendTcpPacket(nic, 0x18, data); // ACK + PSH
             _sequence += (uint)data.Length;
@@ -942,12 +958,12 @@ namespace WeatherOS.Services
 
         public static int ReadTcpData(byte[] buffer, int offset, int maxLen, int timeoutMs = 2500)
         {
-            if (NetworkDevice.Devices.Count == 0) return 0;
+            if (GetActiveNic() == null) return 0;
 
             int elapsed = 0;
             while (_rxLength == 0 && elapsed < timeoutMs)
             {
-                WeatherOS.Kernel.CustomNIC?.HackPoll();
+                PollNetwork();
                 HardwareDelayMs(10);
                 elapsed += 10;
             }
@@ -972,8 +988,8 @@ namespace WeatherOS.Services
 
         public static void EndTcpSession()
         {
-            if (NetworkDevice.Devices.Count == 0) return;
-            var nic = NetworkDevice.Devices[0];
+            if (GetActiveNic() == null) return;
+            var nic = GetActiveNic();
             try
             {
                 if (_synAckReceived)
@@ -1073,8 +1089,8 @@ namespace WeatherOS.Services
 
         private static void SendIcmpEchoReply(byte[] reqPacket, int icmpOff)
         {
-            if (Cosmos.HAL.NetworkDevice.Devices.Count == 0) return;
-            var nic = Cosmos.HAL.NetworkDevice.Devices[0];
+            if (GetActiveNic() == null) return;
+            var nic = GetActiveNic();
 
             byte[] reply = new byte[reqPacket.Length];
             Array.Copy(reqPacket, 0, reply, 0, reqPacket.Length);
@@ -1321,7 +1337,7 @@ namespace WeatherOS.Services
                     }
 
                     // Send ACK
-                    var nic = NetworkDevice.Devices[0];
+                    var nic = GetActiveNic();
                     SendTcpPacket(nic, 0x10, new byte[0]);
                 }
             }
@@ -1330,7 +1346,7 @@ namespace WeatherOS.Services
             if ((flags & 0x01) == 0x01 || (flags & 0x11) == 0x11)
             {
                 _acknowledgment = remoteSeq + 1;
-                var nic = NetworkDevice.Devices[0];
+                var nic = GetActiveNic();
                 SendTcpPacket(nic, 0x10, new byte[0]); // ACK FIN
                 _finReceived = true;
             }

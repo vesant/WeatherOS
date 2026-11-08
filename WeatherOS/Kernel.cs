@@ -19,6 +19,8 @@ namespace WeatherOS
 
         private Cosmos.System.FileSystem.CosmosVFS _vfs;
         public static Cosmos.HAL.Network.RTL8102E CustomNIC;
+        public static Cosmos.HAL.Network.AtherosAR2425Driver CustomWifi;
+        public static Cosmos.HAL.NetworkDevice ActiveNetDevice;
 
         protected override Cosmos.HAL.TextScreenBase GetTextScreen()
         {
@@ -32,6 +34,7 @@ namespace WeatherOS
 
         protected override void BeforeRun()
         {
+            // 1. Probe Ethernet NIC (Realtek RTL8102E)
             try
             {
                 var rtl = new Cosmos.HAL.Network.RTL8102E();
@@ -41,39 +44,25 @@ namespace WeatherOS
                     Cosmos.HAL.NetworkDevice.Devices.Insert(0, CustomNIC);
                     System.Console.WriteLine("Custom RTL8102E Driver Loaded!");
                 }
-                else
-                {
-                    CustomNIC = null;
-                }
+                else { CustomNIC = null; }
             }
             catch { CustomNIC = null; }
 
+            // 2. Probe Wireless NIC (Atheros AR2425 802.11b/g)
             try
             {
-                if (Cosmos.HAL.NetworkDevice.Devices.Count > 0)
+                var ath = new Cosmos.HAL.Network.AtherosAR2425Driver();
+                if (ath.FindAndInitialize())
                 {
-                    System.Console.WriteLine("[net] Initializing Realtek Ethernet NIC...");
-                    WeatherOS.Services.RawTcpHttp.DoAutoConfig(Cosmos.HAL.NetworkDevice.Devices[0]);
-                    if (WeatherOS.Services.RawTcpHttp.GetAssignedIp() != "0.0.0.0")
-                    {
-                        _isNetworkConfigured = true;
-                    }
-                    else
-                    {
-                        _isNetworkConfigured = false;
-                    }
+                    CustomWifi = ath;
+                    Cosmos.HAL.NetworkDevice.Devices.Add(CustomWifi);
+                    System.Console.WriteLine("Custom Atheros AR2425 802.11b/g Wi-Fi Driver Loaded!");
                 }
-                else
-                {
-                    System.Console.WriteLine("No supported network card found.");
-                    throw new Exception("No NIC");
-                }
+                else { CustomWifi = null; }
             }
-            catch (Exception)
-            {
-                _isNetworkConfigured = false;
-            }
+            catch { CustomWifi = null; }
 
+            // 3. Initialize Storage Subsystems (AHCI, ATA, CosmosVFS)
             try
             {
                 System.Console.WriteLine("[sys] Initializing storage subsystems...");
@@ -89,6 +78,56 @@ namespace WeatherOS
             {
                 System.Console.WriteLine("VFS Init Error: " + ex.Message);
                 _isVfsMounted = false;
+            }
+
+            // 4. Auto-Connect Wi-Fi or Fall Back to Ethernet
+            try
+            {
+                bool wifiConnected = false;
+                if (CustomWifi != null && CustomWifi.IsInitialized)
+                {
+                    System.Console.WriteLine("[net] Probing saved Wi-Fi networks in wifi.ini...");
+                    wifiConnected = WeatherOS.Services.WiFiService.AttemptAutoConnect(msg => System.Console.WriteLine(msg));
+                    if (wifiConnected)
+                    {
+                        ActiveNetDevice = CustomWifi;
+                        _isNetworkConfigured = true;
+                    }
+                }
+
+                if (!wifiConnected)
+                {
+                    if (CustomNIC != null && CustomNIC.Ready)
+                    {
+                        System.Console.WriteLine("[net] Initializing Realtek Ethernet NIC (DHCP)...");
+                        ActiveNetDevice = CustomNIC;
+                        WeatherOS.Services.RawTcpHttp.DoAutoConfig(CustomNIC);
+                        if (WeatherOS.Services.RawTcpHttp.GetAssignedIp() != "0.0.0.0")
+                        {
+                            _isNetworkConfigured = true;
+                        }
+                        else
+                        {
+                            _isNetworkConfigured = false;
+                        }
+                    }
+                    else if (CustomWifi != null && CustomWifi.Ready)
+                    {
+                        ActiveNetDevice = CustomWifi;
+                        System.Console.WriteLine("[net] Wi-Fi adapter ready. Launch 'wifi' to scan and connect.");
+                        _isNetworkConfigured = false;
+                    }
+                    else
+                    {
+                        System.Console.WriteLine("[net] No active network device found.");
+                        _isNetworkConfigured = false;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Console.WriteLine("[net] Network configuration notice: " + ex.Message);
+                _isNetworkConfigured = false;
             }
 
             try
@@ -321,7 +360,8 @@ namespace WeatherOS
             System.Console.Write(_isNetworkConfigured ? " OK " : "WARN");
             System.Console.ResetColor();
             string ipDisplay = WeatherOS.Services.WeatherService.IsDebugModeActive ? WeatherOS.Services.RawTcpHttp.GetAssignedIp() : WeatherOS.Services.RawTcpHttp.GetMaskedIp();
-            System.Console.WriteLine("] IPv4 Network Stack : " + ipDisplay);
+            string netType = (ActiveNetDevice is Cosmos.HAL.Network.AtherosAR2425Driver) ? "Wi-Fi" : "Ethernet";
+            System.Console.WriteLine($"] IPv4 Network ({netType}) : " + ipDisplay);
 
             System.Console.WriteLine(" [ OK ] Hardware Target    : Standard x86 PC (Standalone Mode)");
 
